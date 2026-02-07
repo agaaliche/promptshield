@@ -15,6 +15,9 @@ import {
   PenTool,
   Undo2,
   Redo2,
+  X,
+  Trash2,
+  Key,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import {
@@ -43,8 +46,10 @@ export default function DocumentViewer() {
     updateRegionBBox,
     zoom,
     setZoom,
-    selectedRegionId,
-    setSelectedRegionId,
+    selectedRegionIds,
+    setSelectedRegionIds,
+    toggleSelectedRegionId,
+    clearSelection,
     setIsProcessing,
     setStatusMessage,
     isProcessing,
@@ -73,6 +78,11 @@ export default function DocumentViewer() {
   const [drawEnd, setDrawEnd] = useState<{ x: number; y: number } | null>(null);
   const [showTypePicker, setShowTypePicker] = useState(false);
   const [drawnBBox, setDrawnBBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+
+  // ── Lasso selection state ──
+  const [isLassoing, setIsLassoing] = useState(false);
+  const [lassoStart, setLassoStart] = useState<{ x: number; y: number } | null>(null);
+  const [lassoEnd, setLassoEnd] = useState<{ x: number; y: number } | null>(null);
 
   // ── Move / resize interaction state ──
   const interactionRef = useRef<{
@@ -167,6 +177,13 @@ export default function DocumentViewer() {
             redo();
           }
           break;
+        case "a":
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            // Select all visible regions on current page
+            setSelectedRegionIds(pageRegions.filter((r) => r.action !== "CANCEL").map((r) => r.id));
+          }
+          break;
         case "ArrowLeft":
           e.preventDefault();
           setActivePage(Math.max(1, activePage - 1));
@@ -189,45 +206,46 @@ export default function DocumentViewer() {
           setZoom(1);
           break;
         case "Escape":
-          setSelectedRegionId(null);
+          clearSelection();
           if (drawMode) setDrawMode(false);
           if (showTypePicker) cancelTypePicker();
           break;
         case "d":
         case "Delete":
-          if (selectedRegionId) {
+          if (selectedRegionIds.length > 0) {
             e.preventDefault();
-            handleRegionAction(selectedRegionId, "REMOVE");
+            selectedRegionIds.forEach((id) => handleRegionAction(id, "REMOVE"));
           }
           break;
         case "t":
-          if (selectedRegionId) {
+          if (selectedRegionIds.length > 0) {
             e.preventDefault();
-            handleRegionAction(selectedRegionId, "TOKENIZE");
+            selectedRegionIds.forEach((id) => handleRegionAction(id, "TOKENIZE"));
           }
           break;
         case "c":
-          if (selectedRegionId && !e.ctrlKey && !e.metaKey) {
+          if (selectedRegionIds.length > 0 && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();
-            handleRegionAction(selectedRegionId, "CANCEL");
+            selectedRegionIds.forEach((id) => handleRegionAction(id, "CANCEL"));
           }
           break;
         case "Tab": {
           e.preventDefault();
           const pending = pageRegions.filter((r) => r.action === "PENDING");
           if (pending.length === 0) break;
-          const currentIdx = pending.findIndex((r) => r.id === selectedRegionId);
+          const lastSelected = selectedRegionIds[selectedRegionIds.length - 1];
+          const currentIdx = pending.findIndex((r) => r.id === lastSelected);
           const next = e.shiftKey
             ? (currentIdx <= 0 ? pending.length - 1 : currentIdx - 1)
             : (currentIdx + 1) % pending.length;
-          setSelectedRegionId(pending[next].id);
+          setSelectedRegionIds([pending[next].id]);
           break;
         }
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [activePage, pageCount, zoom, selectedRegionId, pageRegions, setActivePage, setZoom, setSelectedRegionId, handleRegionAction, undo, redo, drawMode, showTypePicker, cancelTypePicker, setDrawMode]);
+  }, [activePage, pageCount, zoom, selectedRegionIds, pageRegions, setActivePage, setZoom, setSelectedRegionIds, clearSelection, handleRegionAction, undo, redo, drawMode, showTypePicker, cancelTypePicker, setDrawMode]);
 
   // ── Anonymize ──
   const handleAnonymize = useCallback(async () => {
@@ -329,28 +347,86 @@ export default function DocumentViewer() {
 
   const handleCanvasMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (!drawMode) return;
+      if (drawMode) {
+        // Draw mode: start drawing a new region
+        const pos = getPointerPosOnImage(e);
+        if (!pos) return;
+        e.preventDefault();
+        setIsDrawing(true);
+        setDrawStart(pos);
+        setDrawEnd(pos);
+        return;
+      }
+      // Normal mode: start lasso selection or clear selection
       const pos = getPointerPosOnImage(e);
       if (!pos) return;
       e.preventDefault();
-      setIsDrawing(true);
-      setDrawStart(pos);
-      setDrawEnd(pos);
+      setIsLassoing(true);
+      setLassoStart(pos);
+      setLassoEnd(pos);
+      if (!e.ctrlKey && !e.metaKey) {
+        clearSelection();
+      }
     },
-    [drawMode, getPointerPosOnImage]
+    [drawMode, getPointerPosOnImage, clearSelection]
   );
 
   const handleCanvasMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (!isDrawing || !drawMode) return;
-      const pos = getPointerPosOnImage(e);
-      if (pos) setDrawEnd(pos);
+      if (isDrawing && drawMode) {
+        const pos = getPointerPosOnImage(e);
+        if (pos) setDrawEnd(pos);
+        return;
+      }
+      if (isLassoing) {
+        const pos = getPointerPosOnImage(e);
+        if (pos) setLassoEnd(pos);
+      }
     },
-    [isDrawing, drawMode, getPointerPosOnImage]
+    [isDrawing, drawMode, isLassoing, getPointerPosOnImage]
   );
 
   const handleCanvasMouseUp = useCallback(
     (e: React.MouseEvent) => {
+      // Lasso selection finish
+      if (isLassoing && lassoStart && lassoEnd && pageData) {
+        setIsLassoing(false);
+        const w = Math.abs(lassoEnd.x - lassoStart.x);
+        const h = Math.abs(lassoEnd.y - lassoStart.y);
+        if (w > 5 || h > 5) {
+          // Find regions whose bbox overlaps the lasso rectangle
+          const sx = imgSize.width / pageData.width;
+          const sy = imgSize.height / pageData.height;
+          const lx0 = Math.min(lassoStart.x, lassoEnd.x);
+          const ly0 = Math.min(lassoStart.y, lassoEnd.y);
+          const lx1 = Math.max(lassoStart.x, lassoEnd.x);
+          const ly1 = Math.max(lassoStart.y, lassoEnd.y);
+
+          const hits = pageRegions.filter((r) => {
+            if (r.action === "CANCEL") return false;
+            const rx0 = r.bbox.x0 * sx;
+            const ry0 = r.bbox.y0 * sy;
+            const rx1 = r.bbox.x1 * sx;
+            const ry1 = r.bbox.y1 * sy;
+            return rx0 < lx1 && rx1 > lx0 && ry0 < ly1 && ry1 > ly0;
+          });
+
+          if (hits.length > 0) {
+            const hitIds = hits.map((r) => r.id);
+            if (e.ctrlKey || e.metaKey) {
+              // Additive lasso
+              setSelectedRegionIds([...new Set([...selectedRegionIds, ...hitIds])]);
+            } else {
+              setSelectedRegionIds(hitIds);
+            }
+          }
+        }
+        setLassoStart(null);
+        setLassoEnd(null);
+        return;
+      }
+
+      // Draw mode finish
       if (!isDrawing || !drawStart || !drawEnd || !pageData) return;
       setIsDrawing(false);
 
@@ -377,7 +453,7 @@ export default function DocumentViewer() {
       setDrawStart(null);
       setDrawEnd(null);
     },
-    [isDrawing, drawStart, drawEnd, pageData, imgSize]
+    [isDrawing, isLassoing, lassoStart, lassoEnd, drawStart, drawEnd, pageData, imgSize, pageRegions, selectedRegionIds, setSelectedRegionIds, clearSelection]
   );
 
   // ── Move / resize handlers ──
@@ -389,7 +465,7 @@ export default function DocumentViewer() {
       const region = regions.find((r) => r.id === regionId);
       if (!region) return;
       e.preventDefault();
-      setSelectedRegionId(regionId);
+      setSelectedRegionIds([regionId]);
       interactionRef.current = {
         mode: "moving",
         regionId,
@@ -400,7 +476,7 @@ export default function DocumentViewer() {
       };
       setIsInteracting(true);
     },
-    [drawMode, getPointerPosOnImage, regions, setSelectedRegionId],
+    [drawMode, getPointerPosOnImage, regions, setSelectedRegionIds],
   );
 
   const handleResizeStart = useCallback(
@@ -411,7 +487,7 @@ export default function DocumentViewer() {
       const region = regions.find((r) => r.id === regionId);
       if (!region) return;
       e.preventDefault();
-      setSelectedRegionId(regionId);
+      setSelectedRegionIds([regionId]);
       interactionRef.current = {
         mode: "resizing",
         regionId,
@@ -423,7 +499,7 @@ export default function DocumentViewer() {
       };
       setIsInteracting(true);
     },
-    [drawMode, getPointerPosOnImage, regions, setSelectedRegionId],
+    [drawMode, getPointerPosOnImage, regions, setSelectedRegionIds],
   );
 
   // Global mouse tracking for move/resize
@@ -759,6 +835,24 @@ export default function DocumentViewer() {
               draggable={false}
             />
 
+            {/* Lasso rectangle preview */}
+            {isLassoing && lassoStart && lassoEnd && (
+              <div
+                style={{
+                  position: "absolute",
+                  left: Math.min(lassoStart.x, lassoEnd.x),
+                  top: Math.min(lassoStart.y, lassoEnd.y),
+                  width: Math.abs(lassoEnd.x - lassoStart.x),
+                  height: Math.abs(lassoEnd.y - lassoStart.y),
+                  border: "1.5px dashed rgba(160,160,160,0.7)",
+                  background: "rgba(100, 150, 255, 0.08)",
+                  borderRadius: 2,
+                  pointerEvents: "none",
+                  zIndex: 20,
+                }}
+              />
+            )}
+
             {/* Drawing rectangle preview */}
             {isDrawing && drawStart && drawEnd && (
               <div
@@ -780,21 +874,145 @@ export default function DocumentViewer() {
             {/* PII Region overlays */}
             {imgLoaded &&
               pageData &&
-              pageRegions.map((region) => (
-                <RegionOverlay
-                  key={region.id}
-                  region={region}
-                  pageWidth={pageData.width}
-                  pageHeight={pageData.height}
-                  imgWidth={imgSize.width}
-                  imgHeight={imgSize.height}
-                  isSelected={region.id === selectedRegionId}
-                  onSelect={() => setSelectedRegionId(region.id)}
-                  onAction={handleRegionAction}
-                  onMoveStart={handleMoveStart}
-                  onResizeStart={handleResizeStart}
-                />
-              ))}
+              pageRegions.map((region) => {
+                const isInSelection = selectedRegionIds.includes(region.id);
+                const isMulti = selectedRegionIds.length > 1;
+                return (
+                  <RegionOverlay
+                    key={region.id}
+                    region={region}
+                    pageWidth={pageData.width}
+                    pageHeight={pageData.height}
+                    imgWidth={imgSize.width}
+                    imgHeight={imgSize.height}
+                    isSelected={isInSelection}
+                    isMultiSelected={isMulti && isInSelection}
+                    onSelect={(e: React.MouseEvent) => {
+                      toggleSelectedRegionId(region.id, e.ctrlKey || e.metaKey);
+                    }}
+                    onAction={handleRegionAction}
+                    onMoveStart={handleMoveStart}
+                    onResizeStart={handleResizeStart}
+                  />
+                );
+              })}
+
+            {/* Multi-select bounding box + actions */}
+            {imgLoaded && pageData && selectedRegionIds.length > 1 && (() => {
+              const selRegions = pageRegions.filter((r) => selectedRegionIds.includes(r.id) && r.action !== "CANCEL");
+              if (selRegions.length < 2) return null;
+              const sx = imgSize.width / pageData.width;
+              const sy = imgSize.height / pageData.height;
+              const bx0 = Math.min(...selRegions.map((r) => r.bbox.x0 * sx));
+              const by0 = Math.min(...selRegions.map((r) => r.bbox.y0 * sy));
+              const bx1 = Math.max(...selRegions.map((r) => r.bbox.x1 * sx));
+              const by1 = Math.max(...selRegions.map((r) => r.bbox.y1 * sy));
+              const pad = 6;
+              const types = new Set(selRegions.map((r) => r.pii_type));
+              const label = types.size === 1 ? `${selRegions.length} × ${[...types][0]}` : `${selRegions.length} regions (multiple types)`;
+              return (
+                <>
+                  {/* Bounding rectangle */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: bx0 - pad,
+                      top: by0 - pad,
+                      width: bx1 - bx0 + pad * 2,
+                      height: by1 - by0 + pad * 2,
+                      border: "2px dashed var(--accent-primary)",
+                      borderRadius: 4,
+                      pointerEvents: "none",
+                      zIndex: 8,
+                    }}
+                  />
+                  {/* Label */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: bx0 - pad,
+                      top: by0 - pad - 20,
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: "white",
+                      background: "var(--accent-primary)",
+                      padding: "2px 8px",
+                      borderRadius: "4px 4px 0 0",
+                      zIndex: 9,
+                      whiteSpace: "nowrap",
+                      pointerEvents: "none",
+                    }}
+                  >
+                    {label}
+                  </div>
+                  {/* Action buttons */}
+                  <div
+                    onMouseDown={(e) => e.stopPropagation()}
+                    style={{
+                      position: "absolute",
+                      left: bx0 - pad,
+                      top: by1 + pad + 4,
+                      display: "flex",
+                      gap: 3,
+                      zIndex: 9,
+                      background: "var(--bg-secondary)",
+                      borderRadius: 4,
+                      padding: 3,
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+                    }}
+                  >
+                    <button
+                      className="btn-ghost btn-sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        pushUndo();
+                        selRegions.forEach((r) => {
+                          setRegionAction(activeDocId!, r.id, "CANCEL").catch(() => {});
+                          updateRegionAction(r.id, "CANCEL");
+                        });
+                        clearSelection();
+                      }}
+                      title="Cancel all — keep original content"
+                      style={{ padding: "2px 6px" }}
+                    >
+                      <X size={12} />
+                    </button>
+                    <button
+                      className="btn-danger btn-sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        pushUndo();
+                        selRegions.forEach((r) => {
+                          setRegionAction(activeDocId!, r.id, "REMOVE").catch(() => {});
+                          updateRegionAction(r.id, "REMOVE");
+                        });
+                        clearSelection();
+                      }}
+                      title="Remove all — permanently redact"
+                      style={{ padding: "2px 6px" }}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                    <button
+                      className="btn-tokenize btn-sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        pushUndo();
+                        selRegions.forEach((r) => {
+                          setRegionAction(activeDocId!, r.id, "TOKENIZE").catch(() => {});
+                          updateRegionAction(r.id, "TOKENIZE");
+                        });
+                        clearSelection();
+                      }}
+                      title="Tokenize all — replace with reversible tokens"
+                      style={{ padding: "2px 6px" }}
+                    >
+                      <Key size={12} />
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -869,11 +1087,11 @@ export default function DocumentViewer() {
                 ...styles.regionItem,
                 borderLeftColor: PII_COLORS[r.pii_type] || "#888",
                 background:
-                  r.id === selectedRegionId
+                  selectedRegionIds.includes(r.id)
                     ? "var(--bg-tertiary)"
                     : "var(--bg-surface)",
               }}
-              onClick={() => setSelectedRegionId(r.id)}
+              onClick={(e) => toggleSelectedRegionId(r.id, e.ctrlKey || e.metaKey)}
             >
               <div style={styles.regionHeader}>
                 <span

@@ -3,6 +3,7 @@
  * Supports move (drag the body) and resize (drag corner/edge handles).
  */
 
+import { useState } from "react";
 import { PII_COLORS, type PIIRegion, type RegionAction } from "../types";
 import { X, Trash2, Key } from "lucide-react";
 
@@ -29,7 +30,8 @@ interface Props {
   imgWidth: number;
   imgHeight: number;
   isSelected: boolean;
-  onSelect: () => void;
+  isMultiSelected: boolean;
+  onSelect: (e: React.MouseEvent) => void;
   onAction: (regionId: string, action: RegionAction) => void;
   onMoveStart?: (regionId: string, e: React.MouseEvent) => void;
   onResizeStart?: (
@@ -46,6 +48,7 @@ export default function RegionOverlay({
   imgWidth,
   imgHeight,
   isSelected,
+  isMultiSelected,
   onSelect,
   onAction,
   onMoveStart,
@@ -77,6 +80,11 @@ export default function RegionOverlay({
   }
 
   const borderColor = PII_COLORS[region.pii_type] || "#ffd740";
+  const [hovered, setHovered] = useState(false);
+  // In multi-select mode: only show frame and border, no label/buttons
+  const soloSelected = isSelected && !isMultiSelected;
+  const showDetails = (hovered && !isMultiSelected) || soloSelected;
+  const showFrame = hovered || isSelected || isMultiSelected;
 
   if (region.action === "CANCEL") {
     return null;
@@ -117,25 +125,27 @@ export default function RegionOverlay({
           width,
           height,
           background: bgColor,
-          border: `2px solid ${borderColor}`,
+          border: showFrame ? `2px solid ${borderColor}` : "2px solid transparent",
           borderRadius: 2,
-          cursor: isSelected ? "move" : "pointer",
-          zIndex: isSelected ? 5 : 2,
-          transition: isSelected ? "none" : "all 0.15s ease",
+          cursor: soloSelected ? "move" : "pointer",
+          zIndex: isSelected ? 5 : hovered ? 4 : 2,
+          transition: "border-color 0.15s ease, box-shadow 0.15s ease",
           boxShadow: isSelected ? `0 0 0 2px ${borderColor}` : "none",
         }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         onMouseDown={(e) => {
           e.stopPropagation();
-          if (onMoveStart) {
+          if (onMoveStart && soloSelected) {
             onMoveStart(region.id, e);
           } else {
-            onSelect();
+            onSelect(e);
           }
         }}
         title={`${region.pii_type}: "${region.text}" (${Math.round(region.confidence * 100)}%)`}
       >
-        {/* Resize handles — only visible when selected */}
-        {isSelected &&
+        {/* Resize handles — only visible when solo-selected */}
+        {soloSelected &&
           handles.map((h) => (
             <div
               key={h.key}
@@ -159,8 +169,8 @@ export default function RegionOverlay({
           ))}
       </div>
 
-      {/* Action buttons — shown below the highlight */}
-      {(isSelected || region.action === "PENDING") && (
+      {/* Action buttons — shown when hovered or selected */}
+      {showDetails && (
         <div
           style={{
             position: "absolute",
@@ -211,24 +221,27 @@ export default function RegionOverlay({
         </div>
       )}
 
-      {/* PII type label */}
-      <div
-        style={{
-          position: "absolute",
-          left: left,
-          top: top - 16,
-          fontSize: 9,
-          fontWeight: 600,
-          color: "white",
-          background: borderColor,
-          padding: "1px 4px",
-          borderRadius: "3px 3px 0 0",
-          zIndex: 3,
-          whiteSpace: "nowrap",
-        }}
-      >
-        {region.pii_type}
-      </div>
+      {/* PII type label — only when hovered or selected */}
+      {showDetails && (
+        <div
+          style={{
+            position: "absolute",
+            left: left,
+            top: top - 16,
+            fontSize: 9,
+            fontWeight: 600,
+            color: "white",
+            background: borderColor,
+            padding: "1px 4px",
+            borderRadius: "3px 3px 0 0",
+            zIndex: showDetails ? 6 : 3,
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+          }}
+        >
+          {region.pii_type} — "{region.text}" ({Math.round(region.confidence * 100)}%)
+        </div>
+      )}
     </>
   );
 }

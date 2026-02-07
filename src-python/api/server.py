@@ -537,6 +537,7 @@ async def update_settings(updates: dict):
         "regex_enabled", "ner_enabled", "llm_detection_enabled",
         "confidence_threshold", "ocr_language", "ocr_dpi",
         "render_dpi", "tesseract_cmd",
+        "ner_backend", "ner_model_preference",
     }
     applied = {}
     for key, value in updates.items():
@@ -545,6 +546,21 @@ async def update_settings(updates: dict):
         if hasattr(config, key):
             setattr(config, key, value)
             applied[key] = value
+
+    # When the NER backend changes, unload the cached BERT pipeline so the
+    # newly selected model is loaded on the next detection run.
+    if "ner_backend" in applied:
+        try:
+            from core.detection.bert_detector import unload_pipeline
+            unload_pipeline()
+            logger.info(f"NER backend changed to '{applied['ner_backend']}' — BERT pipeline unloaded")
+        except Exception:
+            pass  # non-fatal; pipeline will reload on next detection
+
+    # Persist to disk so settings survive server restarts
+    if applied:
+        config.save_user_settings()
+
     return {"status": "ok", "applied": applied}
 
 

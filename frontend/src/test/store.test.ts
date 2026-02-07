@@ -11,7 +11,7 @@ describe("AppStore", () => {
       activeDocId: null,
       activePage: 1,
       regions: [],
-      selectedRegionId: null,
+      selectedRegionIds: [],
       zoom: 1,
       llmStatus: null,
       currentView: "upload",

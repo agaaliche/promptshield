@@ -20,6 +20,7 @@ import {
   loadLLM,
   unloadLLM,
   listModels,
+  getSettings,
   updateSettings,
   exportVault,
 } from "../api";
@@ -44,6 +45,9 @@ export default function SettingsView() {
   const [llmLoading, setLlmLoading] = useState(false);
   const [exportPass, setExportPass] = useState("");
   const [exportStatus, setExportStatus] = useState("");
+  const [pendingNerBackend, setPendingNerBackend] = useState<string | null>(null);
+  const [nerApplyStatus, setNerApplyStatus] = useState<"" | "saving" | "saved" | "error">("")
+  const [nerApplyError, setNerApplyError] = useState("");
 
   // Load initial status
   useEffect(() => {
@@ -51,7 +55,18 @@ export default function SettingsView() {
     getVaultStatus().then((s) => setVaultUnlocked(s.unlocked)).catch(() => {});
     getLLMStatus().then(setLLMStatus).catch(() => {});
     listModels().then(setModels).catch(() => {});
-  }, [backendReady, setVaultUnlocked, setLLMStatus]);
+    // Hydrate detection settings from backend so persisted values are shown
+    getSettings()
+      .then((s) => {
+        setDetectionSettings({
+          regex_enabled: s.regex_enabled as boolean,
+          ner_enabled: s.ner_enabled as boolean,
+          llm_detection_enabled: s.llm_detection_enabled as boolean,
+          ner_backend: s.ner_backend as string,
+        });
+      })
+      .catch(() => {});
+  }, [backendReady, setVaultUnlocked, setLLMStatus, setDetectionSettings]);
 
   useEffect(() => {
     if (vaultUnlocked) {
@@ -253,7 +268,7 @@ export default function SettingsView() {
       {/* ── Detection settings ── */}
       <Section title="Detection" icon={<span>🔍</span>}>
         <p style={styles.hint}>
-          Detection uses a 3-layer hybrid pipeline: Regex patterns → spaCy NER → Local LLM.
+          Detection uses a 3-layer hybrid pipeline: Regex patterns → NER (spaCy or BERT) → Local LLM.
           The LLM layer is optional and requires a loaded model.
         </p>
         <div style={styles.checkboxGroup}>
@@ -279,8 +294,75 @@ export default function SettingsView() {
                 updateSettings({ ner_enabled: v }).catch(() => {});
               }}
             />{" "}
-            spaCy NER (names, organizations, locations)
+            NER model (names, organizations, locations)
           </label>
+
+          {detectionSettings.ner_enabled && (
+            <div style={{ marginLeft: 24, marginTop: 4, marginBottom: 8 }}>
+              <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>
+                NER backend
+              </label>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <select
+                  value={pendingNerBackend ?? detectionSettings.ner_backend}
+                  onChange={(e) => {
+                    setPendingNerBackend(e.target.value);
+                    setNerApplyStatus("");
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: "6px 8px",
+                    borderRadius: 6,
+                    border: "1px solid #444",
+                    background: "#1e1e1e",
+                    color: "#eee",
+                    fontSize: 13,
+                  }}
+                >
+                  <option value="spacy">spaCy (local, no download required)</option>
+                  <option value="dslim/bert-base-NER">BERT-base NER — general entities</option>
+                  <option value="StanfordAIMI/stanford-deidentifier-base">Stanford De-identifier — clinical / medical</option>
+                  <option value="lakshyakh93/deberta_finetuned_pii">DeBERTa PII — names, emails, phones, addresses</option>
+                </select>
+                <button
+                  className="btn-primary btn-sm"
+                  disabled={
+                    !pendingNerBackend ||
+                    pendingNerBackend === detectionSettings.ner_backend ||
+                    nerApplyStatus === "saving"
+                  }
+                  onClick={async () => {
+                    if (!pendingNerBackend) return;
+                    setNerApplyStatus("saving");
+                    setNerApplyError("");
+                    try {
+                      await updateSettings({ ner_backend: pendingNerBackend });
+                      setDetectionSettings({ ner_backend: pendingNerBackend });
+                      setPendingNerBackend(null);
+                      setNerApplyStatus("saved");
+                      setTimeout(() => setNerApplyStatus(""), 3000);
+                    } catch (e: any) {
+                      setNerApplyStatus("error");
+                      setNerApplyError(e.message || "Failed to update NER backend");
+                    }
+                  }}
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  {nerApplyStatus === "saving" ? "Applying..." : "Apply"}
+                </button>
+              </div>
+              {nerApplyStatus === "saved" && (
+                <p style={{ fontSize: 12, color: "var(--accent-success)", marginTop: 4 }}>
+                  NER backend updated — active for the next detection run.
+                </p>
+              )}
+              {nerApplyStatus === "error" && (
+                <p style={{ fontSize: 12, color: "var(--accent-danger)", marginTop: 4 }}>
+                  {nerApplyError}
+                </p>
+              )}
+            </div>
+          )}
           <label style={styles.checkboxLabel}>
             <input
               type="checkbox"

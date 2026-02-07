@@ -37,8 +37,10 @@ interface AppState {
   setRegions: (regions: PIIRegion[]) => void;
   updateRegionAction: (regionId: string, action: RegionAction) => void;
   updateRegionBBox: (regionId: string, bbox: BBox) => void;
-  selectedRegionId: string | null;
-  setSelectedRegionId: (id: string | null) => void;
+  selectedRegionIds: string[];
+  setSelectedRegionIds: (ids: string[]) => void;
+  toggleSelectedRegionId: (id: string, additive?: boolean) => void;
+  clearSelection: () => void;
 
   // ── Undo / Redo ──
   /** Push current regions onto the undo stack (call before mutating). */
@@ -63,6 +65,7 @@ interface AppState {
     regex_enabled: boolean;
     ner_enabled: boolean;
     llm_detection_enabled: boolean;
+    ner_backend: string;
   };
   setDetectionSettings: (s: Partial<AppState["detectionSettings"]>) => void;
 
@@ -123,8 +126,22 @@ export const useAppStore = create<AppState>((set) => ({
         r.id === regionId ? { ...r, bbox } : r
       ),
     })),
-  selectedRegionId: null,
-  setSelectedRegionId: (id) => set({ selectedRegionId: id }),
+  selectedRegionIds: [],
+  setSelectedRegionIds: (ids) => set({ selectedRegionIds: ids }),
+  toggleSelectedRegionId: (id, additive) =>
+    set((s) => {
+      if (additive) {
+        // Ctrl+click: toggle in/out
+        return {
+          selectedRegionIds: s.selectedRegionIds.includes(id)
+            ? s.selectedRegionIds.filter((x) => x !== id)
+            : [...s.selectedRegionIds, id],
+        };
+      }
+      // Plain click: single-select
+      return { selectedRegionIds: [id] };
+    }),
+  clearSelection: () => set({ selectedRegionIds: [] }),
 
   // Undo / Redo
   _undoStack: [],
@@ -144,6 +161,7 @@ export const useAppStore = create<AppState>((set) => ({
       const newUndo = [...s._undoStack];
       const prev = newUndo.pop()!;
       const newRedo = [...s._redoStack, s.regions.map((r) => ({ ...r }))];
+      if (newRedo.length > 50) newRedo.shift();
       return {
         regions: prev,
         _undoStack: newUndo,
@@ -158,6 +176,7 @@ export const useAppStore = create<AppState>((set) => ({
       const newRedo = [...s._redoStack];
       const next = newRedo.pop()!;
       const newUndo = [...s._undoStack, s.regions.map((r) => ({ ...r }))];
+      if (newUndo.length > 50) newUndo.shift();
       return {
         regions: next,
         _undoStack: newUndo,
@@ -180,6 +199,7 @@ export const useAppStore = create<AppState>((set) => ({
     regex_enabled: true,
     ner_enabled: true,
     llm_detection_enabled: true,
+    ner_backend: "spacy",
   },
   setDetectionSettings: (s) =>
     set((state) => ({

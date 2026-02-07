@@ -9,6 +9,11 @@ from typing import Optional
 from core.config import config
 from core.detection.regex_detector import RegexMatch, detect_regex
 from core.detection.ner_detector import NERMatch, detect_ner, is_ner_available
+from core.detection.bert_detector import (
+    NERMatch as BERTNERMatch,
+    detect_bert_ner,
+    is_bert_ner_available,
+)
 from core.detection.llm_detector import LLMMatch, detect_llm
 from models.schemas import (
     BBox,
@@ -245,13 +250,22 @@ def detect_pii_on_page(
             f"Page {page_data.page_number}: Regex found {len(regex_matches)} matches"
         )
 
-    # Layer 2: NER
+    # Layer 2: NER (spaCy or HuggingFace BERT, depending on config)
     ner_matches: list[NERMatch] = []
-    if config.ner_enabled and is_ner_available():
-        ner_matches = detect_ner(text)
-        logger.info(
-            f"Page {page_data.page_number}: NER found {len(ner_matches)} matches"
-        )
+    if config.ner_enabled:
+        if config.ner_backend != "spacy" and is_bert_ner_available():
+            bert_results = detect_bert_ner(text)
+            # BERTNERMatch is structurally identical to NERMatch
+            ner_matches = [NERMatch(*m) for m in bert_results]
+            logger.info(
+                f"Page {page_data.page_number}: BERT NER ({config.ner_backend}) "
+                f"found {len(ner_matches)} matches"
+            )
+        elif is_ner_available():
+            ner_matches = detect_ner(text)
+            logger.info(
+                f"Page {page_data.page_number}: spaCy NER found {len(ner_matches)} matches"
+            )
 
     # Layer 3: LLM (slowest — runs last)
     llm_matches: list[LLMMatch] = []

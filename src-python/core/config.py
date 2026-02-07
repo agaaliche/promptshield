@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import tempfile
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 def _default_data_dir() -> Path:
@@ -41,9 +45,17 @@ class AppConfig(BaseModel):
     llm_detection_enabled: bool = True
     confidence_threshold: float = 0.3                  # Minimum confidence to show highlight
 
-    # NER model preference: "trf" tries en_core_web_trf first, "lg" tries
-    # en_core_web_lg, "sm" uses the small model.  Falls back automatically.
+    # NER backend: "spacy" uses spaCy models, or set to a HuggingFace model id
+    # like "dslim/bert-base-NER" for BERT-based detection.
+    ner_backend: str = "spacy"
+
+    # When ner_backend == "spacy": which spaCy model to prefer (trf > lg > sm)
     ner_model_preference: str = "trf"                   # trf > lg > sm
+
+    # Convenience alias — when ner_backend is a HF model id this mirrors it.
+    @property
+    def ner_hf_model(self) -> str:
+        return self.ner_backend if self.ner_backend != "spacy" else "dslim/bert-base-NER"
 
     # Auto-load the first available GGUF model at startup
     auto_load_llm: bool = True
@@ -74,6 +86,51 @@ class AppConfig(BaseModel):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.models_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+
+        # Load any previously-saved user settings from disk
+        self._load_user_settings()
+
+    # ------------------------------------------------------------------
+    # Persistence — user-editable settings are saved to a JSON sidecar
+    # ------------------------------------------------------------------
+
+    # Keys that are persisted when changed via the API
+    _PERSISTABLE_KEYS: set[str] = {
+        "regex_enabled", "ner_enabled", "llm_detection_enabled",
+        "confidence_threshold", "ocr_language", "ocr_dpi",
+        "render_dpi", "tesseract_cmd",
+        "ner_backend", "ner_model_preference",
+    }
+
+    @property
+    def _settings_path(self) -> Path:
+        return self.data_dir / "settings.json"
+
+    def _load_user_settings(self) -> None:
+        """Read persisted user settings from disk and apply them."""
+        path = self._settings_path
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            for key, value in data.items():
+                if key in self._PERSISTABLE_KEYS and hasattr(self, key):
+                    setattr(self, key, value)
+            logger.info(f"Loaded user settings from {path}")
+        except Exception as exc:
+            logger.warning(f"Failed to load settings from {path}: {exc}")
+
+    def save_user_settings(self) -> None:
+        """Persist current user-editable settings to disk."""
+        data = {k: getattr(self, k) for k in self._PERSISTABLE_KEYS if hasattr(self, k)}
+        try:
+            self._settings_path.write_text(
+                json.dumps(data, indent=2, default=str),
+                encoding="utf-8",
+            )
+            logger.info(f"Saved user settings to {self._settings_path}")
+        except Exception as exc:
+            logger.warning(f"Failed to save settings: {exc}")
 
 
 # Singleton — importable from anywhere

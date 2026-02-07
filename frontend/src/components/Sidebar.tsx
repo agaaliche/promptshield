@@ -75,10 +75,10 @@ export default function Sidebar() {
                   setActiveDocId(doc.doc_id);
                   setCurrentView("viewer");
                 }}
-                title={doc.filename}
+                title={doc.original_filename}
               >
                 <FileText size={13} style={{ flexShrink: 0 }} />
-                <span style={styles.docName}>{doc.filename}</span>
+                <span style={styles.docName}>{doc.original_filename}</span>
                 <span style={styles.docPages}>{doc.page_count}p</span>
               </button>
             ))}

@@ -1,14 +1,9 @@
-import { defineConfig } from 'vite'
+import { defineConfig, mergeConfig } from 'vite'
+import { defineConfig as defineTestConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
-// https://vite.dev/config/
-export default defineConfig({
+const viteConfig = defineConfig({
   plugins: [react()],
-  test: {
-    globals: true,
-    environment: 'jsdom',
-    setupFiles: './src/test/setup.ts',
-  },
   server: {
     port: 5173,
     proxy: {
@@ -31,3 +26,14 @@ export default defineConfig({
     },
   },
 })
+
+export default mergeConfig(
+  viteConfig,
+  defineTestConfig({
+    test: {
+      globals: true,
+      environment: 'jsdom',
+      setupFiles: './src/test/setup.ts',
+    },
+  })
+)

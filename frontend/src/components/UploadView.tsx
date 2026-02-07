@@ -1,10 +1,9 @@
 /** Upload view — drag & drop or file picker for document upload. */
 
 import { useCallback, useRef, useState } from "react";
-import { Upload, FileText, AlertCircle } from "lucide-react";
+import { Upload, AlertCircle } from "lucide-react";
 import { uploadDocument, getDocument, detectPII } from "../api";
 import { useAppStore } from "../store";
-import type { DocumentInfo } from "../types";
 
 const ACCEPT =
   ".pdf,.jpg,.jpeg,.png,.tiff,.tif,.bmp,.webp,.docx,.xlsx,.pptx,.doc,.xls,.ppt";

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import logging
 import shutil
+import sys
 import uuid
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from core.config import config
@@ -579,3 +580,47 @@ async def export_vault(passphrase: str):
         return JSONResponse(content={"export": data})
     except Exception as e:
         raise HTTPException(500, f"Export failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Bundled frontend — serve the React SPA when running as a standalone exe
+# ---------------------------------------------------------------------------
+
+def _get_frontend_dir() -> Path | None:
+    """Locate the bundled frontend dist directory."""
+    # When frozen by PyInstaller, files are in sys._MEIPASS
+    if getattr(sys, "frozen", False):
+        candidate = Path(sys._MEIPASS) / "frontend_dist"     # type: ignore[attr-defined]
+        if candidate.is_dir():
+            return candidate
+    # Dev / non-frozen: look relative to this file
+    candidate = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+    if candidate.is_dir():
+        return candidate
+    return None
+
+
+_frontend_dir = _get_frontend_dir()
+
+if _frontend_dir is not None:
+    # Serve static assets (JS, CSS, images)
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(_frontend_dir / "assets")),
+        name="frontend-assets",
+    )
+
+    @app.get("/")
+    async def serve_index():
+        return HTMLResponse((_frontend_dir / "index.html").read_text(encoding="utf-8"))
+
+    # SPA catch-all — any unmatched GET that isn't /api/* serves index.html
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str):
+        # Don't intercept API or bitmap paths
+        if full_path.startswith(("api/", "health", "bitmaps/")):
+            raise HTTPException(404)
+        file_path = _frontend_dir / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        return HTMLResponse((_frontend_dir / "index.html").read_text(encoding="utf-8"))

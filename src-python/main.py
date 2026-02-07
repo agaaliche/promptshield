@@ -1,7 +1,7 @@
-"""Main entry point for the document anonymizer sidecar.
+"""Main entry point for the document anonymizer.
 
-When run directly, starts a FastAPI server on a random available port
-and prints the port to stdout (for the Tauri shell to read).
+When run directly (or as a standalone exe), starts a FastAPI server
+and opens the browser UI.
 """
 
 from __future__ import annotations
@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 import socket
 import sys
+import webbrowser
+import threading
 
 import uvicorn
 
@@ -20,6 +22,13 @@ def find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def _open_browser_delayed(url: str, delay: float = 1.5):
+    """Open the browser after a short delay to let the server start."""
+    import time
+    time.sleep(delay)
+    webbrowser.open(url)
 
 
 def main():
@@ -34,22 +43,38 @@ def main():
     port = config.port if config.port != 0 else find_free_port()
     config.port = port
 
-    # Print port to stdout for Tauri to read
-    # This MUST be the first line of stdout
+    # Print port to stdout for Tauri to read (sidecar mode)
     print(f"PORT:{port}", flush=True)
 
-    logging.getLogger("doc-anonymizer").info(
-        f"Starting sidecar on {config.host}:{port}"
-    )
+    log = logging.getLogger("doc-anonymizer")
+    log.info(f"Starting on {config.host}:{port}")
 
-    uvicorn.run(
-        "api.server:app",
-        host=config.host,
-        port=port,
-        log_level="info",
-        # Don't use reload in production/sidecar mode
-        reload=False,
-    )
+    # If running as standalone exe (frozen), open the browser automatically
+    is_frozen = getattr(sys, "frozen", False)
+    if is_frozen:
+        url = f"http://{config.host}:{port}"
+        log.info(f"Standalone mode — opening {url}")
+        threading.Thread(target=_open_browser_delayed, args=(url,), daemon=True).start()
+
+    if is_frozen:
+        # When frozen by PyInstaller, string-based import doesn't work.
+        # Import the app object directly and pass it to uvicorn.
+        from api.server import app  # noqa: F811
+        uvicorn.run(
+            app,
+            host=config.host,
+            port=port,
+            log_level="info",
+            reload=False,
+        )
+    else:
+        uvicorn.run(
+            "api.server:app",
+            host=config.host,
+            port=port,
+            log_level="info",
+            reload=False,
+        )
 
 
 if __name__ == "__main__":

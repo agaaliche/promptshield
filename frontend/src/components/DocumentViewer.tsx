@@ -7,8 +7,6 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
-  Download,
-  CheckCircle2,
   XCircle,
   Shield,
   Lock,

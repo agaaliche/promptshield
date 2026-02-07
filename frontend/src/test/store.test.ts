@@ -61,17 +61,19 @@ describe("AppStore", () => {
       {
         id: "r1",
         page_number: 1,
-        bbox: { x: 0, y: 0, width: 100, height: 20 },
+        bbox: { x0: 0, y0: 0, x1: 100, y1: 20 },
         pii_type: "PERSON" as const,
         confidence: 0.95,
         source: "ner" as const,
-        original_text: "John Doe",
-        action: "pending" as const,
+        text: "John Doe",
+        char_start: 0,
+        char_end: 8,
+        action: "PENDING" as const,
       },
     ];
-    useAppStore.getState().setRegions(mockRegions);
+    useAppStore.getState().setRegions(mockRegions as any);
     expect(useAppStore.getState().regions).toHaveLength(1);
-    expect(useAppStore.getState().regions[0].original_text).toBe("John Doe");
+    expect(useAppStore.getState().regions[0].text).toBe("John Doe");
   });
 
   it("should set vault unlocked state", () => {

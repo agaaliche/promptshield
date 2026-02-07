@@ -8,7 +8,6 @@ import {
   Cpu,
   Database,
   RefreshCw,
-  FolderOpen,
   Download,
 } from "lucide-react";
 import { useAppStore } from "../store";
@@ -24,7 +23,7 @@ import {
   updateSettings,
   exportVault,
 } from "../api";
-import type { VaultStats, LLMStatus } from "../types";
+import type { VaultStats } from "../types";
 
 export default function SettingsView() {
   const {

@@ -1,0 +1,51 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Distribution / build
+dist/
+build/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Tauri build artifacts
+frontend/src-tauri/target/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+
+# PyInstaller
+*.spec.bak
+
+# Test cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data files (local user data)
+*.db
+*.sqlite
+
+# Model files (too large for VCS)
+*.gguf
+*.bin

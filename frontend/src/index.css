@@ -1,0 +1,117 @@
+/* Global styles for Document Anonymizer */
+
+:root {
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16213e;
+  --bg-tertiary: #0f3460;
+  --bg-surface: #1e2a4a;
+  --text-primary: #e8e8e8;
+  --text-secondary: #a0a0b0;
+  --text-muted: #6c6c7c;
+  --accent-primary: #4a9eff;
+  --accent-success: #4caf50;
+  --accent-warning: #ff9800;
+  --accent-danger: #f44336;
+  --accent-info: #2196f3;
+  --accent-tokenize: #9c27b0;
+  --border-color: #2a2a4a;
+  --highlight-pending: rgba(255, 235, 59, 0.35);
+  --highlight-remove: rgba(244, 67, 54, 0.35);
+  --highlight-tokenize: rgba(156, 39, 176, 0.35);
+  --highlight-cancel: rgba(100, 100, 100, 0.15);
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --radius: 8px;
+  --radius-sm: 4px;
+
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Roboto, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); }
+::-webkit-scrollbar-thumb { background: var(--bg-tertiary); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-primary); }
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 14px;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: inherit;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+button.btn-primary { background: var(--accent-primary); color: white; }
+button.btn-primary:hover:not(:disabled) { background: #3a8eef; }
+button.btn-success { background: var(--accent-success); color: white; }
+button.btn-danger { background: var(--accent-danger); color: white; }
+button.btn-warning { background: var(--accent-warning); color: white; }
+button.btn-tokenize { background: var(--accent-tokenize); color: white; }
+button.btn-tokenize:hover:not(:disabled) { background: #8c1fa0; }
+button.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+button.btn-ghost:hover:not(:disabled) {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+button.btn-sm { padding: 3px 8px; font-size: 11px; }
+button.btn-icon {
+  padding: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+}
+button.btn-icon:hover { background: var(--bg-surface); color: var(--text-primary); }
+
+input[type="text"],
+input[type="password"],
+textarea {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  font-size: 14px;
+  width: 100%;
+  outline: none;
+}
+input:focus, textarea:focus { border-color: var(--accent-primary); }
+
+/* Spinner animation */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

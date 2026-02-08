@@ -3,9 +3,9 @@
  * Supports move (drag the body) and resize (drag corner/edge handles).
  */
 
-import { useState } from "react";
-import { PII_COLORS, type PIIRegion, type RegionAction } from "../types";
-import { X, Trash2, Key } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { PII_COLORS, type PIIRegion, type RegionAction, type PIIType } from "../types";
+import { X, Trash2, Key, RefreshCw, Highlighter, Edit3, Tag, ChevronRight, ChevronLeft } from "lucide-react";
 
 export type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
@@ -31,14 +31,19 @@ interface Props {
   imgHeight: number;
   isSelected: boolean;
   isMultiSelected: boolean;
+  isImageFile: boolean;
   onSelect: (e: React.MouseEvent) => void;
   onAction: (regionId: string, action: RegionAction) => void;
+  onRefresh?: (regionId: string) => void;
+  onHighlightAll?: (regionId: string) => void;
   onMoveStart?: (regionId: string, e: React.MouseEvent) => void;
   onResizeStart?: (
     regionId: string,
     handle: ResizeHandle,
     e: React.MouseEvent,
   ) => void;
+  onUpdateLabel?: (regionId: string, newType: PIIType) => void;
+  onUpdateText?: (regionId: string, newText: string) => void;
 }
 
 export default function RegionOverlay({
@@ -49,11 +54,33 @@ export default function RegionOverlay({
   imgHeight,
   isSelected,
   isMultiSelected,
+  isImageFile,
   onSelect,
   onAction,
+  onRefresh,
+  onHighlightAll,
   onMoveStart,
   onResizeStart,
+  onUpdateLabel,
+  onUpdateText,
 }: Props) {
+  const [showEditPanel, setShowEditPanel] = useState(false);
+  const [toolbarExpanded, setToolbarExpanded] = useState(false);
+  const [activeTab, setActiveTab] = useState<"label" | "content">("label");
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
+  const [isEditingText, setIsEditingText] = useState(false);
+  const [editedText, setEditedText] = useState(region.text);
+  
+  // Toolbar position (relative to region)
+  const [toolbarOffset, setToolbarOffset] = useState({ x: 0, y: 0 });
+  const [isDraggingToolbar, setIsDraggingToolbar] = useState(false);
+  const toolbarDragStart = useRef({ mouseX: 0, mouseY: 0, offsetX: 0, offsetY: 0 });
+  
+  // Edit dialog position (viewport coordinates)
+  const [dialogPos, setDialogPos] = useState({ x: 300, y: 100 });
+  const [isDraggingDialog, setIsDraggingDialog] = useState(false);
+  const dialogDragStart = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
+  
   // Convert page coordinates → pixel coordinates on the displayed image
   const sx = imgWidth / pageWidth;
   const sy = imgHeight / pageHeight;
@@ -79,12 +106,65 @@ export default function RegionOverlay({
       bgColor = "var(--highlight-pending)";
   }
 
-  const borderColor = PII_COLORS[region.pii_type] || "#ffd740";
+  // Darker shade of yellow for selected border
+  const baseBorderColor = PII_COLORS[region.pii_type] || "#ffd740";
+  const borderColor = (isSelected || showEditPanel) ? "#cca000" : baseBorderColor;
   const [hovered, setHovered] = useState(false);
   // In multi-select mode: only show frame and border, no label/buttons
   const soloSelected = isSelected && !isMultiSelected;
-  const showDetails = (hovered && !isMultiSelected) || soloSelected;
-  const showFrame = hovered || isSelected || isMultiSelected;
+  // Keep toolbar visible when edit panel is open
+  const showDetails = (hovered && !isMultiSelected) || soloSelected || showEditPanel;
+  const showFrame = hovered || isSelected || isMultiSelected || showEditPanel;
+
+  // Toolbar drag handlers
+  useEffect(() => {
+    if (!isDraggingToolbar) return;
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      const dx = e.clientX - toolbarDragStart.current.mouseX;
+      const dy = e.clientY - toolbarDragStart.current.mouseY;
+      setToolbarOffset({
+        x: toolbarDragStart.current.offsetX + dx,
+        y: toolbarDragStart.current.offsetY + dy,
+      });
+    };
+    
+    const handleMouseUp = () => {
+      setIsDraggingToolbar(false);
+    };
+    
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDraggingToolbar]);
+
+  // Dialog drag handlers
+  useEffect(() => {
+    if (!isDraggingDialog) return;
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      const dx = e.clientX - dialogDragStart.current.mouseX;
+      const dy = e.clientY - dialogDragStart.current.mouseY;
+      setDialogPos({
+        x: dialogDragStart.current.startX + dx,
+        y: dialogDragStart.current.startY + dy,
+      });
+    };
+    
+    const handleMouseUp = () => {
+      setIsDraggingDialog(false);
+    };
+    
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDraggingDialog]);
 
   if (region.action === "CANCEL") {
     return null;
@@ -125,12 +205,12 @@ export default function RegionOverlay({
           width,
           height,
           background: bgColor,
-          border: showFrame ? `2px solid ${borderColor}` : "2px solid transparent",
+          border: showFrame ? `1px solid ${borderColor}` : "1px solid transparent",
           borderRadius: 2,
           cursor: soloSelected ? "move" : "pointer",
-          zIndex: isSelected ? 5 : hovered ? 4 : 2,
+          zIndex: isSelected || showEditPanel ? 5 : hovered ? 4 : 2,
           transition: "border-color 0.15s ease, box-shadow 0.15s ease",
-          boxShadow: isSelected ? `0 0 0 2px ${borderColor}` : "none",
+          boxShadow: isSelected || showEditPanel ? `0 0 0 1px ${borderColor}` : "none",
         }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -169,77 +249,507 @@ export default function RegionOverlay({
           ))}
       </div>
 
-      {/* Action buttons — shown when hovered or selected */}
+      {/* Top label - flush with border */}
       {showDetails && (
         <div
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
           style={{
             position: "absolute",
             left: left,
-            top: top + height + 4,
-            display: "flex",
-            gap: 3,
+            top: top - 26,
             zIndex: 6,
-            background: "var(--bg-secondary)",
-            borderRadius: 4,
-            padding: 3,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+            background: borderColor,
+            color: "#000",
+            padding: "4px 10px",
+            borderRadius: "4px 4px 0 0",
+            fontSize: 13,
+            fontWeight: 600,
+            whiteSpace: "nowrap",
           }}
         >
-          <button
-            className="btn-ghost btn-sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAction(region.id, "CANCEL");
-            }}
-            title="Cancel — keep original content"
-            style={{ padding: "2px 6px" }}
-          >
-            <X size={12} />
-          </button>
-          <button
-            className="btn-danger btn-sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAction(region.id, "REMOVE");
-            }}
-            title="Remove — permanently redact"
-            style={{ padding: "2px 6px" }}
-          >
-            <Trash2 size={12} />
-          </button>
-          <button
-            className="btn-tokenize btn-sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAction(region.id, "TOKENIZE");
-            }}
-            title="Tokenize — replace with reversible token"
-            style={{ padding: "2px 6px" }}
-          >
-            <Key size={12} />
-          </button>
+          {region.pii_type}
         </div>
       )}
 
-      {/* PII type label — only when hovered or selected */}
+      {/* Vertical toolbar - draggable */}
       {showDetails && (
         <div
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
           style={{
             position: "absolute",
-            left: left,
-            top: top - 16,
-            fontSize: 9,
-            fontWeight: 600,
-            color: "white",
-            background: borderColor,
-            padding: "1px 4px",
-            borderRadius: "3px 3px 0 0",
-            zIndex: showDetails ? 6 : 3,
-            whiteSpace: "nowrap",
-            pointerEvents: "none",
+            left: left + width + 8 + toolbarOffset.x,
+            top: top + toolbarOffset.y,
+            zIndex: 6,
+            background: "var(--bg-secondary)",
+            borderRadius: 8,
+            boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            cursor: isDraggingToolbar ? "grabbing" : "default",
           }}
         >
-          {region.pii_type} — "{region.text}" ({Math.round(region.confidence * 100)}%)
+          {/* Drag handle header */}
+          <div
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              setIsDraggingToolbar(true);
+              toolbarDragStart.current = {
+                mouseX: e.clientX,
+                mouseY: e.clientY,
+                offsetX: toolbarOffset.x,
+                offsetY: toolbarOffset.y,
+              };
+            }}
+            style={{
+              padding: "4px 6px",
+              background: "var(--bg-primary)",
+              cursor: isDraggingToolbar ? "grabbing" : "grab",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              borderBottom: "1px solid var(--border-color)",
+            }}
+          >
+            <div style={{ 
+              width: 24, 
+              height: 4, 
+              background: "var(--text-secondary)", 
+              borderRadius: 2,
+              opacity: 0.5,
+            }} />
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setToolbarExpanded(!toolbarExpanded);
+              }}
+              style={{
+                background: "transparent",
+                border: "none",
+                padding: 2,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                color: "var(--text-secondary)",
+              }}
+              title={toolbarExpanded ? "Collapse" : "Expand"}
+            >
+              {toolbarExpanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+            </button>
+          </div>
+
+          {/* Toolbar buttons */}
+          <div style={{ padding: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowEditPanel(!showEditPanel);
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: showEditPanel ? "var(--bg-primary)" : "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--text-primary)",
+                fontWeight: showEditPanel ? 600 : 400,
+                whiteSpace: "nowrap",
+              }}
+              title="Edit label/content"
+              className="btn-ghost btn-sm"
+            >
+              <Edit3 size={16} />
+              {toolbarExpanded && "Edit"}
+            </button>
+            
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAction(region.id, "CANCEL");
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--text-primary)",
+                whiteSpace: "nowrap",
+              }}
+              title="Cancel — keep original"
+              className="btn-ghost btn-sm"
+            >
+              <X size={16} />
+              {toolbarExpanded && "Cancel"}
+            </button>
+            
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onRefresh?.(region.id);
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--text-primary)",
+                whiteSpace: "nowrap",
+              }}
+              title="Refresh — re-analyze"
+              className="btn-ghost btn-sm"
+            >
+              <RefreshCw size={16} />
+              {toolbarExpanded && "Refresh"}
+            </button>
+            
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onHighlightAll?.(region.id);
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--text-primary)",
+                whiteSpace: "nowrap",
+              }}
+              title="Highlight all"
+              className="btn-ghost btn-sm"
+            >
+              <Highlighter size={16} />
+              {toolbarExpanded && "All"}
+            </button>
+            
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAction(region.id, "REMOVE");
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--danger)",
+                whiteSpace: "nowrap",
+              }}
+              title="Remove"
+              className="btn-danger btn-sm"
+            >
+              <Trash2 size={16} />
+              {toolbarExpanded && "Remove"}
+            </button>
+            
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAction(region.id, "TOKENIZE");
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--tokenize)",
+                whiteSpace: "nowrap",
+              }}
+              title="Tokenize"
+              className="btn-tokenize btn-sm"
+            >
+              <Key size={16} />
+              {toolbarExpanded && "Tokenize"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Floating edit dialog - shown when edit is active */}
+      {showEditPanel && (
+        <div
+          style={{
+            position: "fixed",
+            left: dialogPos.x,
+            top: dialogPos.y,
+            zIndex: 1000,
+            background: "var(--bg-secondary)",
+            borderRadius: 8,
+            boxShadow: "0 4px 24px rgba(0,0,0,0.6)",
+            minWidth: 320,
+            maxWidth: 450,
+            border: "1px solid var(--border-color)",
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {/* Dialog header - draggable */}
+          <div
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              setIsDraggingDialog(true);
+              dialogDragStart.current = {
+                mouseX: e.clientX,
+                mouseY: e.clientY,
+                startX: dialogPos.x,
+                startY: dialogPos.y,
+              };
+            }}
+            style={{
+              padding: "10px 12px",
+              background: "var(--bg-primary)",
+              borderRadius: "8px 8px 0 0",
+              cursor: isDraggingDialog ? "grabbing" : "grab",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              borderBottom: "1px solid var(--border-color)",
+            }}
+          >
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
+              Edit Content
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowEditPanel(false);
+              }}
+              style={{
+                background: "transparent",
+                border: "none",
+                padding: 4,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                color: "var(--text-secondary)",
+              }}
+              title="Close"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Tabs */}
+          <div style={{ display: "flex", borderBottom: "1px solid var(--border-color)" }}>
+            <button
+              onClick={() => setActiveTab("label")}
+              style={{
+                flex: 1,
+                padding: "8px 12px",
+                fontSize: 13,
+                fontWeight: activeTab === "label" ? 600 : 400,
+                background: activeTab === "label" ? "var(--bg-primary)" : "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: activeTab === "label" ? "var(--text-primary)" : "var(--text-secondary)",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                justifyContent: "center",
+              }}
+            >
+              <Tag size={14} />
+              Label
+            </button>
+            <button
+              onClick={() => setActiveTab("content")}
+              style={{
+                flex: 1,
+                padding: "8px 12px",
+                fontSize: 13,
+                fontWeight: activeTab === "content" ? 600 : 400,
+                background: activeTab === "content" ? "var(--bg-primary)" : "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: activeTab === "content" ? "var(--text-primary)" : "var(--text-secondary)",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                justifyContent: "center",
+              }}
+            >
+              <Edit3 size={14} />
+              Content
+            </button>
+          </div>
+
+          {/* Tab content */}
+          <div style={{ padding: 12 }}>
+            {activeTab === "label" ? (
+              <div>
+                {/* Label selector */}
+                {!isEditingLabel ? (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>PII Type:</div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
+                        {region.pii_type}
+                      </span>
+                      <button
+                        className="btn-ghost btn-sm"
+                        onClick={() => setIsEditingLabel(true)}
+                        title="Change label"
+                        style={{ padding: "2px 6px", fontSize: 11 }}
+                      >
+                        Change
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>Select PII Type:</div>
+                    <select
+                      autoFocus
+                      value={region.pii_type}
+                      onChange={(e) => {
+                        onUpdateLabel?.(region.id, e.target.value as PIIType);
+                        setIsEditingLabel(false);
+                      }}
+                      onBlur={() => setIsEditingLabel(false)}
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        fontSize: 13,
+                        background: "var(--bg-primary)",
+                        border: "1px solid var(--border-color)",
+                        borderRadius: 4,
+                        color: "var(--text-primary)",
+                      }}
+                    >
+                      <option value="PERSON">PERSON</option>
+                      <option value="ORG">ORG</option>
+                      <option value="EMAIL">EMAIL</option>
+                      <option value="PHONE">PHONE</option>
+                      <option value="SSN">SSN</option>
+                      <option value="CREDIT_CARD">CREDIT_CARD</option>
+                      <option value="DATE">DATE</option>
+                      <option value="ADDRESS">ADDRESS</option>
+                      <option value="LOCATION">LOCATION</option>
+                      <option value="IP_ADDRESS">IP_ADDRESS</option>
+                      <option value="IBAN">IBAN</option>
+                      <option value="PASSPORT">PASSPORT</option>
+                      <option value="DRIVER_LICENSE">DRIVER_LICENSE</option>
+                      <option value="CUSTOM">CUSTOM</option>
+                      <option value="UNKNOWN">UNKNOWN</option>
+                    </select>
+                  </div>
+                )}
+
+                {/* Confidence */}
+                <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 8 }}>
+                  Confidence: <span style={{ fontWeight: 600 }}>{Math.round(region.confidence * 100)}%</span>
+                </div>
+              </div>
+            ) : (
+              <div>
+                {/* Content text - editable only for images */}
+                {!isEditingText ? (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>Detected Text:</div>
+                    <div style={{ 
+                      fontSize: 13, 
+                      color: "var(--text-primary)", 
+                      padding: "8px",
+                      background: "var(--bg-primary)",
+                      borderRadius: 4,
+                      wordBreak: "break-word",
+                      maxHeight: 120,
+                      overflow: "auto",
+                    }}>
+                      "{region.text}"
+                    </div>
+                    {isImageFile && onUpdateText && (
+                      <button
+                        className="btn-ghost btn-sm"
+                        onClick={() => {
+                          setEditedText(region.text);
+                          setIsEditingText(true);
+                        }}
+                        title="Edit text (images only)"
+                        style={{ padding: "6px 10px", fontSize: 12, marginTop: 8 }}
+                      >
+                        Edit Text
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>Edit Text:</div>
+                    <textarea
+                      autoFocus
+                      value={editedText}
+                      onChange={(e) => setEditedText(e.target.value)}
+                      style={{
+                        width: "100%",
+                        minHeight: 80,
+                        padding: "8px",
+                        fontSize: 13,
+                        background: "var(--bg-primary)",
+                        border: "1px solid var(--border-color)",
+                        borderRadius: 4,
+                        color: "var(--text-primary)",
+                        resize: "vertical",
+                        fontFamily: "inherit",
+                      }}
+                    />
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <button
+                        className="btn-primary btn-sm"
+                        onClick={() => {
+                          onUpdateText?.(region.id, editedText);
+                          setIsEditingText(false);
+                        }}
+                        style={{ padding: "6px 16px", fontSize: 12 }}
+                      >
+                        Save
+                      </button>
+                      <button
+                        className="btn-ghost btn-sm"
+                        onClick={() => {
+                          setEditedText(region.text);
+                          setIsEditingText(false);
+                        }}
+                        style={{ padding: "6px 16px", fontSize: 12 }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </>

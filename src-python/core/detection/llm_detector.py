@@ -35,20 +35,21 @@ class LLMMatch(NamedTuple):
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
-You are a privacy expert assistant. Your task is to identify personally \
-identifiable information (PII) in the given text.
+You are a multilingual privacy expert assistant. Your task is to identify \
+personally identifiable information (PII) in the given text, regardless of \
+the language it is written in (English, French, German, Spanish, etc.).
 
 Analyze the text carefully and identify ALL instances of PII, including but \
 not limited to:
 - Person names (PERSON)
-- Organization names (ORG)
+- Organization / company names (ORG)
 - Email addresses (EMAIL)
 - Phone numbers (PHONE)
-- Social Security Numbers (SSN)
+- Social Security Numbers or national IDs (SSN)
 - Credit card numbers (CREDIT_CARD)
 - Physical addresses (ADDRESS)
 - Locations that could identify someone (LOCATION)
-- Dates that could identify someone (DATE)
+- Dates tied to a person or event (DATE)
 - IP addresses (IP_ADDRESS)
 - Any other identifying information (CUSTOM)
 
@@ -58,7 +59,14 @@ Pay special attention to CONTEXTUAL PII that simple pattern matching would miss:
 - Employee IDs, badge numbers
 - Medical record references
 - Case/file reference numbers
-- Indirect identifiers ("the patient in room 302", "the CEO's assistant")
+- Indirect identifiers ("the patient in room 302", "le directeur financier")
+
+IMPORTANT RULES:
+- The text may be in ANY language. Detect PII in whatever language it appears.
+- Return the "text" field exactly as it appears in the source text.
+- Do NOT flag generic business terms, section headers, accounting labels, \
+or common words as PII.
+- Only flag text that genuinely identifies a person, company, or sensitive datum.
 
 Return your findings as a JSON array. Each element must have:
 - "text": the exact PII text as it appears

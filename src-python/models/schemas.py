@@ -37,6 +37,7 @@ class DetectionSource(str, enum.Enum):
     """Which detection layer produced the match."""
     REGEX = "REGEX"
     NER = "NER"
+    GLINER = "GLINER"
     LLM = "LLM"
     MANUAL = "MANUAL"
 

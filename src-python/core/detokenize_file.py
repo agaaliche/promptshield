@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import io
 import logging
-import tempfile
 from pathlib import Path
+
+import fitz  # PyMuPDF
 
 from core.config import config
 
@@ -111,27 +112,50 @@ def _detokenize_xlsx(data: bytes, vault) -> tuple[bytes, int, list[str]]:
 
 
 def _detokenize_pdf(data: bytes, vault) -> tuple[bytes, int, list[str]]:
-    """PDF — extract text, detokenize, and return as a .txt alongside info.
-
-    PDF text replacement in-place is extremely fragile (font subsetting,
-    encoded streams, etc.), so we extract text, detokenize it, and return
-    a .txt file.  The caller should communicate this to the user.
-    """
-    import pypdfium2 as pdfium
-
-    pdf = pdfium.PdfDocument(data)
-    pages_text: list[str] = []
-    for i in range(len(pdf)):
-        page = pdf[i]
-        tp = page.get_textpage()
-        pages_text.append(tp.get_text_range())
-        tp.close()
-        page.close()
-    pdf.close()
-
-    full_text = "\n\n--- Page Break ---\n\n".join(pages_text)
-    result, count, unresolved = vault.resolve_all_tokens(full_text)
-    return result.encode("utf-8"), count, unresolved
+    """PDF — extract text, replace tokens, create new PDF."""
+    # Open the PDF
+    pdf_doc = fitz.open(stream=data, filetype="pdf")
+    
+    total_replaced = 0
+    all_unresolved: list[str] = []
+    
+    # Create a new PDF for output
+    output_pdf = fitz.open()
+    
+    try:
+        # Process each page
+        for page_num in range(len(pdf_doc)):
+            page = pdf_doc[page_num]
+            
+            # Extract text
+            text = page.get_text()
+            
+            # Replace tokens
+            detokenized_text, count, unresolved = vault.resolve_all_tokens(text)
+            total_replaced += count
+            all_unresolved.extend(unresolved)
+            
+            # Create new page with detokenized text
+            # Use same dimensions as original
+            rect = page.rect
+            new_page = output_pdf.new_page(width=rect.width, height=rect.height)
+            
+            # Insert text (simple layout)
+            new_page.insert_text(
+                (50, 50),  # Start position
+                detokenized_text,
+                fontsize=11,
+                fontname="helv",
+            )
+        
+        # Save to bytes
+        output_bytes = output_pdf.tobytes(deflate=True, clean=True)
+        
+        return output_bytes, total_replaced, list(set(all_unresolved))
+        
+    finally:
+        pdf_doc.close()
+        output_pdf.close()
 
 
 # ---------------------------------------------------------------------------
@@ -187,13 +211,8 @@ def detokenize_file(
 
     output_data, count, unresolved = handler(file_data, vault)
 
-    # For PDF, output is .txt (we can't reliably rewrite PDF internals)
-    if ext == ".pdf":
-        stem = Path(filename).stem
-        out_name = f"{stem}_detokenized.txt"
-    else:
-        stem = Path(filename).stem
-        out_name = f"{stem}_detokenized{ext}"
+    stem = Path(filename).stem
+    out_name = f"{stem}_detokenized{ext}"
 
     logger.info(
         f"File de-tokenization: {filename} → {out_name}, "

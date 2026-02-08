@@ -8,7 +8,8 @@ from typing import Optional
 
 from core.config import config
 from core.detection.regex_detector import RegexMatch, detect_regex
-from core.detection.ner_detector import NERMatch, detect_ner, is_ner_available
+from core.detection.ner_detector import NERMatch, detect_ner, is_ner_available, detect_names_heuristic, _is_english_text
+from core.detection.gliner_detector import GLiNERMatch, detect_gliner, is_gliner_available
 from core.detection.bert_detector import (
     NERMatch as BERTNERMatch,
     detect_bert_ner,
@@ -25,6 +26,89 @@ from models.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _bbox_overlap_area(a: BBox, b: BBox) -> float:
+    """Return the area of intersection between two bounding boxes."""
+    ix0 = max(a.x0, b.x0)
+    iy0 = max(a.y0, b.y0)
+    ix1 = min(a.x1, b.x1)
+    iy1 = min(a.y1, b.y1)
+    if ix1 <= ix0 or iy1 <= iy0:
+        return 0.0
+    return (ix1 - ix0) * (iy1 - iy0)
+
+
+def _bbox_area(b: BBox) -> float:
+    return max(0.0, b.x1 - b.x0) * max(0.0, b.y1 - b.y0)
+
+
+def _resolve_bbox_overlaps(regions: list[PIIRegion]) -> list[PIIRegion]:
+    """
+    Ensure no two highlight rectangles overlap on the same page.
+
+    Strategy:
+    1. Sort regions by area descending (process larger boxes first).
+    2. For each pair with overlapping bboxes, shrink or clip the
+       lower-confidence region so it no longer overlaps.
+    3. If clipping would reduce a region to near-zero area, drop it.
+    """
+    if len(regions) <= 1:
+        return regions
+
+    # Work with a mutable copy; sort by confidence desc so we keep the
+    # strongest regions intact and clip weaker ones around them.
+    result = sorted(regions, key=lambda r: -r.confidence)
+    final: list[PIIRegion] = []
+
+    for region in result:
+        bbox = BBox(
+            x0=region.bbox.x0,
+            y0=region.bbox.y0,
+            x1=region.bbox.x1,
+            y1=region.bbox.y1,
+        )
+
+        for keeper in final:
+            if _bbox_overlap_area(bbox, keeper.bbox) <= 0:
+                continue
+
+            # The two boxes overlap — clip `bbox` away from `keeper.bbox`.
+            # Choose the axis where the overlap is smallest to preserve
+            # as much of the region as possible.
+            overlap_x = min(bbox.x1, keeper.bbox.x1) - max(bbox.x0, keeper.bbox.x0)
+            overlap_y = min(bbox.y1, keeper.bbox.y1) - max(bbox.y0, keeper.bbox.y0)
+
+            # Determine which side of the keeper the region mostly lives on
+            cx = (bbox.x0 + bbox.x1) / 2
+            cy = (bbox.y0 + bbox.y1) / 2
+            kcx = (keeper.bbox.x0 + keeper.bbox.x1) / 2
+            kcy = (keeper.bbox.y0 + keeper.bbox.y1) / 2
+
+            if overlap_y <= overlap_x:
+                # Clip vertically
+                if cy < kcy:
+                    # Region is above the keeper — shrink bottom
+                    bbox = BBox(x0=bbox.x0, y0=bbox.y0, x1=bbox.x1, y1=keeper.bbox.y0)
+                else:
+                    # Region is below the keeper — shrink top
+                    bbox = BBox(x0=bbox.x0, y0=keeper.bbox.y1, x1=bbox.x1, y1=bbox.y1)
+            else:
+                # Clip horizontally
+                if cx < kcx:
+                    # Region is left of keeper — shrink right
+                    bbox = BBox(x0=bbox.x0, y0=bbox.y0, x1=keeper.bbox.x0, y1=bbox.y1)
+                else:
+                    # Region is right of keeper — shrink left
+                    bbox = BBox(x0=keeper.bbox.x1, y0=bbox.y0, x1=bbox.x1, y1=bbox.y1)
+
+        # Drop regions that became too small (< 2pt in either dimension)
+        if bbox.width < 2 or bbox.height < 2:
+            continue
+
+        final.append(region.model_copy(update={"bbox": bbox}))
+
+    return final
 
 
 def _char_offset_to_bbox(
@@ -91,6 +175,7 @@ def _merge_detections(
     ner_matches: list[NERMatch],
     llm_matches: list[LLMMatch],
     page_data: PageData,
+    gliner_matches: list[GLiNERMatch] | None = None,
 ) -> list[PIIRegion]:
     """
     Merge detection results from all layers into unified PIIRegion list.
@@ -127,6 +212,14 @@ def _merge_detections(
             "start": m.start, "end": m.end, "text": m.text,
             "pii_type": m.pii_type, "confidence": m.confidence,
             "source": DetectionSource.NER,
+            "priority": 2,
+        })
+
+    for m in (gliner_matches or []):
+        candidates.append({
+            "start": m.start, "end": m.end, "text": m.text,
+            "pii_type": m.pii_type, "confidence": m.confidence,
+            "source": DetectionSource.GLINER,
             "priority": 2,
         })
 
@@ -221,6 +314,9 @@ def _merge_detections(
             char_end=item["end"],
         ))
 
+    # Resolve any remaining bounding-box overlaps
+    regions = _resolve_bbox_overlaps(regions)
+
     return regions
 
 
@@ -251,21 +347,57 @@ def detect_pii_on_page(
         )
 
     # Layer 2: NER (spaCy or HuggingFace BERT, depending on config)
+    # Always supplements with heuristic name detection for coverage.
     ner_matches: list[NERMatch] = []
     if config.ner_enabled:
-        if config.ner_backend != "spacy" and is_bert_ner_available():
+        # Try BERT first if configured — but only on English text
+        # (BERT models are English-only; non-English text produces garbage)
+        if config.ner_backend != "spacy" and is_bert_ner_available() and _is_english_text(text):
             bert_results = detect_bert_ner(text)
-            # BERTNERMatch is structurally identical to NERMatch
             ner_matches = [NERMatch(*m) for m in bert_results]
             logger.info(
                 f"Page {page_data.page_number}: BERT NER ({config.ner_backend}) "
                 f"found {len(ner_matches)} matches"
             )
+        elif config.ner_backend != "spacy" and is_bert_ner_available() and not _is_english_text(text):
+            logger.info(
+                f"Page {page_data.page_number}: Skipping BERT NER — text is not English"
+            )
+        # Fall back to spaCy (even if config says BERT, if BERT unavailable)
         elif is_ner_available():
             ner_matches = detect_ner(text)
             logger.info(
                 f"Page {page_data.page_number}: spaCy NER found {len(ner_matches)} matches"
             )
+
+        # Always run lightweight heuristic as a supplement —
+        # catches names that NER models miss (especially small models).
+        heuristic_matches = detect_names_heuristic(text)
+        if heuristic_matches:
+            # Only add heuristic matches that don't overlap with existing NER
+            existing_spans = {(m.start, m.end) for m in ner_matches}
+            for hm in heuristic_matches:
+                overlaps = any(
+                    hm.start < e_end and hm.end > e_start
+                    for e_start, e_end in existing_spans
+                )
+                if not overlaps:
+                    ner_matches.append(hm)
+            logger.info(
+                f"Page {page_data.page_number}: Heuristic added "
+                f"{len(heuristic_matches)} name candidates"
+            )
+
+    # Layer 2b: GLiNER (multilingual NER — runs on ALL languages)
+    gliner_matches: list[GLiNERMatch] = []
+    if config.ner_enabled and is_gliner_available():
+        try:
+            gliner_matches = detect_gliner(text)
+            logger.info(
+                f"Page {page_data.page_number}: GLiNER found {len(gliner_matches)} matches"
+            )
+        except Exception as e:
+            logger.error(f"GLiNER detection failed: {e}")
 
     # Layer 3: LLM (slowest — runs last)
     llm_matches: list[LLMMatch] = []
@@ -276,10 +408,109 @@ def detect_pii_on_page(
         )
 
     # Merge all layers
-    regions = _merge_detections(regex_matches, ner_matches, llm_matches, page_data)
+    regions = _merge_detections(
+        regex_matches, ner_matches, llm_matches, page_data,
+        gliner_matches=gliner_matches,
+    )
     logger.info(
         f"Page {page_data.page_number}: {len(regions)} merged PII regions "
-        f"(regex={len(regex_matches)}, ner={len(ner_matches)}, llm={len(llm_matches)})"
+        f"(regex={len(regex_matches)}, ner={len(ner_matches)}, "
+        f"gliner={len(gliner_matches)}, llm={len(llm_matches)})"
     )
 
     return regions
+
+
+def reanalyze_bbox(
+    page_data: PageData,
+    bbox: BBox,
+    llm_engine=None,
+) -> dict:
+    """
+    Analyze the text content under a bounding box and return the best
+    PII classification.
+
+    Returns dict with keys: text, pii_type, confidence, source.
+    """
+    # 1. Extract text blocks that overlap the given bbox
+    overlapping_text_parts: list[str] = []
+    for block in page_data.text_blocks:
+        bb = block.bbox
+        # Check spatial overlap
+        if bb.x0 < bbox.x1 and bb.x1 > bbox.x0 and bb.y0 < bbox.y1 and bb.y1 > bbox.y0:
+            overlapping_text_parts.append(block.text)
+
+    text = " ".join(overlapping_text_parts).strip()
+    if not text:
+        return {"text": "", "pii_type": "CUSTOM", "confidence": 0.0, "source": "MANUAL"}
+
+    # 2. Run detection layers on the extracted text
+    regex_matches = detect_regex(text) if config.regex_enabled else []
+
+    ner_matches: list[NERMatch] = []
+    if config.ner_enabled:
+        if config.ner_backend != "spacy" and is_bert_ner_available() and _is_english_text(text):
+            bert_results = detect_bert_ner(text)
+            ner_matches = [NERMatch(*m) for m in bert_results]
+        elif is_ner_available():
+            ner_matches = detect_ner(text)
+
+        # Supplement with heuristic
+        heuristic_matches = detect_names_heuristic(text)
+        existing_spans = {(m.start, m.end) for m in ner_matches}
+        for hm in heuristic_matches:
+            if not any(hm.start < ee and hm.end > es for es, ee in existing_spans):
+                ner_matches.append(hm)
+
+    llm_matches: list[LLMMatch] = []
+    if config.llm_detection_enabled and llm_engine is not None:
+        llm_matches = detect_llm(text, llm_engine)
+
+    # GLiNER (multilingual)
+    gliner_matches: list[GLiNERMatch] = []
+    if config.ner_enabled and is_gliner_available():
+        try:
+            gliner_matches = detect_gliner(text)
+        except Exception:
+            pass
+
+    # 3. Pick the best match (highest confidence across all layers)
+    best_type = "CUSTOM"
+    best_confidence = 0.0
+    best_source = "MANUAL"
+
+    for m in regex_matches:
+        if m.confidence > best_confidence:
+            best_type = m.pii_type.value if hasattr(m.pii_type, "value") else str(m.pii_type)
+            best_confidence = m.confidence
+            best_source = "REGEX"
+
+    for m in ner_matches:
+        if m.confidence > best_confidence:
+            best_type = m.pii_type.value if hasattr(m.pii_type, "value") else str(m.pii_type)
+            best_confidence = m.confidence
+            best_source = "NER"
+
+    for m in gliner_matches:
+        if m.confidence > best_confidence:
+            best_type = m.pii_type.value if hasattr(m.pii_type, "value") else str(m.pii_type)
+            best_confidence = m.confidence
+            best_source = "GLINER"
+
+    for m in llm_matches:
+        if m.confidence > best_confidence:
+            best_type = m.pii_type.value if hasattr(m.pii_type, "value") else str(m.pii_type)
+            best_confidence = m.confidence
+            best_source = "LLM"
+
+    logger.info(
+        f"Reanalyze bbox: text='{text[:50]}' -> {best_type} "
+        f"({best_confidence:.0%}, {best_source})"
+    )
+
+    return {
+        "text": text,
+        "pii_type": best_type,
+        "confidence": best_confidence,
+        "source": best_source,
+    }

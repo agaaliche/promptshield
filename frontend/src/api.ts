@@ -134,6 +134,47 @@ export async function updateRegionBBox(
   });
 }
 
+export async function reanalyzeRegion(
+  docId: string,
+  regionId: string,
+): Promise<{ region_id: string; text: string; pii_type: string; confidence: number; source: string }> {
+  return request(`/api/documents/${docId}/regions/${regionId}/reanalyze`, {
+    method: "POST",
+  });
+}
+
+export async function updateRegionLabel(
+  docId: string,
+  regionId: string,
+  piiType: string,
+): Promise<void> {
+  await request(`/api/documents/${docId}/regions/${regionId}/label`, {
+    method: "PUT",
+    body: JSON.stringify({ pii_type: piiType }),
+  });
+}
+
+export async function updateRegionText(
+  docId: string,
+  regionId: string,
+  text: string,
+): Promise<void> {
+  await request(`/api/documents/${docId}/regions/${regionId}/text`, {
+    method: "PUT",
+    body: JSON.stringify({ text }),
+  });
+}
+
+export async function highlightAllRegions(
+  docId: string,
+  regionId: string,
+): Promise<{ created: number; new_regions: PIIRegion[]; all_ids: string[] }> {
+  return request(`/api/documents/${docId}/regions/highlight-all`, {
+    method: "POST",
+    body: JSON.stringify({ region_id: regionId }),
+  });
+}
+
 // ──────────────────────────────────────────────
 // Anonymization
 // ──────────────────────────────────────────────

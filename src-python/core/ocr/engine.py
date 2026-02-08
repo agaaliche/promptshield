@@ -77,6 +77,7 @@ def ocr_page_image(
         img,
         lang=config.ocr_language,
         output_type=pytesseract.Output.DICT,
+        config=f"--oem 1 --psm 6 --dpi {config.ocr_dpi}",
     )
 
     blocks: list[TextBlock] = []
@@ -87,7 +88,8 @@ def ocr_page_image(
         conf = int(data["conf"][i])
 
         # Skip empty / low-confidence entries
-        if not text or conf < 0:
+        # Raise threshold from 0 to 30 to reduce garbage tokens
+        if not text or conf < 30:
             continue
 
         # Tesseract returns pixel-based bounding boxes

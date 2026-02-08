@@ -6,7 +6,7 @@ export type PIIType =
   | "IP_ADDRESS" | "IBAN" | "PASSPORT" | "DRIVER_LICENSE"
   | "CUSTOM" | "UNKNOWN";
 
-export type DetectionSource = "REGEX" | "NER" | "LLM" | "MANUAL";
+export type DetectionSource = "REGEX" | "NER" | "GLINER" | "LLM" | "MANUAL";
 export type RegionAction = "PENDING" | "CANCEL" | "REMOVE" | "TOKENIZE";
 export type DocumentStatus =
   | "UPLOADING" | "PROCESSING" | "DETECTING"

@@ -177,10 +177,11 @@ class TokenVault:
 
     def generate_token_string(self, pii_type: PIIType) -> str:
         """Generate a unique token string like [ANON_PERSON_A3F2B1]."""
+        type_str = pii_type.value if isinstance(pii_type, PIIType) else str(pii_type)
         hex_part = secrets.token_hex(3).upper()  # 6 hex chars
         token = config.token_format.format(
             prefix=config.token_prefix,
-            type=pii_type.value,
+            type=type_str,
             hex=hex_part,
         )
 
@@ -189,7 +190,7 @@ class TokenVault:
             hex_part = secrets.token_hex(3).upper()
             token = config.token_format.format(
                 prefix=config.token_prefix,
-                type=pii_type.value,
+                type=type_str,
                 hex=hex_part,
             )
 
@@ -216,7 +217,7 @@ class TokenVault:
                 mapping.token_id,
                 mapping.token_string,
                 self._encrypt(mapping.original_text),
-                mapping.pii_type.value,
+                mapping.pii_type.value if isinstance(mapping.pii_type, PIIType) else str(mapping.pii_type),
                 mapping.source_document,
                 self._encrypt(mapping.context_snippet) if mapping.context_snippet else None,
                 mapping.created_at.isoformat(),
@@ -302,7 +303,7 @@ class TokenVault:
             params.append(source_document)
         if pii_type:
             query += " AND pii_type = ?"
-            params.append(pii_type.value)
+            params.append(pii_type.value if isinstance(pii_type, PIIType) else str(pii_type))
 
         query += " ORDER BY created_at DESC"
         rows = self._conn.execute(query, params).fetchall()

@@ -19,6 +19,39 @@ from models.schemas import BBox, DocumentInfo, DocumentStatus, PageData, TextBlo
 
 logger = logging.getLogger(__name__)
 
+
+def _build_full_text(text_blocks: list[TextBlock]) -> str:
+    """Build full_text from text blocks, inserting newlines between
+    lines that are spatially separated (different vertical position).
+
+    This gives NER/regex much better input than a flat space-joined
+    string because sentence boundaries are preserved.
+    """
+    if not text_blocks:
+        return ""
+
+    # Sort blocks top-to-bottom, left-to-right
+    sorted_blocks = sorted(text_blocks, key=lambda b: (b.bbox.y0, b.bbox.x0))
+
+    parts: list[str] = []
+    prev_y: float | None = None
+    line_height = 0.0
+
+    for block in sorted_blocks:
+        if prev_y is not None:
+            # If vertical gap is significant (> half line height), insert newline
+            gap = block.bbox.y0 - prev_y
+            if line_height > 0 and gap > line_height * 0.6:
+                parts.append("\n")
+            else:
+                parts.append(" ")
+        parts.append(block.text)
+        line_height = max(line_height, block.bbox.y1 - block.bbox.y0)
+        prev_y = block.bbox.y0
+
+    return "".join(parts).strip()
+
+
 # Supported MIME types
 PDF_TYPES = {"application/pdf"}
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/tiff", "image/bmp", "image/webp"}
@@ -173,13 +206,13 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
         text_blocks = _extract_text_blocks_from_page(pdf_page, i)
 
         # If very few text blocks found, page might be scanned — try OCR
-        full_text = " ".join(b.text for b in text_blocks)
+        full_text = _build_full_text(text_blocks)
         if len(full_text.strip()) < 20:
             logger.info(f"Page {i + 1}: sparse text ({len(full_text)} chars), running OCR")
             ocr_blocks = ocr_page_image(bitmap_path, width, height)
             if ocr_blocks:
                 text_blocks = ocr_blocks
-                full_text = " ".join(b.text for b in text_blocks)
+                full_text = _build_full_text(text_blocks)
 
         pages.append(PageData(
             page_number=i + 1,
@@ -201,11 +234,20 @@ def _process_image(image_path: Path, doc_id: str) -> list[PageData]:
     # Save as PNG in temp
     out_path = config.temp_dir / doc_id / "page_0001.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(str(out_path), "PNG")
+
+    # Upscale small images to improve OCR accuracy
+    min_dim = min(width, height)
+    if min_dim < 1500:
+        scale = max(2, 1500 // min_dim)
+        big = img.resize((width * scale, height * scale), Image.LANCZOS)
+        big.save(str(out_path), "PNG")
+        logger.info(f"Upscaled image {width}x{height} by {scale}x for OCR")
+    else:
+        img.save(str(out_path), "PNG")
 
     # OCR is required for images
     text_blocks = ocr_page_image(out_path, float(width), float(height))
-    full_text = " ".join(b.text for b in text_blocks)
+    full_text = _build_full_text(text_blocks)
 
     return [PageData(
         page_number=1,

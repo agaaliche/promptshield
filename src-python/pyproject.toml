@@ -18,6 +18,10 @@ dependencies = [
     "aiofiles>=24.1.0",
     "transformers>=4.40.0",
     "torch>=2.2.0",
+    "gliner>=0.2.0",
+    "onnxruntime>=1.17.0",
+    "sentencepiece>=0.2.0",
+    "PyMuPDF>=1.24.0",
 ]
 
 [project.optional-dependencies]

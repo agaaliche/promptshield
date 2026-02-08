@@ -51,7 +51,9 @@ class TestRegexDetector:
         assert "EMAIL" in types
 
     def test_iban_detection(self):
+        # IBAN regex removed (too many FPs on financial docs).
+        # Now we just verify it does NOT match.
         text = "Wire to IBAN DE89370400440532013000 please."
         matches = detect_regex(text)
-        iban_matches = [m for m in matches if m.pii_type == "IBAN"]
-        assert len(iban_matches) == 1
+        iban_matches = [m for m in matches if getattr(m.pii_type, 'value', m.pii_type) == "IBAN"]
+        assert len(iban_matches) == 0

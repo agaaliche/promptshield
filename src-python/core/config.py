@@ -43,7 +43,7 @@ class AppConfig(BaseModel):
     regex_enabled: bool = True
     ner_enabled: bool = True
     llm_detection_enabled: bool = True
-    confidence_threshold: float = 0.3                  # Minimum confidence to show highlight
+    confidence_threshold: float = 0.55                  # Minimum confidence to show highlight
 
     # NER backend: "spacy" uses spaCy models, or set to a HuggingFace model id
     # like "dslim/bert-base-NER" for BERT-based detection.
@@ -112,7 +112,7 @@ class AppConfig(BaseModel):
         if not path.exists():
             return
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
             for key, value in data.items():
                 if key in self._PERSISTABLE_KEYS and hasattr(self, key):
                     setattr(self, key, value)

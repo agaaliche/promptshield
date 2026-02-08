@@ -4,16 +4,57 @@ Detects named entities: PERSON, ORG, GPE, DATE, LOC, MONEY, etc.
 Supports transformer models (en_core_web_trf) for highest accuracy,
 with automatic fallback to lg → sm.  Long texts are processed in
 overlapping chunks so NER quality stays high.
+
+When no spaCy model is available, a lightweight heuristic name
+detector provides basic name coverage as a fallback.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from typing import NamedTuple
+
+from spacy.lang.en.stop_words import STOP_WORDS as _EN_STOP_WORDS
 
 from models.schemas import PIIType
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Lightweight language detection — skip English NER on non-English text
+# ---------------------------------------------------------------------------
+# Uses spaCy's built-in English stop word list (326 words) so we need
+# zero extra dependencies.  If fewer than 15% of the words in a text
+# sample are English stop words, the text is almost certainly not English
+# and running en_core_web_* on it will produce only garbage.
+
+_EN_STOP_LOWER: set[str] = {w.lower() for w in _EN_STOP_WORDS}
+_LANG_SAMPLE_SIZE = 2000  # characters to sample for language check
+_ENGLISH_STOPWORD_THRESHOLD = 0.15  # 15% — English text typically 25-40%
+
+
+def _is_english_text(text: str) -> bool:
+    """Quick heuristic: is *text* likely English?
+
+    Samples the first ~2 000 characters, tokenises by whitespace,
+    and checks what fraction of tokens are English stop words.
+    English prose normally has 25-40 % stop words; non-English text
+    (French, German, etc.) usually falls well below 15 %.
+    """
+    sample = text[:_LANG_SAMPLE_SIZE]
+    words = [w.lower().strip(".,;:!?()[]{}\"'") for w in sample.split()]
+    words = [w for w in words if len(w) >= 2]  # drop 1-char tokens
+    if len(words) < 20:
+        # Too short to judge — assume English to avoid blocking real PII
+        return True
+    stop_count = sum(1 for w in words if w in _EN_STOP_LOWER)
+    ratio = stop_count / len(words)
+    logger.debug(
+        "Language check: %d/%d words (%.1f%%) are English stop words",
+        stop_count, len(words), ratio * 100,
+    )
+    return ratio >= _ENGLISH_STOPWORD_THRESHOLD
 
 
 class NERMatch(NamedTuple):
@@ -24,16 +65,73 @@ class NERMatch(NamedTuple):
     confidence: float
 
 
-# Map spaCy entity labels to our PII types
+# Map spaCy entity labels to our PII types.
+# Only keep types that are genuinely PII — drop NORP (nationalities),
+# FAC (facilities), MONEY (amounts), and DATE (handled better by regex).
 _SPACY_LABEL_MAP: dict[str, PIIType] = {
     "PERSON": PIIType.PERSON,
     "ORG": PIIType.ORG,
     "GPE": PIIType.LOCATION,      # Countries, cities, states
     "LOC": PIIType.LOCATION,      # Non-GPE locations
-    "DATE": PIIType.DATE,
-    "NORP": PIIType.ORG,          # Nationalities, religious/political groups
-    "FAC": PIIType.ADDRESS,       # Facilities / buildings
-    "MONEY": PIIType.UNKNOWN,     # Financial amounts can be PII in context
+    # DATE intentionally omitted — regex handles concrete dates much better;
+    # NER dates are mostly noise ("Q4 2024", "the Year Ended ...", "Tuesday").
+}
+
+# Minimum entity text length per type (filter out noise)
+_MIN_ENTITY_LENGTH: dict[PIIType, int] = {
+    PIIType.PERSON: 3,
+    PIIType.ORG: 2,
+    PIIType.LOCATION: 2,
+    PIIType.DATE: 4,
+    PIIType.ADDRESS: 3,
+    PIIType.UNKNOWN: 3,
+}
+
+# Common false-positive strings for PERSON type
+_PERSON_STOPWORDS: set[str] = {
+    "the", "a", "an", "this", "that", "it", "i", "we", "you", "he", "she",
+    "my", "your", "his", "her", "our", "their", "its",
+    "mr", "mrs", "ms", "dr", "prof",  # titles alone without a name
+    "dear", "hi", "hello", "yes", "no", "ok", "please", "thank", "thanks",
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "page", "section", "table", "figure", "chapter", "appendix",
+    "total", "amount", "balance", "date", "number", "type",
+}
+
+# Job titles / roles that spaCy often appends to PERSON entities
+_TITLE_SUFFIXES: set[str] = {
+    "chairman", "chairwoman", "chairperson", "chair",
+    "president", "vice", "director", "officer", "manager",
+    "chief", "executive", "ceo", "cfo", "coo", "cto", "cio",
+    "secretary", "treasurer", "counsel", "attorney",
+    "partner", "associate", "analyst", "consultant",
+    "md", "svp", "evp", "vp",
+    "head", "lead", "senior", "junior",
+}
+
+# Strings that NER models frequently misclassify for ORG/DATE/LOC
+_GENERIC_STOPWORDS: set[str] = {
+    "q1", "q2", "q3", "q4", "fy", "ytd", "mtd",
+    "n/a", "na", "tbd", "tba", "etc", "pdf", "doc",
+    "inc", "llc", "ltd", "corp",  # too short to be useful alone
+    "quarterly", "annual", "monthly", "weekly", "daily",
+    "next", "last", "previous", "current", "recent",
+    "today", "tomorrow", "yesterday",
+    "above", "below", "total", "subtotal", "grand",
+}
+
+# Common false-positive strings for ORG type
+_ORG_STOPWORDS: set[str] = {
+    "inc", "llc", "ltd", "corp", "co", "plc",
+    "department", "section", "division", "group", "team",
+    "committee", "board", "council", "commission",
+    "act", "law", "regulation", "policy", "standard",
+    "agreement", "contract", "report", "summary",
+    "schedule", "exhibit", "annex", "appendix",
+    "article", "clause", "provision", "amendment",
+    "table", "figure", "chart", "graph",
 }
 
 # spaCy model (lazy-loaded)
@@ -81,12 +179,47 @@ def _load_model():
         _active_model_name = "en_core_web_sm"
         logger.info("Using fallback model 'en_core_web_sm'")
         return _nlp
-    except Exception as e:
+    except (Exception, SystemExit) as e:
         logger.error(f"Failed to load any spaCy model: {e}")
         raise RuntimeError(
             "No spaCy NER model available. Install one with: "
             "python -m spacy download en_core_web_lg"
         ) from e
+
+
+def _is_false_positive_person(text: str) -> bool:
+    """Return True if a PERSON entity is likely a false positive."""
+    clean = text.strip().lower()
+    # Single-word match that's a common false positive
+    if clean in _PERSON_STOPWORDS:
+        return True
+    # All-caps short strings (likely acronyms, not names)
+    if text.isupper() and len(text) <= 5:
+        return True
+    # Starts with a digit (unlikely name)
+    if text.strip() and text.strip()[0].isdigit():
+        return True
+    # Single word that doesn't look like a real name
+    words = text.strip().split()
+    if len(words) == 1 and len(words[0]) <= 3:
+        return True
+    return False
+
+
+def _is_false_positive_org(text: str) -> bool:
+    """Return True if an ORG entity is likely a false positive."""
+    clean = text.strip().lower()
+    if clean in _ORG_STOPWORDS:
+        return True
+    if clean in _GENERIC_STOPWORDS:
+        return True
+    # Very short org names are almost always noise
+    if len(clean) <= 2:
+        return True
+    # Single short all-caps word (abbreviations like "IT", "HR", "AI")
+    if text.isupper() and len(text.strip()) <= 4:
+        return True
+    return False
 
 
 def _process_chunk(nlp, text: str, global_offset: int) -> list[NERMatch]:
@@ -98,14 +231,54 @@ def _process_chunk(nlp, text: str, global_offset: int) -> list[NERMatch]:
         pii_type = _SPACY_LABEL_MAP.get(ent.label_)
         if pii_type is None:
             continue
-        if len(ent.text.strip()) < 2:
+
+        # Trim entity text at the first newline — spaCy sometimes grabs
+        # content that spills across lines.
+        raw_text = ent.text
+        nl_idx = raw_text.find("\n")
+        if nl_idx > 0:
+            raw_text = raw_text[:nl_idx]
+        cleaned = raw_text.strip()
+
+        # Strip leading articles / filler words
+        for prefix in ("the ", "The ", "a ", "A ", "an ", "An "):
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip()
+                break
+
+        # For PERSON entities, trim trailing job titles
+        # e.g. "Kathryn Ruemmler Chief" → "Kathryn Ruemmler"
+        if pii_type == PIIType.PERSON:
+            words = cleaned.split()
+            while len(words) > 2 and words[-1].lower() in _TITLE_SUFFIXES:
+                words.pop()
+            cleaned = " ".join(words)
+
+        min_len = _MIN_ENTITY_LENGTH.get(pii_type, 2)
+        if len(cleaned) < min_len:
             continue
 
+        # Filter obvious false positives per type
+        if pii_type == PIIType.PERSON and _is_false_positive_person(cleaned):
+            continue
+        if pii_type == PIIType.ORG and _is_false_positive_org(cleaned):
+            continue
+
+        # Filter generic NER noise — all-uppercase short tokens,
+        # single-char entities, or purely-numeric strings.
+        if cleaned.isupper() and len(cleaned) <= 5:
+            continue
+        if cleaned.isdigit():
+            continue
+        if cleaned.lower() in _GENERIC_STOPWORDS:
+            continue
+
+        end_char = ent.start_char + len(raw_text.rstrip())
         confidence = _estimate_confidence(ent, pii_type)
         matches.append(NERMatch(
             start=global_offset + ent.start_char,
-            end=global_offset + ent.end_char,
-            text=ent.text,
+            end=global_offset + end_char,
+            text=cleaned,
             pii_type=pii_type,
             confidence=confidence,
         ))
@@ -143,7 +316,13 @@ def detect_ner(text: str) -> list[NERMatch]:
     Run spaCy NER on text and return matches for PII-relevant entity types.
 
     Long texts are split into overlapping chunks so NER accuracy stays high.
+    Skips detection entirely if the text does not appear to be English,
+    since the English NER model produces only noise on other languages.
     """
+    if not _is_english_text(text):
+        logger.info("Text does not appear to be English — skipping NER")
+        return []
+
     nlp = _load_model()
 
     # Short texts — single pass (fast path)
@@ -170,21 +349,35 @@ def detect_ner(text: str) -> list[NERMatch]:
 def _estimate_confidence(ent, pii_type: PIIType) -> float:
     """Estimate confidence for a spaCy entity based on heuristics."""
     base_confidence = {
-        PIIType.PERSON: 0.85,
-        PIIType.ORG: 0.75,
-        PIIType.LOCATION: 0.75,
-        PIIType.DATE: 0.70,
-        PIIType.ADDRESS: 0.65,
-        PIIType.UNKNOWN: 0.50,
+        PIIType.PERSON: 0.80,
+        PIIType.ORG: 0.45,
+        PIIType.LOCATION: 0.40,   # generic place names are rarely PII
+        PIIType.ADDRESS: 0.55,
     }
-    conf = base_confidence.get(pii_type, 0.60)
+    conf = base_confidence.get(pii_type, 0.40)
 
-    # Boost for longer entities (more likely correct)
-    text_len = len(ent.text.strip())
-    if text_len > 10:
-        conf = min(conf + 0.05, 0.95)
-    elif text_len < 3:
-        conf = max(conf - 0.15, 0.30)
+    # Boost for multi-word entities (more likely correct, especially names)
+    text = ent.text.strip()
+    word_count = len(text.split())
+    if word_count >= 2 and pii_type == PIIType.PERSON:
+        conf = min(conf + 0.08, 0.95)   # "John Smith" > "John"
+    # Multi-word ORGs are more likely real company names
+    if word_count >= 2 and pii_type == PIIType.ORG:
+        conf = min(conf + 0.15, 0.80)   # "Goldman Sachs" > "Company"
+    if word_count >= 3 and pii_type == PIIType.ORG:
+        conf = min(conf + 0.05, 0.80)
+
+    # Single-word PERSON — reduce more aggressively (high FP rate)
+    if pii_type == PIIType.PERSON and word_count == 1:
+        conf = max(conf - 0.20, 0.40)
+
+    # Single-word ORG — very likely a false positive
+    if pii_type == PIIType.ORG and word_count == 1:
+        conf = max(conf - 0.15, 0.25)
+
+    # Single-word LOCATION — very likely noise ("London", "Tokyo")
+    if pii_type == PIIType.LOCATION and word_count == 1:
+        conf = max(conf - 0.10, 0.30)
 
     # Boost when using the transformer model (higher accuracy)
     if _active_model_name.endswith("_trf"):
@@ -192,7 +385,108 @@ def _estimate_confidence(ent, pii_type: PIIType) -> float:
     elif _active_model_name.endswith("_lg"):
         conf = min(conf + 0.03, 0.95)
 
-    return conf
+    return round(conf, 4)
+
+
+# ---------------------------------------------------------------------------
+# Lightweight heuristic name detector (fallback when spaCy isn't available)
+# ---------------------------------------------------------------------------
+
+# Common first names (top ~150 English first names) for heuristic matching.
+# EXCLUDES names that are also common English words (Grace, Mark, Frank, etc.)
+# to avoid false positives on document text.
+_COMMON_FIRST_NAMES: set[str] = {
+    "james", "john", "robert", "michael", "david", "william", "richard",
+    "joseph", "thomas", "charles", "christopher", "daniel", "matthew",
+    "anthony", "donald", "steven", "paul", "andrew", "joshua",
+    "kenneth", "kevin", "brian", "george", "timothy", "ronald", "edward",
+    "jason", "jeffrey", "ryan", "jacob", "nicholas", "eric",
+    "jonathan", "stephen", "larry", "justin", "scott", "brandon", "benjamin",
+    "samuel", "raymond", "gregory", "patrick", "alexander",
+    "dennis", "jerry", "tyler", "aaron", "jose", "nathan", "henry", "peter",
+    "adam", "zachary", "walter", "kyle", "harold", "carl", "jeremy", "roger",
+    "keith", "gerald", "eugene", "terry", "sean", "austin", "arthur", "jesse",
+    "dylan", "bryan", "jordan", "bruce", "albert", "willie",
+    "gabriel", "logan", "ralph", "lawrence", "wayne", "elijah", "randy",
+    "vincent", "philip", "bobby", "johnny", "bradley",
+    "mary", "patricia", "jennifer", "linda", "barbara", "elizabeth", "susan",
+    "jessica", "sarah", "karen", "lisa", "nancy", "betty", "margaret", "sandra",
+    "ashley", "dorothy", "kimberly", "emily", "donna", "michelle", "carol",
+    "amanda", "melissa", "deborah", "stephanie", "rebecca", "sharon", "laura",
+    "cynthia", "kathleen", "amy", "angela", "shirley", "anna", "brenda",
+    "pamela", "emma", "nicole", "helen", "samantha", "katherine", "christine",
+    "debra", "rachel", "carolyn", "janet", "catherine", "maria", "heather",
+    "diane", "ruth", "julie", "olivia", "joyce", "virginia", "victoria",
+    "kelly", "lauren", "christina", "joan", "evelyn", "judith", "megan",
+    "andrea", "cheryl", "hannah", "jacqueline", "martha", "gloria", "teresa",
+    "sara", "madison", "frances", "kathryn", "janice", "jean", "abigail",
+    "alice", "judy", "sophia", "denise", "doris", "marilyn",
+    "danielle", "beverly", "isabella", "theresa", "diana", "natalie", "brittany",
+    "charlotte", "marie", "kayla", "alexis", "lori",
+}
+
+# Patterns for the heuristic fallback — use literal space (not \s+) so
+# we don't match across tab-separated columns or wide whitespace.
+_CAPITALIZED_NAME = re.compile(
+    r"\b([A-Z][a-z]{1,20}) ([A-Z][a-z]{1,20}(?: [A-Z][a-z]{1,20})?)\b"
+)
+
+
+def detect_names_heuristic(text: str) -> list[NERMatch]:
+    """
+    Lightweight heuristic name detection — used as a fallback when
+    no spaCy or BERT model is available.
+
+    Looks for sequences of 2-3 capitalized words where the first word
+    is a known common first name. Confidence is moderate (0.65-0.75).
+
+    Also skipped for non-English text (the first-name list is English).
+    """
+    if not _is_english_text(text):
+        logger.info("Text does not appear to be English — skipping heuristic name detection")
+        return []
+
+    matches: list[NERMatch] = []
+
+    for m in _CAPITALIZED_NAME.finditer(text):
+        first_word = m.group(1).lower()
+        if first_word not in _COMMON_FIRST_NAMES:
+            continue
+
+        full_match = m.group(0)
+
+        # Trim at newline
+        nl_idx = full_match.find("\n")
+        if nl_idx > 0:
+            full_match = full_match[:nl_idx].strip()
+        if len(full_match.split()) < 2:
+            continue
+
+        # Skip if it looks like a title or header (all words capitalized
+        # in a short line is suspicious)
+        if _is_false_positive_person(full_match):
+            continue
+
+        # Skip if any word is in generic stopwords (catches "John Total" etc.)
+        # or is a job title (catches "David Chairman" etc.)
+        words = full_match.lower().split()
+        if any(w in _GENERIC_STOPWORDS or w in _PERSON_STOPWORDS or w in _TITLE_SUFFIXES for w in words):
+            continue
+
+        word_count = len(full_match.split())
+        # Low confidence so heuristic alone doesn't survive threshold;
+        # it only shows if NER or regex also flags the same span (cross-layer boost).
+        confidence = 0.50 if word_count == 2 else 0.55
+
+        matches.append(NERMatch(
+            start=m.start(),
+            end=m.end(),
+            text=full_match,
+            pii_type=PIIType.PERSON,
+            confidence=confidence,
+        ))
+
+    return _deduplicate_matches(matches)
 
 
 def get_active_model_name() -> str:
@@ -205,5 +499,5 @@ def is_ner_available() -> bool:
     try:
         _load_model()
         return True
-    except Exception:
+    except BaseException:
         return False

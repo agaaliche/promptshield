@@ -16,6 +16,7 @@ import {
   X,
   Trash2,
   Key,
+  Highlighter,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import {
@@ -28,6 +29,10 @@ import {
   unlockVault,
   addManualRegion,
   updateRegionBBox as updateRegionBBoxApi,
+  reanalyzeRegion,
+  highlightAllRegions,
+  updateRegionLabel,
+  updateRegionText,
 } from "../api";
 import { PII_COLORS, type BBox, type PIIRegion, type PIIType, type RegionAction } from "../types";
 import RegionOverlay, { type ResizeHandle } from "./RegionOverlay";
@@ -42,6 +47,7 @@ export default function DocumentViewer() {
     updateRegionAction,
     setRegions,
     updateRegionBBox,
+    updateRegion,
     zoom,
     setZoom,
     selectedRegionIds,
@@ -64,6 +70,7 @@ export default function DocumentViewer() {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
   const [imgSize, setImgSize] = useState({ width: 0, height: 0 });
   const [imgLoaded, setImgLoaded] = useState(false);
   const [showVaultPrompt, setShowVaultPrompt] = useState(false);
@@ -82,6 +89,13 @@ export default function DocumentViewer() {
   const [lassoStart, setLassoStart] = useState<{ x: number; y: number } | null>(null);
   const [lassoEnd, setLassoEnd] = useState<{ x: number; y: number } | null>(null);
 
+  // ── Pan (grab-to-scroll) state ──
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
+
+  // ── Clipboard state for copy-paste ──
+  const [copiedRegions, setCopiedRegions] = useState<PIIRegion[]>([]);
+
   // ── Move / resize interaction state ──
   const interactionRef = useRef<{
     mode: "moving" | "resizing";
@@ -93,6 +107,7 @@ export default function DocumentViewer() {
     hasMoved: boolean;
   } | null>(null);
   const [isInteracting, setIsInteracting] = useState(false);
+  const autoRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Keep mutable refs so global event handlers see latest values
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
@@ -103,6 +118,7 @@ export default function DocumentViewer() {
   if (!doc) return <div style={styles.empty}>No document loaded</div>;
 
   const pageCount = doc.page_count;
+  const isImageFile = doc.mime_type?.startsWith("image/") || false;
   const bitmapUrl = activeDocId
     ? getPageBitmapUrl(activeDocId, activePage)
     : "";
@@ -131,6 +147,143 @@ export default function DocumentViewer() {
     [activeDocId, updateRegionAction, pushUndo]
   );
 
+  const handleRefreshRegion = useCallback(
+    async (regionId: string) => {
+      if (!activeDocId) return;
+      try {
+        pushUndo();
+        const result = await reanalyzeRegion(activeDocId, regionId);
+        updateRegion(regionId, {
+          text: result.text,
+          pii_type: result.pii_type as PIIType,
+          confidence: result.confidence,
+          source: result.source as any,
+        });
+        setStatusMessage(
+          result.text
+            ? `Refreshed: ${result.pii_type} — "${result.text.slice(0, 40)}"`
+            : "No text found under this region"
+        );
+      } catch (e: any) {
+        console.error("Failed to refresh region:", e);
+        setStatusMessage(`Refresh failed: ${e.message}`);
+      }
+    },
+    [activeDocId, pushUndo, updateRegion, setStatusMessage]
+  );
+
+  const handleHighlightAll = useCallback(
+    async (regionId: string) => {
+      if (!activeDocId) return;
+      const region = regions.find((r) => r.id === regionId);
+      if (!region) return;
+      try {
+        pushUndo();
+        const resp = await highlightAllRegions(activeDocId, regionId);
+        // Merge new regions into store
+        if (resp.new_regions.length > 0) {
+          setRegions([...regions, ...resp.new_regions]);
+        }
+        // Select all matching (existing + newly created)
+        setSelectedRegionIds(resp.all_ids);
+        const msg = resp.created > 0
+          ? `Found ${resp.all_ids.length} occurrences of "${region.text}" (${resp.created} new)`
+          : `Highlighted ${resp.all_ids.length} existing region${resp.all_ids.length !== 1 ? "s" : ""} matching "${region.text}"`;
+        setStatusMessage(msg);
+      } catch (e: any) {
+        console.error("Highlight all failed:", e);
+        setStatusMessage(`Highlight all failed: ${e.message}`);
+      }
+    },
+    [activeDocId, regions, setRegions, setSelectedRegionIds, setStatusMessage, pushUndo]
+  );
+
+  const handleUpdateLabel = useCallback(
+    async (regionId: string, newType: PIIType) => {
+      if (!activeDocId) return;
+      try {
+        await updateRegionLabel(activeDocId, regionId, newType);
+        // Update local state
+        setRegions(regions.map(r => r.id === regionId ? { ...r, pii_type: newType } : r));
+      } catch (e: any) {
+        console.error("Update label failed:", e);
+        setStatusMessage(`Update failed: ${e.message}`);
+      }
+    },
+    [activeDocId, regions, setRegions, setStatusMessage]
+  );
+
+  const handleUpdateText = useCallback(
+    async (regionId: string, newText: string) => {
+      if (!activeDocId) return;
+      try {
+        await updateRegionText(activeDocId, regionId, newText);
+        // Update local state
+        setRegions(regions.map(r => r.id === regionId ? { ...r, text: newText } : r));
+      } catch (e: any) {
+        console.error("Update text failed:", e);
+        setStatusMessage(`Update failed: ${e.message}`);
+      }
+    },
+    [activeDocId, regions, setRegions, setStatusMessage]
+  );
+
+  const handlePasteRegions = useCallback(
+    async () => {
+      if (!activeDocId || copiedRegions.length === 0) return;
+      try {
+        pushUndo();
+        const newRegions: PIIRegion[] = [];
+        const newIds: string[] = [];
+
+        // Create new regions with same bbox but on current page
+        for (const copied of copiedRegions) {
+          const regionToPaste: Partial<PIIRegion> = {
+            page_number: activePage,
+            bbox: { ...copied.bbox },
+            text: copied.text,
+            pii_type: copied.pii_type,
+            confidence: copied.confidence,
+            source: "MANUAL",
+            char_start: 0,
+            char_end: 0,
+            action: copied.action === "CANCEL" ? "PENDING" : copied.action, // Don't paste cancelled regions
+          };
+
+          // Create the region on the backend
+          const response = await addManualRegion(activeDocId, regionToPaste);
+
+          // Construct the full region object with the returned ID
+          const created: PIIRegion = {
+            id: response.region_id,
+            page_number: activePage,
+            bbox: { ...copied.bbox },
+            text: copied.text,
+            pii_type: copied.pii_type,
+            confidence: copied.confidence,
+            source: "MANUAL",
+            char_start: 0,
+            char_end: 0,
+            action: copied.action === "CANCEL" ? "PENDING" : copied.action,
+          };
+
+          newRegions.push(created);
+          newIds.push(created.id);
+        }
+
+        // Add to local state
+        setRegions([...regions, ...newRegions]);
+        setSelectedRegionIds(newIds);
+        setStatusMessage(`Pasted ${newRegions.length} region(s) on page ${activePage}`);
+        setTimeout(() => setStatusMessage(""), 2000);
+      } catch (e: any) {
+        console.error("Failed to paste regions:", e);
+        setStatusMessage(`Paste failed: ${e.message}`);
+      }
+    },
+    [activeDocId, activePage, copiedRegions, regions, setRegions, setSelectedRegionIds, setStatusMessage, pushUndo]
+  );
+
   const handleBatchAction = useCallback(
     async (action: RegionAction) => {
       if (!activeDocId) return;
@@ -154,6 +307,44 @@ export default function DocumentViewer() {
     setShowTypePicker(false);
     setDrawnBBox(null);
   }, []);
+
+  // Cleanup auto-refresh timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoRefreshTimerRef.current) clearTimeout(autoRefreshTimerRef.current);
+    };
+  }, []);
+
+  // ── Scroll wheel page navigation ──
+  const wheelCooldown = useRef(false);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      // Only change page on vertical scroll when not holding Ctrl (Ctrl+scroll = browser zoom)
+      if (e.ctrlKey || e.metaKey) return;
+      if (wheelCooldown.current) return;
+      const threshold = 30; // minimum delta to trigger
+      if (Math.abs(e.deltaY) < threshold) return;
+
+      e.preventDefault();
+      wheelCooldown.current = true;
+      setTimeout(() => { wheelCooldown.current = false; }, 1000); // 1 second cooldown
+
+      if (e.deltaY > 0) {
+        // Scroll down → next page
+        setActivePage(Math.min(pageCount, activePage + 1));
+      } else {
+        // Scroll up → prev page
+        setActivePage(Math.max(1, activePage - 1));
+      }
+      
+      // Scroll to top of container after page change
+      el.scrollTop = 0;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [activePage, pageCount, setActivePage]);
 
   // ── Keyboard shortcuts ──
   useEffect(() => {
@@ -222,9 +413,25 @@ export default function DocumentViewer() {
           }
           break;
         case "c":
-          if (selectedRegionIds.length > 0 && !e.ctrlKey && !e.metaKey) {
+          if (e.ctrlKey || e.metaKey) {
+            // Ctrl+C: Copy selected regions
+            if (selectedRegionIds.length > 0) {
+              e.preventDefault();
+              const regionsToCopy = regions.filter((r) => selectedRegionIds.includes(r.id));
+              setCopiedRegions(regionsToCopy);
+              setStatusMessage(`Copied ${regionsToCopy.length} region(s)`);
+              setTimeout(() => setStatusMessage(""), 2000);
+            }
+          } else if (selectedRegionIds.length > 0) {
             e.preventDefault();
             selectedRegionIds.forEach((id) => handleRegionAction(id, "CANCEL"));
+          }
+          break;
+        case "v":
+          if ((e.ctrlKey || e.metaKey) && copiedRegions.length > 0) {
+            // Ctrl+V: Paste copied regions on current page
+            e.preventDefault();
+            handlePasteRegions();
           }
           break;
         case "Tab": {
@@ -243,7 +450,7 @@ export default function DocumentViewer() {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [activePage, pageCount, zoom, selectedRegionIds, pageRegions, setActivePage, setZoom, setSelectedRegionIds, clearSelection, handleRegionAction, undo, redo, drawMode, showTypePicker, cancelTypePicker, setDrawMode]);
+  }, [activePage, pageCount, zoom, selectedRegionIds, pageRegions, setActivePage, setZoom, setSelectedRegionIds, clearSelection, handleRegionAction, undo, redo, drawMode, showTypePicker, cancelTypePicker, setDrawMode, copiedRegions, handlePasteRegions]);
 
   // ── Anonymize ──
   const handleAnonymize = useCallback(async () => {
@@ -316,9 +523,36 @@ export default function DocumentViewer() {
   // ── Image load handler ──
   const onImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
-    setImgSize({ width: img.naturalWidth, height: img.naturalHeight });
+    // Use displayed dimensions, not natural dimensions
+    setImgSize({ width: img.offsetWidth, height: img.offsetHeight });
     setImgLoaded(true);
   }, []);
+
+  // ── Track displayed image size on window resize ──
+  useEffect(() => {
+    const updateImageSize = () => {
+      const img = imageRef.current;
+      if (img && img.offsetWidth > 0 && img.offsetHeight > 0) {
+        setImgSize({ width: img.offsetWidth, height: img.offsetHeight });
+      }
+    };
+
+    // Update on window resize
+    window.addEventListener('resize', updateImageSize);
+    
+    // Also use ResizeObserver for more accurate tracking
+    const img = imageRef.current;
+    let observer: ResizeObserver | null = null;
+    if (img && window.ResizeObserver) {
+      observer = new ResizeObserver(updateImageSize);
+      observer.observe(img);
+    }
+
+    return () => {
+      window.removeEventListener('resize', updateImageSize);
+      if (observer) observer.disconnect();
+    };
+  }, [imgLoaded]);
 
   // ── Page data for coordinate mapping ──
   const pageData = doc.pages[activePage - 1];
@@ -355,15 +589,22 @@ export default function DocumentViewer() {
         setDrawEnd(pos);
         return;
       }
-      // Normal mode: start lasso selection or clear selection
-      const pos = getPointerPosOnImage(e);
-      if (!pos) return;
-      e.preventDefault();
-      setIsLassoing(true);
-      setLassoStart(pos);
-      setLassoEnd(pos);
-      if (!e.ctrlKey && !e.metaKey) {
+      // Normal mode: Ctrl/Meta+drag = lasso select, plain drag = pan
+      if (e.ctrlKey || e.metaKey) {
+        const pos = getPointerPosOnImage(e);
+        if (!pos) return;
+        e.preventDefault();
+        setIsLassoing(true);
+        setLassoStart(pos);
+        setLassoEnd(pos);
+      } else {
+        // Pan mode - also clear selection when clicking on empty space
+        e.preventDefault();
         clearSelection();
+        const el = containerRef.current;
+        if (!el) return;
+        setIsPanning(true);
+        panStartRef.current = { x: e.clientX, y: e.clientY, scrollLeft: el.scrollLeft, scrollTop: el.scrollTop };
       }
     },
     [drawMode, getPointerPosOnImage, clearSelection]
@@ -379,13 +620,102 @@ export default function DocumentViewer() {
       if (isLassoing) {
         const pos = getPointerPosOnImage(e);
         if (pos) setLassoEnd(pos);
+        return;
+      }
+      if (isPanning && panStartRef.current) {
+        const el = containerRef.current;
+        if (!el) return;
+        const dx = e.clientX - panStartRef.current.x;
+        const dy = e.clientY - panStartRef.current.y;
+        el.scrollLeft = panStartRef.current.scrollLeft - dx;
+        el.scrollTop = panStartRef.current.scrollTop - dy;
       }
     },
-    [isDrawing, drawMode, isLassoing, getPointerPosOnImage]
+    [isDrawing, drawMode, isLassoing, isPanning, getPointerPosOnImage]
+  );
+
+  // ── Snap-to-text helper for resize and draw ──
+  // When resizing or drawing, snap edges to nearby text block boundaries (with padding).
+  // `edges` controls which edges snap: { left, right, top, bottom }.
+  const snapToText = useCallback(
+    (nb: BBox, edges: { left: boolean; right: boolean; top: boolean; bottom: boolean }): BBox => {
+      if (!pageData) return nb;
+
+      const blocks = pageData.text_blocks;
+      if (!blocks || blocks.length === 0) return nb;
+
+      // Padding in page-coordinate units (~2 display px).
+      const { width: iw, height: ih } = imgSizeRef.current;
+      const PAD_PX = 2;
+      const padX = iw > 0 ? (PAD_PX * pageData.width) / iw : 1;
+      const padY = ih > 0 ? (PAD_PX * pageData.height) / ih : 1;
+
+      // Snap distance threshold in page units (~8 display px)
+      const SNAP_PX = 8;
+      const snapDistX = iw > 0 ? (SNAP_PX * pageData.width) / iw : 4;
+      const snapDistY = ih > 0 ? (SNAP_PX * pageData.height) / ih : 4;
+
+      // Only consider blocks near the region
+      const relevantBlocks = blocks.filter((b) => (
+        b.bbox.x1 > nb.x0 - snapDistX &&
+        b.bbox.x0 < nb.x1 + snapDistX &&
+        b.bbox.y1 > nb.y0 - snapDistY &&
+        b.bbox.y0 < nb.y1 + snapDistY
+      ));
+
+      const snapped = { ...nb };
+
+      if (edges.left) {
+        let bestDist = snapDistX;
+        let bestSnap = snapped.x0;
+        for (const b of relevantBlocks) {
+          const d = Math.abs(snapped.x0 - (b.bbox.x0 - padX));
+          if (d < bestDist) { bestDist = d; bestSnap = b.bbox.x0 - padX; }
+        }
+        snapped.x0 = bestSnap;
+      }
+      if (edges.right) {
+        let bestDist = snapDistX;
+        let bestSnap = snapped.x1;
+        for (const b of relevantBlocks) {
+          const d = Math.abs(snapped.x1 - (b.bbox.x1 + padX));
+          if (d < bestDist) { bestDist = d; bestSnap = b.bbox.x1 + padX; }
+        }
+        snapped.x1 = bestSnap;
+      }
+      if (edges.top) {
+        let bestDist = snapDistY;
+        let bestSnap = snapped.y0;
+        for (const b of relevantBlocks) {
+          const d = Math.abs(snapped.y0 - (b.bbox.y0 - padY));
+          if (d < bestDist) { bestDist = d; bestSnap = b.bbox.y0 - padY; }
+        }
+        snapped.y0 = bestSnap;
+      }
+      if (edges.bottom) {
+        let bestDist = snapDistY;
+        let bestSnap = snapped.y1;
+        for (const b of relevantBlocks) {
+          const d = Math.abs(snapped.y1 - (b.bbox.y1 + padY));
+          if (d < bestDist) { bestDist = d; bestSnap = b.bbox.y1 + padY; }
+        }
+        snapped.y1 = bestSnap;
+      }
+
+      return snapped;
+    },
+    [pageData],
   );
 
   const handleCanvasMouseUp = useCallback(
     (e: React.MouseEvent) => {
+      // Pan finish
+      if (isPanning) {
+        setIsPanning(false);
+        panStartRef.current = null;
+        return;
+      }
+
       // Lasso selection finish
       if (isLassoing && lassoStart && lassoEnd && pageData) {
         setIsLassoing(false);
@@ -441,17 +771,22 @@ export default function DocumentViewer() {
       const sx = pageData.width / imgSize.width;
       const sy = pageData.height / imgSize.height;
 
-      const x0 = Math.min(drawStart.x, drawEnd.x) * sx;
-      const y0 = Math.min(drawStart.y, drawEnd.y) * sy;
-      const x1 = Math.max(drawStart.x, drawEnd.x) * sx;
-      const y1 = Math.max(drawStart.y, drawEnd.y) * sy;
+      let box: BBox = {
+        x0: Math.min(drawStart.x, drawEnd.x) * sx,
+        y0: Math.min(drawStart.y, drawEnd.y) * sy,
+        x1: Math.max(drawStart.x, drawEnd.x) * sx,
+        y1: Math.max(drawStart.y, drawEnd.y) * sy,
+      };
 
-      setDrawnBBox({ x0, y0, x1, y1 });
+      // Snap all edges to nearby text block boundaries
+      box = snapToText(box, { left: true, right: true, top: true, bottom: true });
+
+      setDrawnBBox(box);
       setShowTypePicker(true);
       setDrawStart(null);
       setDrawEnd(null);
     },
-    [isDrawing, isLassoing, lassoStart, lassoEnd, drawStart, drawEnd, pageData, imgSize, pageRegions, selectedRegionIds, setSelectedRegionIds, clearSelection]
+    [isPanning, isDrawing, isLassoing, lassoStart, lassoEnd, drawStart, drawEnd, pageData, imgSize, pageRegions, selectedRegionIds, setSelectedRegionIds, clearSelection, snapToText]
   );
 
   // ── Move / resize handlers ──
@@ -498,6 +833,43 @@ export default function DocumentViewer() {
       setIsInteracting(true);
     },
     [drawMode, getPointerPosOnImage, regions, setSelectedRegionIds],
+  );
+
+  // ── Prevent overlap helper ──
+  // Pushes the proposed bbox out of any other visible region on the same page.
+  const preventOverlap = useCallback(
+    (proposed: BBox, movingId: string): BBox => {
+      const others = regions.filter(
+        (r) => r.id !== movingId && r.page_number === activePage && r.action !== "CANCEL",
+      );
+      let box = { ...proposed };
+
+      for (const other of others) {
+        const ob = other.bbox;
+        // Check for overlap
+        if (box.x0 >= ob.x1 || box.x1 <= ob.x0 || box.y0 >= ob.y1 || box.y1 <= ob.y0) continue;
+
+        // Overlap detected — push the box along the axis with the smallest overlap
+        const overlapX = Math.min(box.x1, ob.x1) - Math.max(box.x0, ob.x0);
+        const overlapY = Math.min(box.y1, ob.y1) - Math.max(box.y0, ob.y0);
+        const cx = (box.x0 + box.x1) / 2;
+        const cy = (box.y0 + box.y1) / 2;
+        const ocx = (ob.x0 + ob.x1) / 2;
+        const ocy = (ob.y0 + ob.y1) / 2;
+
+        if (overlapY <= overlapX) {
+          // Push vertically
+          const shift = cy < ocy ? -(overlapY) : overlapY;
+          box = { ...box, y0: box.y0 + shift, y1: box.y1 + shift };
+        } else {
+          // Push horizontally
+          const shift = cx < ocx ? -(overlapX) : overlapX;
+          box = { ...box, x0: box.x0 + shift, x1: box.x1 + shift };
+        }
+      }
+      return box;
+    },
+    [regions, activePage],
   );
 
   // Global mouse tracking for move/resize
@@ -566,7 +938,18 @@ export default function DocumentViewer() {
         nb.y0 = Math.max(0, nb.y0);
         nb.x1 = Math.min(pageData.width, nb.x1);
         nb.y1 = Math.min(pageData.height, nb.y1);
+
+        // Snap edges to nearby text block boundaries
+        nb = snapToText(nb, {
+          left: h.includes("w"),
+          right: h.includes("e"),
+          top: h.includes("n"),
+          bottom: h.includes("s"),
+        });
       }
+
+      // Prevent overlap with other visible regions on the same page
+      nb = preventOverlap(nb, ix.regionId);
 
       updateRegionBBox(ix.regionId, nb);
     };
@@ -588,6 +971,12 @@ export default function DocumentViewer() {
           console.error("Failed to persist bbox update:", err);
         }
       }
+
+      // Auto-refresh: re-analyze content after move/resize
+      if (autoRefreshTimerRef.current) clearTimeout(autoRefreshTimerRef.current);
+      autoRefreshTimerRef.current = setTimeout(() => {
+        handleRefreshRegion(ix.regionId);
+      }, 300);
     };
 
     window.addEventListener("mousemove", handleMouseMove);
@@ -597,16 +986,19 @@ export default function DocumentViewer() {
       window.removeEventListener("mouseup", handleMouseUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isInteracting, pageData, activeDocId, pushUndo, updateRegionBBox]);
+  }, [isInteracting, pageData, activeDocId, pushUndo, updateRegionBBox, preventOverlap, snapToText, handleRefreshRegion]);
 
   const handleTypePickerSelect = useCallback(
     async (piiType: PIIType) => {
       if (!activeDocId || !drawnBBox) return;
       setShowTypePicker(false);
 
+      // Adjust drawn bbox to prevent overlap with existing regions
+      const adjustedBBox = preventOverlap(drawnBBox, "");
+
       const newRegion: Partial<PIIRegion> = {
         page_number: activePage,
-        bbox: drawnBBox,
+        bbox: adjustedBBox,
         text: "[manual selection]",
         pii_type: piiType,
         confidence: 1.0,
@@ -622,7 +1014,7 @@ export default function DocumentViewer() {
         const fullRegion: PIIRegion = {
           id: (resp as any).region_id ?? crypto.randomUUID().slice(0, 12),
           page_number: activePage,
-          bbox: drawnBBox,
+          bbox: adjustedBBox,
           text: "[manual selection]",
           pii_type: piiType,
           confidence: 1.0,
@@ -634,12 +1026,19 @@ export default function DocumentViewer() {
         pushUndo();
         setRegions([...regions, fullRegion]);
         setStatusMessage(`Added manual ${piiType} region`);
+
+        // Auto-refresh: re-analyze content under the new region
+        if (autoRefreshTimerRef.current) clearTimeout(autoRefreshTimerRef.current);
+        const regionId = fullRegion.id;
+        autoRefreshTimerRef.current = setTimeout(() => {
+          handleRefreshRegion(regionId);
+        }, 300);
       } catch (e: any) {
         setStatusMessage(`Failed to add region: ${e.message}`);
       }
       setDrawnBBox(null);
     },
-    [activeDocId, activePage, drawnBBox, regions, setRegions, setStatusMessage, pushUndo]
+    [activeDocId, activePage, drawnBBox, regions, setRegions, setStatusMessage, pushUndo, preventOverlap, handleRefreshRegion]
   );
 
   return (
@@ -816,18 +1215,20 @@ export default function DocumentViewer() {
           }}
         >
           <div
-            style={{ position: "relative", display: "inline-block" }}
+            style={{ position: "relative", display: "inline-block", userSelect: "none" }}
             ref={imageContainerRef}
             onMouseDown={handleCanvasMouseDown}
             onMouseMove={handleCanvasMouseMove}
             onMouseUp={handleCanvasMouseUp}
+            onMouseLeave={() => { if (isPanning) { setIsPanning(false); panStartRef.current = null; } }}
           >
             <img
+              ref={imageRef}
               src={bitmapUrl}
               alt={`Page ${activePage}`}
               style={{
                 ...styles.pageImage,
-                cursor: drawMode ? "crosshair" : "default",
+                cursor: drawMode ? "crosshair" : isPanning ? "grabbing" : "grab",
               }}
               onLoad={onImageLoad}
               draggable={false}
@@ -885,12 +1286,17 @@ export default function DocumentViewer() {
                     imgHeight={imgSize.height}
                     isSelected={isInSelection}
                     isMultiSelected={isMulti && isInSelection}
+                    isImageFile={isImageFile}
                     onSelect={(e: React.MouseEvent) => {
                       toggleSelectedRegionId(region.id, e.ctrlKey || e.metaKey);
                     }}
                     onAction={handleRegionAction}
+                    onRefresh={handleRefreshRegion}
+                    onHighlightAll={handleHighlightAll}
                     onMoveStart={handleMoveStart}
                     onResizeStart={handleResizeStart}
+                    onUpdateLabel={handleUpdateLabel}
+                    onUpdateText={handleUpdateText}
                   />
                 );
               })}
@@ -1115,6 +1521,16 @@ export default function DocumentViewer() {
                   }}
                 >
                   Cancel
+                </button>
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleHighlightAll(r.id);
+                  }}
+                  title="Select all identical"
+                >
+                  <Highlighter size={12} />
                 </button>
                 <button
                   className="btn-danger btn-sm"

@@ -6,11 +6,14 @@
     2. Starts the FastAPI backend (uvicorn) on port 8910.
     3. Starts the Vite dev server on port 5173.
     4. Waits for both to become healthy before handing control back.
+.PARAMETER Tauri
+    Launch as native Tauri desktop app instead of browser
 #>
 
 param(
     [switch]$Back,
-    [switch]$Front
+    [switch]$Front,
+    [switch]$Tauri
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -84,17 +87,28 @@ if (-not $Front) {
 
 # ── Start frontend ─────────────────────────────────────────────────────────
 if (-not $Back) {
-    Write-Host "`n=== Starting frontend (vite :$FrontendPort) ===" -ForegroundColor Cyan
-    Start-Process -FilePath "cmd.exe" `
-        -ArgumentList "/c npx vite --port $FrontendPort" `
-        -WorkingDirectory $FrontendDir `
-        -WindowStyle Normal
-
-    Write-Host "Waiting for frontend..." -NoNewline
-    if (Wait-ForUrl "http://localhost:$FrontendPort" 20) {
-        Write-Host " OK" -ForegroundColor Green
+    if ($Tauri) {
+        Write-Host "`n=== Starting Tauri desktop app ===" -ForegroundColor Cyan
+        Start-Process -FilePath "cmd.exe" `
+            -ArgumentList "/c npm run tauri:dev" `
+            -WorkingDirectory $FrontendDir `
+            -WindowStyle Normal
+        
+        Write-Host "Launching Tauri app (this will take a moment to compile)..." -ForegroundColor Yellow
+        Write-Host "The native desktop app will open automatically." -ForegroundColor Yellow
     } else {
-        Write-Host " TIMEOUT -- frontend may not have started" -ForegroundColor Red
+        Write-Host "`n=== Starting frontend (vite :$FrontendPort) ===" -ForegroundColor Cyan
+        Start-Process -FilePath "cmd.exe" `
+            -ArgumentList "/c npx vite --port $FrontendPort" `
+            -WorkingDirectory $FrontendDir `
+            -WindowStyle Normal
+
+        Write-Host "Waiting for frontend..." -NoNewline
+        if (Wait-ForUrl "http://localhost:$FrontendPort" 20) {
+            Write-Host " OK" -ForegroundColor Green
+        } else {
+            Write-Host " TIMEOUT -- frontend may not have started" -ForegroundColor Red
+        }
     }
 }
 
@@ -104,6 +118,10 @@ if (-not $Front) {
     Write-Host "  Backend:  http://127.0.0.1:$BackendPort/health"
 }
 if (-not $Back) {
-    Write-Host "  Frontend: http://localhost:$FrontendPort"
+    if ($Tauri) {
+        Write-Host "  Frontend: Tauri desktop app (native window)"
+    } else {
+        Write-Host "  Frontend: http://localhost:$FrontendPort"
+    }
 }
 Write-Host ""

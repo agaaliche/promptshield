@@ -4,12 +4,38 @@ use tauri::Emitter;
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 
+/// Check if a backend is already listening on the given port.
+fn backend_already_running(port: u16) -> bool {
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        std::time::Duration::from_millis(500),
+    )
+    .is_ok()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            // Spawn the Python sidecar
+            // If backend is already running (e.g. started by start.ps1),
+            // skip sidecar and emit the port directly.
+            let dev_port: u16 = std::env::var("DOC_ANON_BACKEND_PORT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(8910);
+
+            if backend_already_running(dev_port) {
+                println!("Backend already running on port {}", dev_port);
+                let port_str = dev_port.to_string();
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_handle.emit("sidecar-port", &port_str);
+                });
+                return Ok(());
+            }
+
+            // Otherwise spawn the Python sidecar
             let sidecar_command = app
                 .shell()
                 .sidecar("doc-anonymizer-sidecar")

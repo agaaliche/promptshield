@@ -1,4 +1,4 @@
-"""FastAPI application — main API for the document anonymizer sidecar."""
+"""FastAPI application — main API for the promptShield sidecar."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from core.config import config
+from core.persistence import DocumentStore
 from pydantic import BaseModel as _PydanticBaseModel
 from models.schemas import (
     AnonymizeRequest,
@@ -40,9 +41,9 @@ from models.schemas import (
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Document Anonymizer",
+    title="promptShield",
     version="0.1.0",
-    description="Offline document anonymizer with local LLM",
+    description="Offline document anonymizer with local LLM — promptShield",
 )
 
 # CORS — allow Tauri webview and local dev server
@@ -55,15 +56,33 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# In-memory state (in production, this could be a proper store)
+# Document storage
 # ---------------------------------------------------------------------------
 _documents: dict[str, DocumentInfo] = {}
+_store: Optional[DocumentStore] = None
+
+
+def _get_store() -> DocumentStore:
+    """Get the document store instance."""
+    if _store is None:
+        raise RuntimeError("Document store not initialized")
+    return _store
 
 
 def _get_doc(doc_id: str) -> DocumentInfo:
     if doc_id not in _documents:
         raise HTTPException(status_code=404, detail=f"Document '{doc_id}' not found")
     return _documents[doc_id]
+
+
+def _save_doc(doc: DocumentInfo) -> None:
+    """Save document state to persistent storage."""
+    try:
+        store = _get_store()
+        store.save_document(doc)
+        logger.debug(f"Auto-saved document {doc.doc_id}")
+    except Exception as e:
+        logger.error(f"Failed to auto-save document {doc.doc_id}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -73,16 +92,36 @@ def _get_doc(doc_id: str) -> DocumentInfo:
 @app.on_event("startup")
 async def startup():
     """Initialize services on startup."""
-    logger.info("Starting Document Anonymizer sidecar...")
+    global _store, _documents
+    logger.info("Starting promptShield sidecar...")
 
-    # Mount temp dir for serving page bitmaps
+    # Initialize document store
+    storage_dir = config.data_dir / "storage"
+    _store = DocumentStore(storage_dir)
+    
+    # Load existing documents from storage
+    try:
+        _documents = _store.load_all_documents()
+        logger.info(f"Loaded {len(_documents)} existing documents")
+    except Exception as e:
+        logger.error(f"Failed to load documents: {e}")
+        _documents = {}
+
+    # Mount temp dir for serving page bitmaps (legacy support)
     config.temp_dir.mkdir(parents=True, exist_ok=True)
     app.mount(
         "/bitmaps",
         StaticFiles(directory=str(config.temp_dir)),
         name="bitmaps",
     )
-    logger.info(f"Serving bitmaps from {config.temp_dir}")
+    
+    # Also mount persistent storage bitmaps
+    app.mount(
+        "/storage-bitmaps",
+        StaticFiles(directory=str(_store.bitmaps_dir)),
+        name="storage-bitmaps",
+    )
+    logger.info(f"Serving bitmaps from {config.temp_dir} (temp) and {_store.bitmaps_dir} (persistent)")
 
     # Auto-load first available GGUF model if enabled
     if config.auto_load_llm:
@@ -146,7 +185,29 @@ async def upload_document(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(500, f"Failed to process document: {e}")
 
+    # Store file in persistent storage
+    store = _get_store()
+    try:
+        stored_file_path = store.store_uploaded_file(doc.doc_id, upload_path, file.filename)
+        doc.file_path = str(stored_file_path)
+        logger.info(f"Stored file permanently: {stored_file_path}")
+    except Exception as e:
+        logger.error(f"Failed to store file permanently: {e}")
+
+    # Copy page bitmaps to persistent storage
+    try:
+        store.store_page_bitmaps(doc)
+        logger.info(f"Stored {len(doc.pages)} page bitmaps for {doc.doc_id}")
+    except Exception as e:
+        logger.error(f"Failed to store bitmaps: {e}")
+
+    # Save document state
     _documents[doc.doc_id] = doc
+    try:
+        store.save_document(doc)
+        logger.info(f"Saved document state for {doc.doc_id}")
+    except Exception as e:
+        logger.error(f"Failed to save document state: {e}")
 
     return UploadResponse(
         doc_id=doc.doc_id,
@@ -194,6 +255,8 @@ async def list_documents():
             "doc_id": d.doc_id,
             "original_filename": d.original_filename,
             "filename": d.original_filename,
+            "file_path": d.file_path,
+            "mime_type": d.mime_type,
             "page_count": d.page_count,
             "status": d.status.value,
             "regions_count": len(d.regions),
@@ -201,6 +264,23 @@ async def list_documents():
         }
         for d in _documents.values()
     ]
+
+
+@app.delete("/api/documents/{doc_id}")
+async def delete_document(doc_id: str):
+    """Delete a document and all its persisted data."""
+    if doc_id not in _documents:
+        raise HTTPException(404, f"Document '{doc_id}' not found")
+
+    del _documents[doc_id]
+
+    try:
+        store = _get_store()
+        store.delete_document(doc_id)
+    except Exception as e:
+        logger.error(f"Failed to delete persistent data for {doc_id}: {e}")
+
+    return {"status": "ok", "doc_id": doc_id}
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +312,8 @@ async def detect_pii(doc_id: str):
 
         doc.status = DocumentStatus.REVIEWING
         logger.info(f"Detection complete for '{doc.original_filename}': {len(doc.regions)} regions")
+
+        _save_doc(doc)
 
         return {
             "doc_id": doc_id,
@@ -281,6 +363,7 @@ async def set_region_action(doc_id: str, region_id: str, req: RegionActionReques
     for region in doc.regions:
         if region.id == region_id:
             region.action = req.action
+            _save_doc(doc)
             return {"status": "ok", "region_id": region_id, "action": req.action.value}
     raise HTTPException(404, f"Region '{region_id}' not found")
 
@@ -292,6 +375,7 @@ async def update_region_bbox(doc_id: str, region_id: str, bbox: BBox):
     for region in doc.regions:
         if region.id == region_id:
             region.bbox = bbox
+            _save_doc(doc)
             return {"status": "ok", "region_id": region_id}
     raise HTTPException(404, f"Region '{region_id}' not found")
 
@@ -307,6 +391,7 @@ async def update_region_label(doc_id: str, region_id: str, req: UpdateLabelReque
     for region in doc.regions:
         if region.id == region_id:
             region.pii_type = req.pii_type
+            _save_doc(doc)
             return {"status": "ok", "region_id": region_id}
     raise HTTPException(404, f"Region '{region_id}' not found")
 
@@ -322,6 +407,7 @@ async def update_region_text(doc_id: str, region_id: str, req: UpdateTextRequest
     for region in doc.regions:
         if region.id == region_id:
             region.text = req.text
+            _save_doc(doc)
             return {"status": "ok", "region_id": region_id}
     raise HTTPException(404, f"Region '{region_id}' not found")
 
@@ -364,6 +450,8 @@ async def reanalyze_region(doc_id: str, region_id: str):
         region.confidence = result["confidence"]
         region.source = result["source"]
 
+    _save_doc(doc)
+
     return {
         "region_id": region_id,
         "text": region.text,
@@ -383,6 +471,7 @@ async def batch_region_action(doc_id: str, req: BatchActionRequest):
         if rid in region_map:
             region_map[rid].action = req.action
             updated += 1
+    _save_doc(doc)
     return {"status": "ok", "updated": updated}
 
 
@@ -392,6 +481,7 @@ async def add_manual_region(doc_id: str, region: PIIRegion):
     doc = _get_doc(doc_id)
     region.source = "MANUAL"
     doc.regions.append(region)
+    _save_doc(doc)
     return {"status": "ok", "region_id": region.id}
 
 
@@ -653,6 +743,8 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest):
         if needle_norm in r_norm or r_norm in needle_norm or _fuzzy_ratio(needle_norm, r_norm) >= _FUZZY_THRESHOLD:
             all_ids.append(r.id)
 
+    _save_doc(doc)
+
     return {
         "created": len(new_regions),
         "new_regions": [r.model_dump(mode="json") for r in new_regions],
@@ -680,6 +772,7 @@ async def sync_regions(doc_id: str, items: list[RegionSyncItem]):
             r.action = item.action
             r.bbox = item.bbox
             synced += 1
+    _save_doc(doc)
     return {"status": "ok", "synced": synced}
 
 
@@ -694,11 +787,13 @@ async def anonymize(doc_id: str):
     try:
         result = await anonymize_document(doc)
         doc.status = DocumentStatus.COMPLETED
+        _save_doc(doc)
         return result
     except Exception as e:
         import traceback
         logger.error(f"Anonymization failed:\n{traceback.format_exc()}")
         doc.status = DocumentStatus.ERROR
+        _save_doc(doc)
         raise HTTPException(500, f"Anonymization failed: {e}")
 
 

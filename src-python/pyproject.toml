@@ -1,7 +1,7 @@
 [project]
-name = "doc-anonymizer-sidecar"
+name = "promptshield-sidecar"
 version = "0.1.0"
-description = "Offline document anonymizer - Python sidecar backend"
+description = "promptShield — offline document anonymizer with local LLM"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [

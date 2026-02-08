@@ -65,19 +65,48 @@ export default function RegionOverlay({
   onUpdateText,
 }: Props) {
   const [showEditPanel, setShowEditPanel] = useState(false);
-  const [toolbarExpanded, setToolbarExpanded] = useState(false);
+  const [toolbarExpanded, setToolbarExpanded] = useState(() => {
+    try {
+      const saved = localStorage.getItem('regionToolbarExpanded');
+      return saved === 'true';
+    } catch (e) {
+      console.error('Failed to load toolbar expanded state:', e);
+    }
+    return false;
+  });
   const [activeTab, setActiveTab] = useState<"label" | "content">("label");
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [isEditingText, setIsEditingText] = useState(false);
   const [editedText, setEditedText] = useState(region.text);
   
   // Toolbar position (relative to region)
-  const [toolbarOffset, setToolbarOffset] = useState({ x: 0, y: 0 });
+  const [toolbarOffset, setToolbarOffset] = useState(() => {
+    try {
+      const saved = localStorage.getItem('regionToolbarOffset');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('Failed to load toolbar offset:', e);
+    }
+    return { x: 0, y: 0 };
+  });
   const [isDraggingToolbar, setIsDraggingToolbar] = useState(false);
   const toolbarDragStart = useRef({ mouseX: 0, mouseY: 0, offsetX: 0, offsetY: 0 });
+  const toolbarRef = useRef<HTMLDivElement>(null);
   
   // Edit dialog position (viewport coordinates)
-  const [dialogPos, setDialogPos] = useState({ x: 300, y: 100 });
+  const [dialogPos, setDialogPos] = useState(() => {
+    try {
+      const saved = localStorage.getItem('regionDialogPos');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('Failed to load dialog position:', e);
+    }
+    return { x: 300, y: 100 };
+  });
   const [isDraggingDialog, setIsDraggingDialog] = useState(false);
   const dialogDragStart = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
   
@@ -123,9 +152,34 @@ export default function RegionOverlay({
     const handleMouseMove = (e: MouseEvent) => {
       const dx = e.clientX - toolbarDragStart.current.mouseX;
       const dy = e.clientY - toolbarDragStart.current.mouseY;
+      
+      let newOffsetX = toolbarDragStart.current.offsetX + dx;
+      let newOffsetY = toolbarDragStart.current.offsetY + dy;
+      
+      // Clamp toolbar position to stay within document boundaries
+      const toolbarWidth = toolbarRef.current?.offsetWidth || 50;
+      const toolbarHeight = toolbarRef.current?.offsetHeight || 300;
+      
+      const toolbarLeft = left + width + 8 + newOffsetX;
+      const toolbarTop = top + newOffsetY;
+      
+      // Clamp horizontal position
+      if (toolbarLeft < 0) {
+        newOffsetX = -(left + width + 8);
+      } else if (toolbarLeft + toolbarWidth > imgWidth) {
+        newOffsetX = imgWidth - (left + width + 8 + toolbarWidth);
+      }
+      
+      // Clamp vertical position
+      if (toolbarTop < 0) {
+        newOffsetY = -top;
+      } else if (toolbarTop + toolbarHeight > imgHeight) {
+        newOffsetY = imgHeight - (top + toolbarHeight);
+      }
+      
       setToolbarOffset({
-        x: toolbarDragStart.current.offsetX + dx,
-        y: toolbarDragStart.current.offsetY + dy,
+        x: newOffsetX,
+        y: newOffsetY,
       });
     };
     
@@ -139,7 +193,25 @@ export default function RegionOverlay({
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isDraggingToolbar]);
+  }, [isDraggingToolbar, left, width, top, imgWidth, imgHeight]);
+
+  // Save toolbar offset to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('regionToolbarOffset', JSON.stringify(toolbarOffset));
+    } catch (e) {
+      console.error('Failed to save toolbar offset:', e);
+    }
+  }, [toolbarOffset]);
+
+  // Save toolbar expanded state to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('regionToolbarExpanded', String(toolbarExpanded));
+    } catch (e) {
+      console.error('Failed to save toolbar expanded state:', e);
+    }
+  }, [toolbarExpanded]);
 
   // Dialog drag handlers
   useEffect(() => {
@@ -165,6 +237,55 @@ export default function RegionOverlay({
       document.removeEventListener("mouseup", handleMouseUp);
     };
   }, [isDraggingDialog]);
+
+  // Save dialog position to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('regionDialogPos', JSON.stringify(dialogPos));
+    } catch (e) {
+      console.error('Failed to save dialog position:', e);
+    }
+  }, [dialogPos]);
+
+  // Clamp toolbar position to stay within document boundaries
+  useEffect(() => {
+    if (!showDetails || !toolbarRef.current) return;
+    
+    const toolbarWidth = toolbarRef.current.offsetWidth;
+    const toolbarHeight = toolbarRef.current.offsetHeight;
+    
+    if (toolbarWidth === 0 || toolbarHeight === 0) return; // Not rendered yet
+    
+    const toolbarLeft = left + width + 8 + toolbarOffset.x;
+    const toolbarTop = top + toolbarOffset.y;
+    
+    let needsAdjustment = false;
+    let newOffsetX = toolbarOffset.x;
+    let newOffsetY = toolbarOffset.y;
+    
+    // Check horizontal bounds
+    if (toolbarLeft < 0) {
+      newOffsetX = -(left + width + 8);
+      needsAdjustment = true;
+    } else if (toolbarLeft + toolbarWidth > imgWidth) {
+      newOffsetX = imgWidth - (left + width + 8 + toolbarWidth);
+      needsAdjustment = true;
+    }
+    
+    // Check vertical bounds
+    if (toolbarTop < 0) {
+      newOffsetY = -top;
+      needsAdjustment = true;
+    } else if (toolbarTop + toolbarHeight > imgHeight) {
+      newOffsetY = imgHeight - (top + toolbarHeight);
+      needsAdjustment = true;
+    }
+    
+    if (needsAdjustment) {
+      setToolbarOffset({ x: newOffsetX, y: newOffsetY });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDetails, left, width, top, imgWidth, imgHeight, toolbarExpanded]);
 
   if (region.action === "CANCEL") {
     return null;
@@ -276,6 +397,8 @@ export default function RegionOverlay({
       {/* Vertical toolbar - draggable */}
       {showDetails && (
         <div
+          ref={toolbarRef}
+          onMouseDown={(e) => e.stopPropagation()}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
           style={{
@@ -322,6 +445,7 @@ export default function RegionOverlay({
               opacity: 0.5,
             }} />
             <button
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 setToolbarExpanded(!toolbarExpanded);
@@ -342,8 +466,12 @@ export default function RegionOverlay({
           </div>
 
           {/* Toolbar buttons */}
-          <div style={{ padding: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+          <div 
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{ padding: 4, display: "flex", flexDirection: "column", gap: 2 }}
+          >
             <button
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 setShowEditPanel(!showEditPanel);
@@ -370,6 +498,7 @@ export default function RegionOverlay({
             </button>
             
             <button
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 onAction(region.id, "CANCEL");
@@ -395,6 +524,7 @@ export default function RegionOverlay({
             </button>
             
             <button
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 onRefresh?.(region.id);
@@ -420,6 +550,7 @@ export default function RegionOverlay({
             </button>
             
             <button
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 onHighlightAll?.(region.id);
@@ -445,6 +576,7 @@ export default function RegionOverlay({
             </button>
             
             <button
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 onAction(region.id, "REMOVE");
@@ -470,6 +602,7 @@ export default function RegionOverlay({
             </button>
             
             <button
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 onAction(region.id, "TOKENIZE");

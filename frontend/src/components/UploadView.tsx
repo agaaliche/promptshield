@@ -71,7 +71,7 @@ export default function UploadView() {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h1 style={styles.title}>Document Anonymizer</h1>
+        <h1 style={styles.title}>prompt<span style={{ color: 'var(--accent-primary)' }}>Shield</span></h1>
         <p style={styles.subtitle}>
           Upload a document to detect and anonymize personal information
         </p>
@@ -166,7 +166,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 24,
   },
   header: { textAlign: "center" },
-  title: { fontSize: 28, fontWeight: 700, marginBottom: 8 },
+  title: { fontSize: 32, fontWeight: 500, marginBottom: 8, letterSpacing: "-0.5px" },
   subtitle: { color: "var(--text-secondary)", fontSize: 15 },
   dropzone: {
     width: "100%",

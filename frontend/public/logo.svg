@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="shieldGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6C5CE7"/>
+      <stop offset="100%" stop-color="#0984E3"/>
+    </linearGradient>
+    <linearGradient id="innerGrad" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#A29BFE"/>
+      <stop offset="100%" stop-color="#74B9FF"/>
+    </linearGradient>
+  </defs>
+  <!-- Shield body -->
+  <path d="M256 28 L462 110 C462 110 472 310 256 484 C40 310 50 110 50 110 Z"
+        fill="url(#shieldGrad)" stroke="none"/>
+  <!-- Inner shield highlight -->
+  <path d="M256 60 L432 130 C432 130 440 300 256 450 C72 300 80 130 80 130 Z"
+        fill="url(#innerGrad)" opacity="0.25"/>
+  <!-- Lock/privacy keyhole -->
+  <circle cx="256" cy="210" r="52" fill="white" opacity="0.95"/>
+  <circle cx="256" cy="200" r="28" fill="url(#shieldGrad)"/>
+  <rect x="242" y="216" width="28" height="36" rx="6" fill="url(#shieldGrad)"/>
+  <!-- Redaction lines (text being anonymized) -->
+  <rect x="160" y="310" width="192" height="14" rx="7" fill="white" opacity="0.85"/>
+  <rect x="185" y="340" width="142" height="14" rx="7" fill="white" opacity="0.55"/>
+  <rect x="200" y="370" width="112" height="14" rx="7" fill="white" opacity="0.35"/>
+</svg>

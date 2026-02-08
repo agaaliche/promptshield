@@ -1,4 +1,4 @@
-"""Pydantic data models for the document anonymizer."""
+"""Pydantic data models for promptShield."""
 
 from __future__ import annotations
 

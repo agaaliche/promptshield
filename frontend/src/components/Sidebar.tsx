@@ -7,8 +7,10 @@ import {
   Settings,
   Shield,
   FileText,
+  Trash2,
 } from "lucide-react";
 import { useAppStore } from "../store";
+import { deleteDocument } from "../api";
 
 type View = "upload" | "viewer" | "detokenize" | "settings";
 
@@ -32,14 +34,32 @@ export default function Sidebar() {
     documents,
     activeDocId,
     setActiveDocId,
+    setDocuments,
+    setRegions,
   } = useAppStore();
+
+  const handleDelete = async (e: React.MouseEvent, docId: string) => {
+    e.stopPropagation();
+    try {
+      await deleteDocument(docId);
+      const updated = documents.filter((d) => d.doc_id !== docId);
+      setDocuments(updated);
+      if (activeDocId === docId) {
+        setActiveDocId(null);
+        setRegions([]);
+        setCurrentView("upload");
+      }
+    } catch (err) {
+      console.error("Failed to delete document:", err);
+    }
+  };
 
   return (
     <div style={styles.sidebar}>
       {/* Logo */}
       <div style={styles.logo}>
         <Shield size={22} style={{ color: "var(--accent-primary)" }} />
-        <span style={styles.logoText}>Anonymizer</span>
+        <span style={styles.logoText}>prompt<span style={{ color: 'var(--accent-primary)', fontWeight: 700 }}>Shield</span></span>
       </div>
 
       {/* Nav items */}
@@ -80,6 +100,13 @@ export default function Sidebar() {
                 <FileText size={13} style={{ flexShrink: 0 }} />
                 <span style={styles.docName}>{doc.original_filename}</span>
                 <span style={styles.docPages}>{doc.page_count}p</span>
+                <span
+                  style={styles.docDelete}
+                  onClick={(e) => handleDelete(e, doc.doc_id)}
+                  title="Delete document"
+                >
+                  <Trash2 size={11} />
+                </span>
               </button>
             ))}
           </div>
@@ -118,8 +145,9 @@ const styles: Record<string, any> = {
   },
   logoText: {
     fontSize: 16,
-    fontWeight: 700,
+    fontWeight: 500,
     color: "var(--text-primary)",
+    letterSpacing: "-0.3px",
   },
   nav: {
     flex: 1,
@@ -220,5 +248,17 @@ const styles: Record<string, any> = {
     fontSize: 10,
     color: "var(--text-muted)",
     flexShrink: 0,
+  },
+  docDelete: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    padding: 2,
+    borderRadius: 3,
+    color: "var(--text-muted)",
+    cursor: "pointer",
+    opacity: 0.4,
+    transition: "opacity 0.15s ease, color 0.15s ease",
   },
 };

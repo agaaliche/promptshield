@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useAppStore } from "./store";
-import { checkHealth, getVaultStatus, getLLMStatus } from "./api";
+import { checkHealth, getVaultStatus, getLLMStatus, listDocuments, getRegions, getDocument } from "./api";
 import Sidebar from "./components/Sidebar";
 import UploadView from "./components/UploadView";
 import DocumentViewer from "./components/DocumentViewer";
@@ -16,6 +16,10 @@ function App() {
     setVaultUnlocked,
     setLLMStatus,
     backendReady,
+    setDocuments,
+    setRegions,
+    updateDocument,
+    activeDocId,
   } = useAppStore();
 
   // Poll for backend readiness on startup
@@ -33,6 +37,16 @@ function App() {
             .then((s) => setVaultUnlocked(s.unlocked))
             .catch(() => {});
           getLLMStatus().then(setLLMStatus).catch(() => {});
+
+          // Load persisted documents
+          try {
+            const docs = await listDocuments();
+            if (!cancelled && docs.length > 0) {
+              setDocuments(docs);
+            }
+          } catch {
+            // Storage may be empty — that's fine
+          }
           return;
         }
         attempts++;
@@ -42,7 +56,29 @@ function App() {
 
     poll();
     return () => { cancelled = true; };
-  }, [setBackendReady, setVaultUnlocked, setLLMStatus]);
+  }, [setBackendReady, setVaultUnlocked, setLLMStatus, setDocuments]);
+
+  // Load full document data + regions when the active document changes
+  useEffect(() => {
+    if (!activeDocId) return;
+
+    let cancelled = false;
+
+    // Fetch full document (with pages array) and regions in parallel
+    Promise.all([
+      getDocument(activeDocId),
+      getRegions(activeDocId),
+    ])
+      .then(([fullDoc, regions]) => {
+        if (cancelled || useAppStore.getState().activeDocId !== activeDocId) return;
+        // Merge full document data (pages, mime_type, etc.) into the store entry
+        updateDocument(activeDocId, fullDoc);
+        setRegions(regions);
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [activeDocId, setRegions, updateDocument]);
 
   const renderView = () => {
     switch (currentView) {
@@ -60,7 +96,7 @@ function App() {
   return (
     <div style={{ display: "flex", height: "100vh", width: "100vw" }}>
       <Sidebar />
-      <main style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+      <main style={{ flex: 1, overflow: "hidden", position: "relative", minHeight: 0, height: "100%" }}>
         {!backendReady ? (
           <div style={styles.connecting}>
             <div style={styles.spinner} />

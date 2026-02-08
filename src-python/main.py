@@ -1,4 +1,4 @@
-"""Main entry point for the document anonymizer.
+"""Main entry point for promptShield.
 
 When run directly (or as a standalone exe), starts a FastAPI server
 and opens the browser UI.
@@ -46,7 +46,7 @@ def main():
     # Print port to stdout for Tauri to read (sidecar mode)
     print(f"PORT:{port}", flush=True)
 
-    log = logging.getLogger("doc-anonymizer")
+    log = logging.getLogger("promptshield")
     log.info(f"Starting on {config.host}:{port}")
 
     # If running as standalone exe (frozen), open the browser automatically

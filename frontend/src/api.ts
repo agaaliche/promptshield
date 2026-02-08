@@ -69,6 +69,10 @@ export async function listDocuments(): Promise<DocumentInfo[]> {
   return request<DocumentInfo[]>("/api/documents");
 }
 
+export async function deleteDocument(docId: string): Promise<void> {
+  await request(`/api/documents/${docId}`, { method: "DELETE" });
+}
+
 export function getPageBitmapUrl(docId: string, pageNumber: number): string {
   return `${BASE_URL}/api/documents/${docId}/pages/${pageNumber}/bitmap`;
 }

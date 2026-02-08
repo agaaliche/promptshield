@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   ZoomIn,
   ZoomOut,
   RotateCcw,
@@ -71,6 +73,7 @@ export default function DocumentViewer() {
   const containerRef = useRef<HTMLDivElement>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
   const [imgSize, setImgSize] = useState({ width: 0, height: 0 });
   const [imgLoaded, setImgLoaded] = useState(false);
   const [showVaultPrompt, setShowVaultPrompt] = useState(false);
@@ -107,6 +110,7 @@ export default function DocumentViewer() {
     hasMoved: boolean;
   } | null>(null);
   const [isInteracting, setIsInteracting] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const autoRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Keep mutable refs so global event handlers see latest values
   const zoomRef = useRef(zoom);
@@ -114,11 +118,10 @@ export default function DocumentViewer() {
   const imgSizeRef = useRef(imgSize);
   imgSizeRef.current = imgSize;
 
-  const doc = documents.find((d) => d.doc_id === activeDocId);
-  if (!doc) return <div style={styles.empty}>No document loaded</div>;
+  const doc = documents.find((d) => d.doc_id === activeDocId) ?? null;
 
-  const pageCount = doc.page_count;
-  const isImageFile = doc.mime_type?.startsWith("image/") || false;
+  const pageCount = doc?.page_count ?? 0;
+  const isImageFile = doc?.mime_type?.startsWith("image/") || false;
   const bitmapUrl = activeDocId
     ? getPageBitmapUrl(activeDocId, activePage)
     : "";
@@ -131,6 +134,15 @@ export default function DocumentViewer() {
   const pendingCount = regions.filter((r) => r.action === "PENDING").length;
   const removeCount = regions.filter((r) => r.action === "REMOVE").length;
   const tokenizeCount = regions.filter((r) => r.action === "TOKENIZE").length;
+
+  // Auto-select first region on page change
+  useEffect(() => {
+    if (pageRegions.length > 0) {
+      setSelectedRegionIds([pageRegions[0].id]);
+    } else {
+      setSelectedRegionIds([]);
+    }
+  }, [activePage, pageRegions, setSelectedRegionIds]);
 
   // ── Region actions ──
   const handleRegionAction = useCallback(
@@ -554,8 +566,24 @@ export default function DocumentViewer() {
     };
   }, [imgLoaded]);
 
+  // ── Click outside sidebar to collapse ──
+  useEffect(() => {
+    if (!sidebarCollapsed) {
+      const handleClickOutside = (e: MouseEvent) => {
+        if (sidebarRef.current && !sidebarRef.current.contains(e.target as Node)) {
+          setSidebarCollapsed(true);
+        }
+      };
+
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [sidebarCollapsed]);
+
   // ── Page data for coordinate mapping ──
-  const pageData = doc.pages[activePage - 1];
+  const pageData = doc?.pages?.[activePage - 1];
 
   // ── Manual draw handlers ──
   const PII_TYPE_OPTIONS: PIIType[] = [
@@ -1041,6 +1069,9 @@ export default function DocumentViewer() {
     [activeDocId, activePage, drawnBBox, regions, setRegions, setStatusMessage, pushUndo, preventOverlap, handleRefreshRegion]
   );
 
+  if (!doc) return <div style={styles.empty}>No document loaded</div>;
+  if (!doc.pages) return <div style={styles.empty}>Loading document...</div>;
+
   return (
     <div style={styles.wrapper}>
       {/* Toolbar */}
@@ -1165,6 +1196,9 @@ export default function DocumentViewer() {
         </button>
       </div>
 
+      {/* Content area — everything below toolbar */}
+      <div style={styles.contentArea}>
+
       {/* Vault unlock prompt overlay */}
       {showVaultPrompt && (
         <div style={styles.overlay}>
@@ -1206,7 +1240,11 @@ export default function DocumentViewer() {
       )}
 
       {/* Canvas area */}
-      <div ref={containerRef} style={styles.canvasArea}>
+      <div ref={containerRef} style={{
+        ...styles.canvasArea,
+        paddingRight: sidebarCollapsed ? 60 : 320,
+        transition: 'padding-right 0.2s ease',
+      }}>
         <div
           style={{
             ...styles.pageContainer,
@@ -1481,9 +1519,79 @@ export default function DocumentViewer() {
       )}
 
       {/* Region sidebar */}
-      <div style={styles.sidebar}>
-        <h3 style={styles.sidebarTitle}>Detected PII ({pageRegions.length})</h3>
-        <div style={styles.regionList}>
+      <div ref={sidebarRef} style={{
+        ...styles.sidebar,
+        width: sidebarCollapsed ? 60 : 320,
+        transition: 'width 0.2s ease',
+      }}>
+        {sidebarCollapsed ? (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            padding: '16px 8px',
+            gap: 16,
+          }}>
+            <Shield size={24} color="var(--text-secondary)" />
+            <div style={{
+              background: 'var(--accent-primary)',
+              color: 'white',
+              fontSize: 12,
+              fontWeight: 600,
+              padding: '4px 8px',
+              borderRadius: 12,
+              minWidth: 32,
+              textAlign: 'center',
+            }}>
+              {pageRegions.length}
+            </div>
+            <button
+              onClick={() => setSidebarCollapsed(false)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+                padding: 8,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              title="Expand sidebar"
+            >
+              <ChevronLeft size={20} />
+            </button>
+          </div>
+        ) : (
+          <>
+            <div style={{
+              ...styles.sidebarTitle,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Shield size={18} color="var(--text-secondary)" />
+                <span>Detected PII ({pageRegions.length})</span>
+              </div>
+              <button
+                onClick={() => setSidebarCollapsed(true)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  padding: 4,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                title="Collapse sidebar"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+            <div style={styles.regionList}>
           {pageRegions.map((r) => (
             <div
               key={r.id}
@@ -1573,8 +1681,11 @@ export default function DocumentViewer() {
               No PII detected on this page.
             </p>
           )}
-        </div>
+            </div>
+          </>
+        )}
       </div>
+      </div>{/* end contentArea */}
     </div>
   );
 }
@@ -1584,16 +1695,24 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     height: "100%",
+    overflow: "hidden",
   },
   toolbar: {
+    flexShrink: 0,
     display: "flex",
     alignItems: "center",
     gap: 16,
     padding: "8px 16px",
     background: "var(--bg-secondary)",
     borderBottom: "1px solid var(--border-color)",
-    flexShrink: 0,
     flexWrap: "wrap",
+    zIndex: 20,
+  },
+  contentArea: {
+    flex: 1,
+    position: "relative" as const,
+    overflow: "hidden",
+    minHeight: 0,
   },
   toolbarGroup: {
     display: "flex",
@@ -1610,7 +1729,11 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
   },
   canvasArea: {
-    flex: 1,
+    position: "absolute" as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     overflow: "auto",
     background: "var(--bg-primary)",
     display: "flex",

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Kill processes on ports 8910 (backend) and 5173 (frontend), then restart both servers.
 .DESCRIPTION
@@ -24,24 +24,47 @@ $PythonExe    = Join-Path $BackendDir '.venv\Scripts\python.exe'
 $BackendPort  = 8910
 $FrontendPort = 5173
 
+# Ensure Rust/cargo is on PATH (rustup default install location)
+$cargoPath = Join-Path $env:USERPROFILE '.cargo\bin'
+if ((Test-Path $cargoPath) -and ($env:PATH -notlike "*$cargoPath*")) {
+    $env:PATH = "$cargoPath;$env:PATH"
+}
+
 function Free-Port([int]$Port) {
+    # Find processes owning the port — but never kill powershell/pwsh/explorer
+    $safeToKill = @('python', 'python3', 'pythonw', 'node', 'esbuild', 'vite')
     $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
     foreach ($c in $conns) {
         $pid = $c.OwningProcess
         $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
-        if ($proc) {
+        if ($proc -and ($safeToKill -contains $proc.ProcessName)) {
             Write-Host "  Killing PID $pid ($($proc.ProcessName)) on port $Port" -ForegroundColor Yellow
-            Stop-Process -Id $pid -Force
+            # Use taskkill /T to kill the entire process tree
+            & taskkill /PID $pid /T /F 2>$null | Out-Null
+        } elseif ($proc) {
+            Write-Host "  Port $Port held by $($proc.ProcessName) (PID $pid) — killing child python/node" -ForegroundColor Yellow
+            # The port is owned by a shell — kill known child processes instead
+            if ($Port -eq 8910) {
+                Get-Process -Name python -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Id -ne $PID } |
+                    ForEach-Object { & taskkill /PID $_.Id /T /F 2>$null | Out-Null }
+            }
+            if ($Port -eq 5173) {
+                Get-Process -Name node -ErrorAction SilentlyContinue |
+                    ForEach-Object { & taskkill /PID $_.Id /T /F 2>$null | Out-Null }
+            }
         }
     }
-    # Brief wait so the OS releases the port
-    Start-Sleep -Milliseconds 500
-    $still = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-    if ($still) {
-        Write-Host "  WARNING: port $Port still in use after kill attempt" -ForegroundColor Red
-    } else {
-        Write-Host "  Port $Port is free" -ForegroundColor Green
+    # Wait for OS to release the port (retry up to 5s)
+    for ($i = 0; $i -lt 10; $i++) {
+        Start-Sleep -Milliseconds 500
+        $still = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+        if (-not $still) {
+            Write-Host "  Port $Port is free" -ForegroundColor Green
+            return
+        }
     }
+    Write-Host "  WARNING: port $Port still in use after kill attempts" -ForegroundColor Red
 }
 
 function Wait-ForUrl([string]$Url, [int]$TimeoutSec = 30) {

@@ -104,8 +104,15 @@ def is_gliner_available() -> bool:
 # False-positive filters
 # ---------------------------------------------------------------------------
 
+# French/international legal-form suffixes that should NOT be filtered
+# when they appear as part of a multi-word company name (e.g. "Dupont SA").
+_COMPANY_SUFFIXES: set[str] = {
+    "sa", "sas", "sarl", "eurl", "sci", "snc", "se",
+    "gmbh", "ag", "bv", "nv",
+    "inc", "llc", "ltd", "corp", "co", "plc",
+}
+
 _FP_STOPWORDS: set[str] = {
-    "inc", "llc", "ltd", "corp", "co", "plc", "sa", "sarl", "gmbh",
     "total", "amount", "balance", "date", "number", "type", "page",
     "section", "table", "figure", "chapter", "appendix",
     "n/a", "na", "tbd", "tba", "etc", "pdf", "doc",
@@ -144,8 +151,11 @@ def _is_noise(text: str, pii_type: PIIType) -> bool:
     # Pure digits shorter than 5 (not SSN/phone)
     if clean.isdigit() and len(clean) < 5:
         return True
-    # Generic stopword
+    # Generic stopword (but not company suffixes — those are only noise alone)
     if low in _FP_STOPWORDS:
+        return True
+    # Company suffix alone (e.g. just "SA") — noise by itself
+    if low in _COMPANY_SUFFIXES:
         return True
     # Single-char or single very short word
     words = clean.split()
@@ -154,29 +164,34 @@ def _is_noise(text: str, pii_type: PIIType) -> bool:
     # Single-word ORG that's a generic business/accounting term
     if pii_type == PIIType.ORG and len(words) == 1 and low in _ORG_NOISE_WORDS:
         return True
-    # Multi-word ORG: if ALL words are noise/stopwords, skip it
+    # Multi-word ORG: keep if at least one word is a real name
+    # (capitalised and not a noise/stopword/suffix)
     if pii_type == PIIType.ORG and len(words) >= 2:
-        all_noise = all(
-            w.lower() in _FP_STOPWORDS or w.lower() in _ORG_NOISE_WORDS or len(w) <= 2
+        has_real_word = any(
+            w[0].isupper()
+            and w.lower() not in _FP_STOPWORDS
+            and w.lower() not in _ORG_NOISE_WORDS
+            and w.lower() not in _COMPANY_SUFFIXES
+            and len(w) > 2
             for w in words
         )
-        if all_noise:
+        if not has_real_word:
             return True
     return False
 
 
-def _scale_confidence(raw_score: float) -> float:
+def _scale_confidence(raw_score: float, pii_type: PIIType | None = None) -> float:
     """Map GLiNER's raw score to a normalised confidence.
 
     GLiNER scores are calibrated differently from spaCy / regex.
     A GLiNER score of ~0.40 is already a decent signal.  We apply
     a linear mapping so that:
-        raw 0.20 → 0.45  (weak candidate, needs cross-layer boost)
-        raw 0.30 → 0.55  (just passes the pipeline threshold)
+        raw 0.20 → 0.48  (weak candidate, needs cross-layer boost)
+        raw 0.25 → 0.55  (just passes the pipeline threshold)
         raw 0.50 → 0.75
         raw 0.80 → 0.95
     """
-    mapped = 0.45 + (raw_score - 0.20) * (0.95 - 0.45) / (0.80 - 0.20)
+    mapped = 0.48 + (raw_score - 0.20) * (0.95 - 0.48) / (0.80 - 0.20)
     return round(max(0.0, min(mapped, 0.95)), 4)
 
 
@@ -216,7 +231,7 @@ def _process_chunk(
             end=global_offset + end,
             text=ent_text,
             pii_type=pii_type,
-            confidence=_scale_confidence(score),
+            confidence=_scale_confidence(score, pii_type),
         ))
 
     return matches

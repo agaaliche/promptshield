@@ -19,8 +19,8 @@ const NAV_ITEMS: Array<{
   label: string;
   icon: React.ReactNode;
 }> = [
-  { id: "upload", label: "Upload", icon: <Upload size={18} /> },
-  { id: "viewer", label: "Review", icon: <FileSearch size={18} /> },
+  { id: "upload", label: "Upload file", icon: <Upload size={18} /> },
+  { id: "viewer", label: "Download secure file", icon: <FileSearch size={18} /> },
   { id: "detokenize", label: "De-tokenize", icon: <ArrowRightLeft size={18} /> },
   { id: "settings", label: "Settings", icon: <Settings size={18} /> },
 ];

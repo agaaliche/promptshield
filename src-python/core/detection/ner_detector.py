@@ -16,6 +16,7 @@ import re
 from typing import NamedTuple
 
 from spacy.lang.en.stop_words import STOP_WORDS as _EN_STOP_WORDS
+from spacy.lang.fr.stop_words import STOP_WORDS as _FR_STOP_WORDS
 
 from models.schemas import PIIType
 
@@ -24,14 +25,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Lightweight language detection — skip English NER on non-English text
 # ---------------------------------------------------------------------------
-# Uses spaCy's built-in English stop word list (326 words) so we need
-# zero extra dependencies.  If fewer than 15% of the words in a text
-# sample are English stop words, the text is almost certainly not English
-# and running en_core_web_* on it will produce only garbage.
+# Uses spaCy's built-in stop word lists so we need zero extra dependencies.
 
 _EN_STOP_LOWER: set[str] = {w.lower() for w in _EN_STOP_WORDS}
+_FR_STOP_LOWER: set[str] = {w.lower() for w in _FR_STOP_WORDS}
 _LANG_SAMPLE_SIZE = 2000  # characters to sample for language check
 _ENGLISH_STOPWORD_THRESHOLD = 0.15  # 15% — English text typically 25-40%
+_FRENCH_STOPWORD_THRESHOLD = 0.12   # 12% — French text typically 20-35%
 
 
 def _is_english_text(text: str) -> bool:
@@ -55,6 +55,25 @@ def _is_english_text(text: str) -> bool:
         stop_count, len(words), ratio * 100,
     )
     return ratio >= _ENGLISH_STOPWORD_THRESHOLD
+
+
+def _is_french_text(text: str) -> bool:
+    """Quick heuristic: is *text* likely French?
+
+    Same approach as ``_is_english_text`` but using French stop words.
+    """
+    sample = text[:_LANG_SAMPLE_SIZE]
+    words = [w.lower().strip(".,;:!?()[]{}\"'") for w in sample.split()]
+    words = [w for w in words if len(w) >= 2]
+    if len(words) < 20:
+        return False  # too short to judge
+    stop_count = sum(1 for w in words if w in _FR_STOP_LOWER)
+    ratio = stop_count / len(words)
+    logger.debug(
+        "French language check: %d/%d words (%.1f%%) are French stop words",
+        stop_count, len(words), ratio * 100,
+    )
+    return ratio >= _FRENCH_STOPWORD_THRESHOLD
 
 
 class NERMatch(NamedTuple):
@@ -138,12 +157,23 @@ _ORG_STOPWORDS: set[str] = {
 _nlp = None
 _active_model_name: str = ""
 
+# French spaCy model (lazy-loaded separately)
+_nlp_fr = None
+_active_fr_model_name: str = ""
+
 # Model cascade order depending on user preference
 _MODEL_CASCADE: dict[str, list[str]] = {
     "trf": ["en_core_web_trf", "en_core_web_lg", "en_core_web_sm"],
     "lg":  ["en_core_web_lg", "en_core_web_sm"],
     "sm":  ["en_core_web_sm"],
 }
+
+# French model cascade (best available → smallest fallback)
+_FR_MODEL_CASCADE: list[str] = [
+    "fr_core_news_lg",
+    "fr_core_news_md",
+    "fr_core_news_sm",
+]
 
 # Chunking parameters (in characters)
 _CHUNK_SIZE = 100_000          # Process in 100k-char chunks
@@ -185,6 +215,49 @@ def _load_model():
             "No spaCy NER model available. Install one with: "
             "python -m spacy download en_core_web_lg"
         ) from e
+
+
+def _load_french_model():
+    """Lazy-load the best available French spaCy model.
+
+    Tries fr_core_news_lg → fr_core_news_md → fr_core_news_sm.
+    If none are installed, attempts to download fr_core_news_sm.
+    Returns None if no French model can be loaded.
+    """
+    global _nlp_fr, _active_fr_model_name
+    if _nlp_fr is not None:
+        return _nlp_fr
+
+    import spacy
+
+    for model_name in _FR_MODEL_CASCADE:
+        try:
+            _nlp_fr = spacy.load(model_name)
+            _active_fr_model_name = model_name
+            logger.info(f"Loaded French spaCy model '{model_name}'")
+            return _nlp_fr
+        except OSError:
+            logger.info(f"French spaCy model '{model_name}' not installed — trying next")
+
+    # Nothing installed — attempt to download fr_core_news_sm
+    logger.warning("No French spaCy model found. Downloading fr_core_news_sm…")
+    try:
+        spacy.cli.download("fr_core_news_sm")
+        _nlp_fr = spacy.load("fr_core_news_sm")
+        _active_fr_model_name = "fr_core_news_sm"
+        logger.info("Using fallback French model 'fr_core_news_sm'")
+        return _nlp_fr
+    except (Exception, SystemExit) as e:
+        logger.warning(f"Failed to load any French spaCy model: {e}")
+        return None
+
+
+def is_french_ner_available() -> bool:
+    """Check whether a French NER model can be loaded."""
+    try:
+        return _load_french_model() is not None
+    except BaseException:
+        return False
 
 
 def _is_false_positive_person(text: str) -> bool:
@@ -339,6 +412,190 @@ def detect_ner(text: str) -> list[NERMatch]:
         all_matches.extend(chunk_matches)
 
         # Advance by (chunk_size - overlap)
+        offset += _CHUNK_SIZE - _CHUNK_OVERLAP
+        if end == len(text):
+            break
+
+    return _deduplicate_matches(all_matches)
+
+
+# ---------------------------------------------------------------------------
+# French spaCy NER entity label map
+# ---------------------------------------------------------------------------
+# French spaCy models use PER (not PERSON), ORG, LOC, MISC.
+
+_SPACY_FR_LABEL_MAP: dict[str, PIIType] = {
+    "PER": PIIType.PERSON,
+    "ORG": PIIType.ORG,
+    "LOC": PIIType.LOCATION,
+    # MISC intentionally omitted — too noisy (adjectives, demonyms, etc.)
+}
+
+# French-specific false-positive filters
+_FR_PERSON_STOPWORDS: set[str] = {
+    "monsieur", "madame", "mademoiselle", "mme", "mlle",
+    "le", "la", "les", "un", "une", "des", "du", "de",
+    "ce", "cette", "son", "sa", "ses", "notre", "votre", "leur",
+    "il", "elle", "nous", "vous", "ils", "elles", "on",
+    "page", "section", "tableau", "figure", "chapitre", "annexe",
+    "total", "montant", "solde", "date", "numéro", "numero", "type",
+    "janvier", "février", "fevrier", "mars", "avril", "mai", "juin",
+    "juillet", "août", "aout", "septembre", "octobre", "novembre", "décembre", "decembre",
+    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+}
+
+_FR_ORG_STOPWORDS: set[str] = {
+    "département", "departement", "service", "bureau", "direction",
+    "section", "division", "commission", "comité", "comite",
+    "article", "clause", "alinéa", "alinea", "annexe",
+    "tableau", "figure", "graphique",
+    "loi", "décret", "decret", "arrêté", "arrete", "règlement", "reglement",
+    "contrat", "accord", "convention", "rapport", "résumé", "resume",
+}
+
+
+def _is_false_positive_person_fr(text: str) -> bool:
+    """Return True if a French PERSON entity is likely a false positive."""
+    clean = text.strip().lower()
+    if clean in _FR_PERSON_STOPWORDS:
+        return True
+    if text.isupper() and len(text) <= 5:
+        return True
+    if text.strip() and text.strip()[0].isdigit():
+        return True
+    words = text.strip().split()
+    if len(words) == 1 and len(words[0]) <= 3:
+        return True
+    return False
+
+
+def _is_false_positive_org_fr(text: str) -> bool:
+    """Return True if a French ORG entity is likely a false positive."""
+    clean = text.strip().lower()
+    if clean in _FR_ORG_STOPWORDS:
+        return True
+    if clean in _GENERIC_STOPWORDS:
+        return True
+    if len(clean) <= 2:
+        return True
+    if text.isupper() and len(text.strip()) <= 4:
+        return True
+    return False
+
+
+def _process_chunk_fr(nlp, text: str, global_offset: int) -> list[NERMatch]:
+    """Run French NER on a single text chunk, adjusting offsets."""
+    doc = nlp(text)
+    matches: list[NERMatch] = []
+
+    for ent in doc.ents:
+        pii_type = _SPACY_FR_LABEL_MAP.get(ent.label_)
+        if pii_type is None:
+            continue
+
+        raw_text = ent.text
+        nl_idx = raw_text.find("\n")
+        if nl_idx > 0:
+            raw_text = raw_text[:nl_idx]
+        cleaned = raw_text.strip()
+
+        # Strip leading French articles
+        for prefix in ("le ", "Le ", "la ", "La ", "l'", "L'",
+                       "les ", "Les ", "un ", "Un ", "une ", "Une "):
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip()
+                break
+
+        min_len = _MIN_ENTITY_LENGTH.get(pii_type, 2)
+        if len(cleaned) < min_len:
+            continue
+
+        if pii_type == PIIType.PERSON and _is_false_positive_person_fr(cleaned):
+            continue
+        if pii_type == PIIType.ORG and _is_false_positive_org_fr(cleaned):
+            continue
+        if cleaned.isupper() and len(cleaned) <= 5:
+            continue
+        if cleaned.isdigit():
+            continue
+
+        end_char = ent.start_char + len(raw_text.rstrip())
+        confidence = _estimate_confidence_fr(ent, pii_type)
+        matches.append(NERMatch(
+            start=global_offset + ent.start_char,
+            end=global_offset + end_char,
+            text=cleaned,
+            pii_type=pii_type,
+            confidence=confidence,
+        ))
+
+    return matches
+
+
+def _estimate_confidence_fr(ent, pii_type: PIIType) -> float:
+    """Estimate confidence for a French spaCy entity."""
+    base_confidence = {
+        PIIType.PERSON: 0.78,
+        PIIType.ORG: 0.55,
+        PIIType.LOCATION: 0.40,
+    }
+    conf = base_confidence.get(pii_type, 0.40)
+
+    text = ent.text.strip()
+    word_count = len(text.split())
+
+    if word_count >= 2 and pii_type == PIIType.PERSON:
+        conf = min(conf + 0.08, 0.92)
+    if word_count >= 2 and pii_type == PIIType.ORG:
+        conf = min(conf + 0.15, 0.80)
+    if word_count >= 3 and pii_type == PIIType.ORG:
+        conf = min(conf + 0.05, 0.85)
+
+    # Single-word entities — reduce confidence
+    if pii_type == PIIType.PERSON and word_count == 1:
+        conf = max(conf - 0.18, 0.40)
+    if pii_type == PIIType.ORG and word_count == 1:
+        conf = max(conf - 0.15, 0.30)
+    if pii_type == PIIType.LOCATION and word_count == 1:
+        conf = max(conf - 0.10, 0.30)
+
+    # Boost for larger French models
+    if _active_fr_model_name.endswith("_lg"):
+        conf = min(conf + 0.05, 0.95)
+    elif _active_fr_model_name.endswith("_md"):
+        conf = min(conf + 0.03, 0.92)
+
+    return round(conf, 4)
+
+
+def detect_ner_french(text: str) -> list[NERMatch]:
+    """
+    Run French spaCy NER on text.
+
+    Only runs if the text appears to be French.  Handles chunking
+    for long texts the same way as the English detector.
+    """
+    if not _is_french_text(text):
+        logger.info("Text does not appear to be French — skipping French NER")
+        return []
+
+    nlp = _load_french_model()
+    if nlp is None:
+        logger.info("No French spaCy model available — skipping French NER")
+        return []
+
+    # Short texts — single pass
+    if len(text) <= _CHUNK_SIZE:
+        return _process_chunk_fr(nlp, text[:1_000_000], global_offset=0)
+
+    # Long texts — overlapping sliding-window
+    all_matches: list[NERMatch] = []
+    offset = 0
+    while offset < len(text):
+        end = min(offset + _CHUNK_SIZE, len(text))
+        chunk = text[offset:end]
+        chunk_matches = _process_chunk_fr(nlp, chunk, global_offset=offset)
+        all_matches.extend(chunk_matches)
         offset += _CHUNK_SIZE - _CHUNK_OVERLAP
         if end == len(text):
             break

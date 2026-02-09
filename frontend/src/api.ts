@@ -8,6 +8,7 @@ import type {
   DocumentInfo,
   LLMStatus,
   PIIRegion,
+  RedetectResult,
   RegionAction,
   TokenMapping,
   UploadResponse,
@@ -87,6 +88,22 @@ export async function detectPII(docId: string): Promise<DetectionResult> {
   });
 }
 
+export async function redetectPII(
+  docId: string,
+  options: {
+    confidence_threshold?: number;
+    page_number?: number | null;
+    regex_enabled?: boolean;
+    ner_enabled?: boolean;
+    llm_detection_enabled?: boolean;
+  } = {}
+): Promise<RedetectResult> {
+  return request<RedetectResult>(`/api/documents/${docId}/redetect`, {
+    method: "POST",
+    body: JSON.stringify(options),
+  });
+}
+
 export async function getRegions(
   docId: string,
   pageNumber?: number
@@ -106,6 +123,15 @@ export async function setRegionAction(
   });
 }
 
+export async function deleteRegion(
+  docId: string,
+  regionId: string,
+): Promise<void> {
+  await request(`/api/documents/${docId}/regions/${regionId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function batchRegionAction(
   docId: string,
   regionIds: string[],
@@ -114,6 +140,16 @@ export async function batchRegionAction(
   await request(`/api/documents/${docId}/regions/batch-action`, {
     method: "PUT",
     body: JSON.stringify({ region_ids: regionIds, action }),
+  });
+}
+
+export async function batchDeleteRegions(
+  docId: string,
+  regionIds: string[],
+): Promise<void> {
+  await request(`/api/documents/${docId}/regions/batch-delete`, {
+    method: "POST",
+    body: JSON.stringify({ region_ids: regionIds, action: "CANCEL" }),
   });
 }
 

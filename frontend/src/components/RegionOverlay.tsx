@@ -4,8 +4,10 @@
  */
 
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { PII_COLORS, type PIIRegion, type RegionAction, type PIIType } from "../types";
-import { X, Trash2, Key, RefreshCw, Highlighter, Edit3, Tag, ChevronRight, ChevronLeft } from "lucide-react";
+import { CURSOR_GRAB, CURSOR_GRABBING } from "../cursors";
+import { X, Trash2, Key, Edit3, Tag, ChevronRight, ChevronLeft, Type, Search } from "lucide-react";
 
 export type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
@@ -34,6 +36,7 @@ interface Props {
   isImageFile: boolean;
   onSelect: (e: React.MouseEvent) => void;
   onAction: (regionId: string, action: RegionAction) => void;
+  onClear?: (regionId: string) => void;
   onRefresh?: (regionId: string) => void;
   onHighlightAll?: (regionId: string) => void;
   onMoveStart?: (regionId: string, e: React.MouseEvent) => void;
@@ -44,6 +47,9 @@ interface Props {
   ) => void;
   onUpdateLabel?: (regionId: string, newType: PIIType) => void;
   onUpdateText?: (regionId: string, newText: string) => void;
+  portalTarget?: HTMLElement | null;
+  imageContainerEl?: HTMLElement | null;
+  cursorToolbarExpanded?: boolean;
 }
 
 export default function RegionOverlay({
@@ -57,12 +63,16 @@ export default function RegionOverlay({
   isImageFile,
   onSelect,
   onAction,
+  onClear,
   onRefresh,
   onHighlightAll,
   onMoveStart,
   onResizeStart,
   onUpdateLabel,
   onUpdateText,
+  portalTarget,
+  imageContainerEl,
+  cursorToolbarExpanded,
 }: Props) {
   const [showEditPanel, setShowEditPanel] = useState(false);
   const [toolbarExpanded, setToolbarExpanded] = useState(() => {
@@ -79,20 +89,17 @@ export default function RegionOverlay({
   const [isEditingText, setIsEditingText] = useState(false);
   const [editedText, setEditedText] = useState(region.text);
   
-  // Toolbar position (relative to region)
-  const [toolbarOffset, setToolbarOffset] = useState(() => {
+  // Toolbar position (viewport/fixed coordinates)
+  const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(() => {
     try {
-      const saved = localStorage.getItem('regionToolbarOffset');
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch (e) {
-      console.error('Failed to load toolbar offset:', e);
-    }
-    return { x: 0, y: 0 };
+      const saved = localStorage.getItem('regionToolbarPos');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return null; // null = auto-position next to region
   });
+  const highlightRef = useRef<HTMLDivElement>(null);
   const [isDraggingToolbar, setIsDraggingToolbar] = useState(false);
-  const toolbarDragStart = useRef({ mouseX: 0, mouseY: 0, offsetX: 0, offsetY: 0 });
+  const toolbarDragStart = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
   const toolbarRef = useRef<HTMLDivElement>(null);
   
   // Edit dialog position (viewport coordinates)
@@ -135,74 +142,99 @@ export default function RegionOverlay({
       bgColor = "var(--highlight-pending)";
   }
 
-  // Darker shade of yellow for selected border
+  // Use shield-blue for selected border, PII color otherwise
   const baseBorderColor = PII_COLORS[region.pii_type] || "#ffd740";
-  const borderColor = (isSelected || showEditPanel) ? "#cca000" : baseBorderColor;
+  const borderColor = (isSelected || showEditPanel) ? "var(--accent-primary)" : baseBorderColor;
   const [hovered, setHovered] = useState(false);
   // In multi-select mode: only show frame and border, no label/buttons
   const soloSelected = isSelected && !isMultiSelected;
   // Keep toolbar visible when edit panel is open
-  const showDetails = (hovered && !isMultiSelected) || soloSelected || showEditPanel;
+  const showDetails = soloSelected || showEditPanel;
+  const showTab = (hovered && !isMultiSelected) || showDetails;
   const showFrame = hovered || isSelected || isMultiSelected || showEditPanel;
 
-  // Toolbar drag handlers
+  // Toolbar drag handlers (absolute coordinates relative to contentArea)
   useEffect(() => {
     if (!isDraggingToolbar) return;
-    
+    const GAP = 2;
+    const PAD = 4;
     const handleMouseMove = (e: MouseEvent) => {
+      const tb = toolbarRef.current;
+      if (!tb) return;
       const dx = e.clientX - toolbarDragStart.current.mouseX;
       const dy = e.clientY - toolbarDragStart.current.mouseY;
-      
-      let newOffsetX = toolbarDragStart.current.offsetX + dx;
-      let newOffsetY = toolbarDragStart.current.offsetY + dy;
-      
-      // Clamp toolbar position to stay within document boundaries
-      const toolbarWidth = toolbarRef.current?.offsetWidth || 50;
-      const toolbarHeight = toolbarRef.current?.offsetHeight || 300;
-      
-      const toolbarLeft = left + width + 8 + newOffsetX;
-      const toolbarTop = top + newOffsetY;
-      
-      // Clamp horizontal position
-      if (toolbarLeft < 0) {
-        newOffsetX = -(left + width + 8);
-      } else if (toolbarLeft + toolbarWidth > imgWidth) {
-        newOffsetX = imgWidth - (left + width + 8 + toolbarWidth);
+      let newX = toolbarDragStart.current.startX + dx;
+      let newY = toolbarDragStart.current.startY + dy;
+
+      // Clamp within document (image) bounds + 4px padding
+      const area = portalTarget;
+      const img = imageContainerEl;
+      if (area && img) {
+        const areaRect = area.getBoundingClientRect();
+        const imgRect = img.getBoundingClientRect();
+        const imgLeft = imgRect.left - areaRect.left;
+        const imgTop = imgRect.top - areaRect.top;
+        const minX = imgLeft + PAD;
+        const minY = imgTop + PAD;
+        const maxX = imgLeft + imgRect.width - tb.offsetWidth - PAD;
+        const maxY = imgTop + imgRect.height - tb.offsetHeight - PAD;
+        newX = Math.max(minX, Math.min(maxX, newX));
+        newY = Math.max(minY, Math.min(maxY, newY));
+
+        // Avoid overlapping the cursor toolbar
+        const cursorTb = document.querySelector('[data-cursor-toolbar]');
+        if (cursorTb) {
+          const ctRect = cursorTb.getBoundingClientRect();
+          const cursorRect = {
+            left: areaRect.left + newX,
+            top: areaRect.top + newY,
+            right: areaRect.left + newX + tb.offsetWidth,
+            bottom: areaRect.top + newY + tb.offsetHeight,
+          };
+          if (
+            cursorRect.left < ctRect.right + GAP &&
+            cursorRect.right > ctRect.left - GAP &&
+            cursorRect.top < ctRect.bottom + GAP &&
+            cursorRect.bottom > ctRect.top - GAP
+          ) {
+            const pushLeft = cursorRect.right - (ctRect.left - GAP);
+            const pushRight = (ctRect.right + GAP) - cursorRect.left;
+            const pushUp = cursorRect.bottom - (ctRect.top - GAP);
+            const pushDown = (ctRect.bottom + GAP) - cursorRect.top;
+            const minPush = Math.min(pushLeft, pushRight, pushUp, pushDown);
+            if (minPush === pushLeft) newX -= pushLeft;
+            else if (minPush === pushRight) newX += pushRight;
+            else if (minPush === pushUp) newY -= pushUp;
+            else newY += pushDown;
+            newX = Math.max(minX, Math.min(maxX, newX));
+            newY = Math.max(minY, Math.min(maxY, newY));
+          }
+        }
+      } else {
+        newX = Math.max(0, newX);
+        newY = Math.max(0, newY);
       }
-      
-      // Clamp vertical position
-      if (toolbarTop < 0) {
-        newOffsetY = -top;
-      } else if (toolbarTop + toolbarHeight > imgHeight) {
-        newOffsetY = imgHeight - (top + toolbarHeight);
-      }
-      
-      setToolbarOffset({
-        x: newOffsetX,
-        y: newOffsetY,
-      });
+      setToolbarPos({ x: newX, y: newY });
     };
-    
     const handleMouseUp = () => {
       setIsDraggingToolbar(false);
     };
-    
     document.addEventListener("mousemove", handleMouseMove);
     document.addEventListener("mouseup", handleMouseUp);
     return () => {
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isDraggingToolbar, left, width, top, imgWidth, imgHeight]);
+  }, [isDraggingToolbar, portalTarget, imageContainerEl]);
 
   // Save toolbar offset to localStorage
   useEffect(() => {
     try {
-      localStorage.setItem('regionToolbarOffset', JSON.stringify(toolbarOffset));
+      localStorage.setItem('regionToolbarPos', JSON.stringify(toolbarPos));
     } catch (e) {
       console.error('Failed to save toolbar offset:', e);
     }
-  }, [toolbarOffset]);
+  }, [toolbarPos]);
 
   // Save toolbar expanded state to localStorage
   useEffect(() => {
@@ -218,12 +250,12 @@ export default function RegionOverlay({
     if (!isDraggingDialog) return;
     
     const handleMouseMove = (e: MouseEvent) => {
+      const PAD = 4;
       const dx = e.clientX - dialogDragStart.current.mouseX;
       const dy = e.clientY - dialogDragStart.current.mouseY;
-      setDialogPos({
-        x: dialogDragStart.current.startX + dx,
-        y: dialogDragStart.current.startY + dy,
-      });
+      const newX = Math.max(PAD, Math.min(window.innerWidth - PAD - 320, dialogDragStart.current.startX + dx));
+      const newY = Math.max(PAD, Math.min(window.innerHeight - PAD - 100, dialogDragStart.current.startY + dy));
+      setDialogPos({ x: newX, y: newY });
     };
     
     const handleMouseUp = () => {
@@ -247,45 +279,77 @@ export default function RegionOverlay({
     }
   }, [dialogPos]);
 
-  // Clamp toolbar position to stay within document boundaries
+  // Set initial toolbar position on first show (absolute coords relative to contentArea)
   useEffect(() => {
-    if (!showDetails || !toolbarRef.current) return;
-    
-    const toolbarWidth = toolbarRef.current.offsetWidth;
-    const toolbarHeight = toolbarRef.current.offsetHeight;
-    
-    if (toolbarWidth === 0 || toolbarHeight === 0) return; // Not rendered yet
-    
-    const toolbarLeft = left + width + 8 + toolbarOffset.x;
-    const toolbarTop = top + toolbarOffset.y;
-    
-    let needsAdjustment = false;
-    let newOffsetX = toolbarOffset.x;
-    let newOffsetY = toolbarOffset.y;
-    
-    // Check horizontal bounds
-    if (toolbarLeft < 0) {
-      newOffsetX = -(left + width + 8);
-      needsAdjustment = true;
-    } else if (toolbarLeft + toolbarWidth > imgWidth) {
-      newOffsetX = imgWidth - (left + width + 8 + toolbarWidth);
-      needsAdjustment = true;
-    }
-    
-    // Check vertical bounds
-    if (toolbarTop < 0) {
-      newOffsetY = -top;
-      needsAdjustment = true;
-    } else if (toolbarTop + toolbarHeight > imgHeight) {
-      newOffsetY = imgHeight - (top + toolbarHeight);
-      needsAdjustment = true;
-    }
-    
-    if (needsAdjustment) {
-      setToolbarOffset({ x: newOffsetX, y: newOffsetY });
+    if (!showDetails || toolbarPos !== null) return;
+    const el = highlightRef.current;
+    const area = portalTarget;
+    if (el && area) {
+      const elRect = el.getBoundingClientRect();
+      const areaRect = area.getBoundingClientRect();
+      setToolbarPos({ x: elRect.right - areaRect.left + 8, y: elRect.top - areaRect.top });
+    } else {
+      setToolbarPos({ x: 12, y: 12 });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showDetails, left, width, top, imgWidth, imgHeight, toolbarExpanded]);
+  }, [showDetails]);
+
+  // Clamp toolbar position to stay within document (image) bounds + 4px padding
+  useEffect(() => {
+    if (!showDetails || !toolbarRef.current || !toolbarPos) return;
+    const PAD = 4;
+    const area = portalTarget;
+    const img = imageContainerEl;
+    const tb = toolbarRef.current;
+    if (!area || !img) return;
+    const w = tb.offsetWidth;
+    const h = tb.offsetHeight;
+    if (w === 0 || h === 0) return;
+    const areaRect = area.getBoundingClientRect();
+    const imgRect = img.getBoundingClientRect();
+    const imgLeft = imgRect.left - areaRect.left;
+    const imgTop = imgRect.top - areaRect.top;
+    const minX = imgLeft + PAD;
+    const minY = imgTop + PAD;
+    const maxX = imgLeft + imgRect.width - w - PAD;
+    const maxY = imgTop + imgRect.height - h - PAD;
+    let { x, y } = toolbarPos;
+    let changed = false;
+    if (x < minX) { x = minX; changed = true; }
+    if (x > maxX) { x = maxX; changed = true; }
+    if (y < minY) { y = minY; changed = true; }
+    if (y > maxY) { y = maxY; changed = true; }
+    if (changed) setToolbarPos({ x, y });
+
+    // Avoid overlapping the cursor toolbar
+    const GAP = 2;
+    const cursorTb = document.querySelector('[data-cursor-toolbar]');
+    if (cursorTb) {
+      const ctRect = cursorTb.getBoundingClientRect();
+      const tbScreenLeft = areaRect.left + x;
+      const tbScreenTop = areaRect.top + y;
+      if (ctRect.width > 0 &&
+        tbScreenLeft < ctRect.right + GAP &&
+        tbScreenLeft + w > ctRect.left - GAP &&
+        tbScreenTop < ctRect.bottom + GAP &&
+        tbScreenTop + h > ctRect.top - GAP
+      ) {
+        const pushLeft = (tbScreenLeft + w) - (ctRect.left - GAP);
+        const pushRight = (ctRect.right + GAP) - tbScreenLeft;
+        const pushUp = (tbScreenTop + h) - (ctRect.top - GAP);
+        const pushDown = (ctRect.bottom + GAP) - tbScreenTop;
+        const minPush = Math.min(pushLeft, pushRight, pushUp, pushDown);
+        if (minPush === pushLeft) x -= pushLeft;
+        else if (minPush === pushRight) x += pushRight;
+        else if (minPush === pushUp) y -= pushUp;
+        else y += pushDown;
+        x = Math.max(minX, Math.min(maxX, x));
+        y = Math.max(minY, Math.min(maxY, y));
+        setToolbarPos({ x, y });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDetails, toolbarExpanded, toolbarPos, portalTarget, imageContainerEl, cursorToolbarExpanded]);
 
   if (region.action === "CANCEL") {
     return null;
@@ -319,6 +383,7 @@ export default function RegionOverlay({
     <>
       {/* Highlight rectangle — drag body to move */}
       <div
+        ref={highlightRef}
         style={{
           position: "absolute",
           left,
@@ -343,7 +408,6 @@ export default function RegionOverlay({
             onSelect(e);
           }
         }}
-        title={`${region.pii_type}: "${region.text}" (${Math.round(region.confidence * 100)}%)`}
       >
         {/* Resize handles — only visible when solo-selected */}
         {soloSelected &&
@@ -371,48 +435,52 @@ export default function RegionOverlay({
       </div>
 
       {/* Top label - flush with border */}
-      {showDetails && (
+      {showTab && (
         <div
           onMouseDown={(e) => e.stopPropagation()}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
           style={{
             position: "absolute",
-            left: left,
-            top: top - 26,
+            left: left + 7,
+            top: top - 27,
             zIndex: 6,
             background: borderColor,
             color: "#000",
             padding: "4px 10px",
-            borderRadius: "4px 4px 0 0",
+            borderRadius: "8px 8px 0 0",
             fontSize: 13,
             fontWeight: 600,
             whiteSpace: "nowrap",
+            maxWidth: Math.max(width - 5, 120),
+            overflow: "hidden",
+            textOverflow: "ellipsis",
           }}
         >
-          {region.pii_type}
+          {region.pii_type}{region.text ? `: ${region.text}` : ""}
         </div>
       )}
 
-      {/* Vertical toolbar - draggable */}
-      {showDetails && (
+      {/* Vertical toolbar - rendered via portal into contentArea container */}
+      {showDetails && portalTarget && createPortal(
         <div
           ref={toolbarRef}
+          data-region-toolbar
           onMouseDown={(e) => e.stopPropagation()}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
           style={{
             position: "absolute",
-            left: left + width + 8 + toolbarOffset.x,
-            top: top + toolbarOffset.y,
-            zIndex: 6,
+            left: toolbarPos?.x ?? 12,
+            top: toolbarPos?.y ?? 12,
+            zIndex: 15,
             background: "var(--bg-secondary)",
             borderRadius: 8,
             boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
-            cursor: isDraggingToolbar ? "grabbing" : "default",
+            cursor: isDraggingToolbar ? CURSOR_GRABBING : "default",
           }}
         >
           {/* Drag handle header */}
@@ -423,14 +491,14 @@ export default function RegionOverlay({
               toolbarDragStart.current = {
                 mouseX: e.clientX,
                 mouseY: e.clientY,
-                offsetX: toolbarOffset.x,
-                offsetY: toolbarOffset.y,
+              startX: toolbarPos?.x ?? 12,
+              startY: toolbarPos?.y ?? 12,
               };
             }}
             style={{
               padding: "4px 6px",
               background: "var(--bg-primary)",
-              cursor: isDraggingToolbar ? "grabbing" : "grab",
+              cursor: isDraggingToolbar ? CURSOR_GRABBING : CURSOR_GRAB,
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
@@ -470,6 +538,61 @@ export default function RegionOverlay({
             onMouseDown={(e) => e.stopPropagation()}
             style={{ padding: 4, display: "flex", flexDirection: "column", gap: 2 }}
           >
+            {/* Replace all */}
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onHighlightAll?.(region.id);
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--text-primary)",
+                whiteSpace: "nowrap",
+              }}
+              title="Replace all matching"
+              className="btn-ghost btn-sm"
+            >
+              <Type size={16} />
+              {toolbarExpanded && "Replace all"}
+            </button>
+
+            {/* Detect */}
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRefresh?.(region.id);
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--text-primary)",
+                whiteSpace: "nowrap",
+              }}
+              title="Detect — re-analyze"
+              className="btn-ghost btn-sm"
+            >
+              <Search size={16} />
+              {toolbarExpanded && "Detect"}
+            </button>
+
+            {/* Edit */}
             <button
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
@@ -496,12 +619,13 @@ export default function RegionOverlay({
               <Edit3 size={16} />
               {toolbarExpanded && "Edit"}
             </button>
-            
+
+            {/* Clear */}
             <button
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
-                onAction(region.id, "CANCEL");
+                onClear?.(region.id);
               }}
               style={{
                 padding: "8px",
@@ -516,18 +640,22 @@ export default function RegionOverlay({
                 color: "var(--text-primary)",
                 whiteSpace: "nowrap",
               }}
-              title="Cancel — keep original"
+              title="Clear — remove from document"
               className="btn-ghost btn-sm"
             >
               <X size={16} />
-              {toolbarExpanded && "Cancel"}
+              {toolbarExpanded && "Clear"}
             </button>
-            
+
+            {/* Separator */}
+            <div style={{ height: 1, background: "rgba(255,255,255,0.15)", margin: "2px 4px" }} />
+
+            {/* Tokenize */}
             <button
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
-                onRefresh?.(region.id);
+                onAction(region.id, region.action === "TOKENIZE" ? "PENDING" : "TOKENIZE");
               }}
               style={{
                 padding: "8px",
@@ -536,98 +664,48 @@ export default function RegionOverlay({
                 alignItems: "center",
                 gap: 8,
                 background: "transparent",
-                border: "1px solid transparent",
+                border: region.action === "TOKENIZE" ? "1px solid #fff" : "1px solid transparent",
                 borderRadius: 4,
                 cursor: "pointer",
-                color: "var(--text-primary)",
+                color: region.action === "TOKENIZE" ? "#fff" : "var(--tokenize)",
                 whiteSpace: "nowrap",
               }}
-              title="Refresh — re-analyze"
-              className="btn-ghost btn-sm"
-            >
-              <RefreshCw size={16} />
-              {toolbarExpanded && "Refresh"}
-            </button>
-            
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                onHighlightAll?.(region.id);
-              }}
-              style={{
-                padding: "8px",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: "transparent",
-                border: "1px solid transparent",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "var(--text-primary)",
-                whiteSpace: "nowrap",
-              }}
-              title="Highlight all"
-              className="btn-ghost btn-sm"
-            >
-              <Highlighter size={16} />
-              {toolbarExpanded && "All"}
-            </button>
-            
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                onAction(region.id, "REMOVE");
-              }}
-              style={{
-                padding: "8px",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: "transparent",
-                border: "1px solid transparent",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "var(--danger)",
-                whiteSpace: "nowrap",
-              }}
-              title="Remove"
-              className="btn-danger btn-sm"
-            >
-              <Trash2 size={16} />
-              {toolbarExpanded && "Remove"}
-            </button>
-            
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                onAction(region.id, "TOKENIZE");
-              }}
-              style={{
-                padding: "8px",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: "transparent",
-                border: "1px solid transparent",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "var(--tokenize)",
-                whiteSpace: "nowrap",
-              }}
-              title="Tokenize"
+              title={region.action === "TOKENIZE" ? "Undo tokenize" : "Tokenize"}
               className="btn-tokenize btn-sm"
             >
               <Key size={16} />
               {toolbarExpanded && "Tokenize"}
             </button>
+
+            {/* Remove */}
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onAction(region.id, region.action === "REMOVE" ? "PENDING" : "REMOVE");
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: region.action === "REMOVE" ? "1px solid #fff" : "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: region.action === "REMOVE" ? "#fff" : "var(--danger)",
+                whiteSpace: "nowrap",
+              }}
+              title={region.action === "REMOVE" ? "Undo remove" : "Remove"}
+              className="btn-danger btn-sm"
+            >
+              <Trash2 size={16} />
+              {toolbarExpanded && "Remove"}
+            </button>
           </div>
-        </div>
+        </div>,
+        portalTarget
       )}
 
       {/* Floating edit dialog - shown when edit is active */}
@@ -663,7 +741,7 @@ export default function RegionOverlay({
               padding: "10px 12px",
               background: "var(--bg-primary)",
               borderRadius: "8px 8px 0 0",
-              cursor: isDraggingDialog ? "grabbing" : "grab",
+              cursor: isDraggingDialog ? CURSOR_GRABBING : CURSOR_GRAB,
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",

@@ -326,6 +326,146 @@ async def detect_pii(doc_id: str):
         raise HTTPException(500, detail=f"Detection error: {e}\n{tb}")
 
 
+class RedetectRequest(_PydanticBaseModel):
+    """Request body for the redetect (autodetect) endpoint."""
+    confidence_threshold: float = 0.55
+    page_number: Optional[int] = None  # None = all pages
+    regex_enabled: bool = True
+    ner_enabled: bool = True
+    llm_detection_enabled: bool = True
+
+
+@app.post("/api/documents/{doc_id}/redetect")
+async def redetect_pii(doc_id: str, body: RedetectRequest):
+    """
+    Re-run PII detection with custom fuzziness (confidence threshold).
+
+    Merge strategy:
+    - New regions (no significant bbox overlap with existing) → added.
+    - Existing regions that overlap with a new detection → updated in place
+      (text, pii_type, confidence, source refreshed) but action preserved.
+    - Existing regions with no new match → kept untouched (never deleted).
+    """
+    import traceback
+
+    try:
+        from core.detection.pipeline import detect_pii_on_page, _bbox_overlap_area, _bbox_area
+        from core.llm.engine import llm_engine
+
+        doc = _get_doc(doc_id)
+
+        # Temporarily override config thresholds for this detection run
+        original_threshold = config.confidence_threshold
+        original_regex = config.regex_enabled
+        original_ner = config.ner_enabled
+        original_llm = config.llm_detection_enabled
+        try:
+            config.confidence_threshold = body.confidence_threshold
+            config.regex_enabled = body.regex_enabled
+            config.ner_enabled = body.ner_enabled
+            config.llm_detection_enabled = body.llm_detection_enabled
+
+            engine = llm_engine if llm_engine.is_loaded() else None
+
+            # Determine which pages to scan
+            pages_to_scan = doc.pages
+            if body.page_number is not None:
+                pages_to_scan = [p for p in doc.pages if p.page_number == body.page_number]
+                if not pages_to_scan:
+                    raise HTTPException(404, detail=f"Page {body.page_number} not found")
+
+            # Run detection on target pages
+            new_regions: list[PIIRegion] = []
+            for page in pages_to_scan:
+                detected = detect_pii_on_page(page, llm_engine=engine)
+                new_regions.extend(detected)
+
+        finally:
+            # Restore original config
+            config.confidence_threshold = original_threshold
+            config.regex_enabled = original_regex
+            config.ner_enabled = original_ner
+            config.llm_detection_enabled = original_llm
+
+        # ── Merge new detections into existing regions ──
+        scanned_pages = {p.page_number for p in pages_to_scan}
+        # Separate existing regions into scanned-page vs other-page
+        existing_on_scanned = [r for r in doc.regions if r.page_number in scanned_pages]
+        existing_other = [r for r in doc.regions if r.page_number not in scanned_pages]
+
+        OVERLAP_THRESHOLD = 0.50  # 50% IoU to consider "same region"
+        matched_existing_ids: set[str] = set()
+        updated_indices: set[int] = set()  # new region indices that matched an existing
+        added_count = 0
+        updated_count = 0
+
+        # For each new region, find best-matching existing region
+        for ni, nr in enumerate(new_regions):
+            nr_area = _bbox_area(nr.bbox)
+            if nr_area <= 0:
+                continue
+
+            best_match = None
+            best_iou = 0.0
+            for er in existing_on_scanned:
+                if er.page_number != nr.page_number or er.id in matched_existing_ids:
+                    continue
+                overlap = _bbox_overlap_area(nr.bbox, er.bbox)
+                er_area = _bbox_area(er.bbox)
+                if er_area <= 0:
+                    continue
+                union = nr_area + er_area - overlap
+                iou = overlap / union if union > 0 else 0
+                if iou > best_iou:
+                    best_iou = iou
+                    best_match = er
+
+            if best_match and best_iou >= OVERLAP_THRESHOLD:
+                # Update existing region in place — keep action
+                best_match.bbox = nr.bbox
+                best_match.text = nr.text
+                best_match.pii_type = nr.pii_type
+                best_match.confidence = nr.confidence
+                best_match.source = nr.source
+                best_match.char_start = nr.char_start
+                best_match.char_end = nr.char_end
+                matched_existing_ids.add(best_match.id)
+                updated_indices.add(ni)
+                updated_count += 1
+
+        # Add truly new regions (not matched to any existing)
+        for ni, nr in enumerate(new_regions):
+            if ni not in updated_indices:
+                existing_on_scanned.append(nr)
+                added_count += 1
+
+        # Rebuild doc.regions: untouched other-page regions + merged scanned-page regions
+        doc.regions = existing_other + existing_on_scanned
+        doc.status = DocumentStatus.REVIEWING
+        _save_doc(doc)
+
+        logger.info(
+            f"Redetect for '{doc.original_filename}' "
+            f"(threshold={body.confidence_threshold}, pages={body.page_number or 'all'}): "
+            f"{added_count} added, {updated_count} updated, "
+            f"{len(doc.regions)} total"
+        )
+
+        return {
+            "doc_id": doc_id,
+            "added": added_count,
+            "updated": updated_count,
+            "total_regions": len(doc.regions),
+            "regions": [r.model_dump(mode="json") for r in doc.regions],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"Redetect failed: {e}\n{tb}")
+        raise HTTPException(500, detail=f"Redetect error: {e}\n{tb}")
+
+
 @app.get("/api/documents/{doc_id}/regions")
 async def get_regions(doc_id: str, page_number: Optional[int] = None):
     """Get detected PII regions, optionally filtered by page."""
@@ -366,6 +506,18 @@ async def set_region_action(doc_id: str, region_id: str, req: RegionActionReques
             _save_doc(doc)
             return {"status": "ok", "region_id": region_id, "action": req.action.value}
     raise HTTPException(404, f"Region '{region_id}' not found")
+
+
+@app.delete("/api/documents/{doc_id}/regions/{region_id}")
+async def delete_region(doc_id: str, region_id: str):
+    """Delete a PII region entirely from the document."""
+    doc = _get_doc(doc_id)
+    original_len = len(doc.regions)
+    doc.regions = [r for r in doc.regions if r.id != region_id]
+    if len(doc.regions) == original_len:
+        raise HTTPException(404, f"Region '{region_id}' not found")
+    _save_doc(doc)
+    return {"status": "ok", "region_id": region_id}
 
 
 @app.put("/api/documents/{doc_id}/regions/{region_id}/bbox")
@@ -473,6 +625,18 @@ async def batch_region_action(doc_id: str, req: BatchActionRequest):
             updated += 1
     _save_doc(doc)
     return {"status": "ok", "updated": updated}
+
+
+@app.post("/api/documents/{doc_id}/regions/batch-delete")
+async def batch_delete_regions(doc_id: str, req: BatchActionRequest):
+    """Delete multiple regions at once."""
+    doc = _get_doc(doc_id)
+    ids_to_delete = set(req.region_ids)
+    original_len = len(doc.regions)
+    doc.regions = [r for r in doc.regions if r.id not in ids_to_delete]
+    deleted = original_len - len(doc.regions)
+    _save_doc(doc)
+    return {"status": "ok", "deleted": deleted}
 
 
 @app.post("/api/documents/{doc_id}/regions/add")

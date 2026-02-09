@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   ChevronDown,
   ChevronUp,
   ZoomIn,
@@ -18,7 +20,13 @@ import {
   X,
   Trash2,
   Key,
-  Highlighter,
+  ScanSearch,
+  Edit3,
+  Type,
+  Search,
+  MousePointer,
+  BoxSelect,
+  Pencil,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import {
@@ -35,8 +43,12 @@ import {
   highlightAllRegions,
   updateRegionLabel,
   updateRegionText,
+  redetectPII,
+  deleteRegion,
+  batchDeleteRegions,
 } from "../api";
 import { PII_COLORS, type BBox, type PIIRegion, type PIIType, type RegionAction } from "../types";
+import { CURSOR_CROSSHAIR } from "../cursors";
 import RegionOverlay, { type ResizeHandle } from "./RegionOverlay";
 
 export default function DocumentViewer() {
@@ -47,6 +59,7 @@ export default function DocumentViewer() {
     setActivePage,
     regions,
     updateRegionAction,
+    removeRegion,
     setRegions,
     updateRegionBBox,
     updateRegion,
@@ -74,6 +87,7 @@ export default function DocumentViewer() {
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const topToolbarRef = useRef<HTMLDivElement>(null);
   const [imgSize, setImgSize] = useState({ width: 0, height: 0 });
   const [imgLoaded, setImgLoaded] = useState(false);
   const [showVaultPrompt, setShowVaultPrompt] = useState(false);
@@ -99,6 +113,14 @@ export default function DocumentViewer() {
   // ── Clipboard state for copy-paste ──
   const [copiedRegions, setCopiedRegions] = useState<PIIRegion[]>([]);
 
+  // ── Autodetect panel state ──
+  const [showAutodetect, setShowAutodetect] = useState(false);
+  const [autodetectFuzziness, setAutodetectFuzziness] = useState(0.55);
+  const [autodetectScope, setAutodetectScope] = useState<"page" | "all">("page");
+  const [autodetectRegex, setAutodetectRegex] = useState(true);
+  const [autodetectNer, setAutodetectNer] = useState(true);
+  const [autodetectLlm, setAutodetectLlm] = useState(true);
+
   // ── Move / resize interaction state ──
   const interactionRef = useRef<{
     mode: "moving" | "resizing";
@@ -111,6 +133,22 @@ export default function DocumentViewer() {
   } | null>(null);
   const [isInteracting, setIsInteracting] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // ── Cursor tool mode ──
+  type CursorTool = "pointer" | "lasso" | "draw";
+  const [cursorTool, setCursorToolRaw] = useState<CursorTool>("pointer");
+  const [cursorToolbarExpanded, setCursorToolbarExpanded] = useState(() => {
+    try {
+      const saved = localStorage.getItem('cursorToolbarExpanded');
+      return saved === null ? true : saved === 'true';
+    } catch { return true; }
+  });
+  const cursorToolbarRef = useRef<HTMLDivElement>(null);
+  const contentAreaRef = useRef<HTMLDivElement>(null);
+  const setCursorTool = useCallback((tool: CursorTool) => {
+    setCursorToolRaw(tool);
+    setDrawMode(tool === "draw");
+  }, [setDrawMode]);
   const autoRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Keep mutable refs so global event handlers see latest values
   const zoomRef = useRef(zoom);
@@ -182,6 +220,21 @@ export default function DocumentViewer() {
       }
     },
     [activeDocId, pushUndo, updateRegion, setStatusMessage]
+  );
+
+  const handleClearRegion = useCallback(
+    async (regionId: string) => {
+      if (!activeDocId) return;
+      try {
+        pushUndo();
+        await deleteRegion(activeDocId, regionId);
+        removeRegion(regionId);
+      } catch (e: any) {
+        console.error("Failed to delete region:", e);
+        setStatusMessage(`Delete failed: ${e.message}`);
+      }
+    },
+    [activeDocId, pushUndo, removeRegion, setStatusMessage]
   );
 
   const handleHighlightAll = useCallback(
@@ -315,6 +368,23 @@ export default function DocumentViewer() {
     [activeDocId, regions, updateRegionAction, pushUndo]
   );
 
+  const handleResetAll = useCallback(
+    async () => {
+      if (!activeDocId) return;
+      const ids = regions.map((r) => r.id);
+      if (ids.length === 0) return;
+
+      try {
+        pushUndo();
+        await batchDeleteRegions(activeDocId, ids);
+        ids.forEach((id) => removeRegion(id));
+      } catch (e: any) {
+        console.error("Reset all failed:", e);
+      }
+    },
+    [activeDocId, regions, removeRegion, pushUndo]
+  );
+
   const cancelTypePicker = useCallback(() => {
     setShowTypePicker(false);
     setDrawnBBox(null);
@@ -408,20 +478,40 @@ export default function DocumentViewer() {
           break;
         case "Escape":
           clearSelection();
-          if (drawMode) setDrawMode(false);
+          if (cursorTool !== "pointer") setCursorTool("pointer");
           if (showTypePicker) cancelTypePicker();
           break;
         case "d":
+          if (selectedRegionIds.length > 0) {
+            e.preventDefault();
+            selectedRegionIds.forEach((id) => {
+              const r = regions.find((reg) => reg.id === id);
+              handleRegionAction(id, r?.action === "REMOVE" ? "PENDING" : "REMOVE");
+            });
+          }
+          break;
         case "Delete":
           if (selectedRegionIds.length > 0) {
             e.preventDefault();
-            selectedRegionIds.forEach((id) => handleRegionAction(id, "REMOVE"));
+            selectedRegionIds.forEach((id) => handleClearRegion(id));
+          }
+          break;
+        case "Backspace":
+          if (selectedRegionIds.length > 0) {
+            e.preventDefault();
+            selectedRegionIds.forEach((id) => {
+              const r = regions.find((reg) => reg.id === id);
+              handleRegionAction(id, r?.action === "REMOVE" ? "PENDING" : "REMOVE");
+            });
           }
           break;
         case "t":
           if (selectedRegionIds.length > 0) {
             e.preventDefault();
-            selectedRegionIds.forEach((id) => handleRegionAction(id, "TOKENIZE"));
+            selectedRegionIds.forEach((id) => {
+              const r = regions.find((reg) => reg.id === id);
+              handleRegionAction(id, r?.action === "TOKENIZE" ? "PENDING" : "TOKENIZE");
+            });
           }
           break;
         case "c":
@@ -436,7 +526,7 @@ export default function DocumentViewer() {
             }
           } else if (selectedRegionIds.length > 0) {
             e.preventDefault();
-            selectedRegionIds.forEach((id) => handleRegionAction(id, "CANCEL"));
+            selectedRegionIds.forEach((id) => handleClearRegion(id));
           }
           break;
         case "v":
@@ -462,7 +552,33 @@ export default function DocumentViewer() {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [activePage, pageCount, zoom, selectedRegionIds, pageRegions, setActivePage, setZoom, setSelectedRegionIds, clearSelection, handleRegionAction, undo, redo, drawMode, showTypePicker, cancelTypePicker, setDrawMode, copiedRegions, handlePasteRegions]);
+  }, [activePage, pageCount, zoom, selectedRegionIds, pageRegions, setActivePage, setZoom, setSelectedRegionIds, clearSelection, handleRegionAction, handleClearRegion, undo, redo, cursorTool, setCursorTool, showTypePicker, cancelTypePicker, copiedRegions, handlePasteRegions]);
+
+  // ── Autodetect (redetect) ──
+  const handleAutodetect = useCallback(async () => {
+    if (!activeDocId) return;
+    setIsProcessing(true);
+    setStatusMessage("Running PII autodetection…");
+    setShowAutodetect(false);
+    try {
+      pushUndo();
+      const result = await redetectPII(activeDocId, {
+        confidence_threshold: autodetectFuzziness,
+        page_number: autodetectScope === "page" ? activePage : undefined,
+        regex_enabled: autodetectRegex,
+        ner_enabled: autodetectNer,
+        llm_detection_enabled: autodetectLlm,
+      });
+      setRegions(result.regions);
+      setStatusMessage(
+        `Autodetect: ${result.added} added, ${result.updated} updated (${result.total_regions} total)`
+      );
+    } catch (err) {
+      setStatusMessage(`Autodetect failed: ${err}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [activeDocId, activePage, autodetectFuzziness, autodetectScope, autodetectRegex, autodetectNer, autodetectLlm, pushUndo, setRegions, setIsProcessing, setStatusMessage]);
 
   // ── Anonymize ──
   const handleAnonymize = useCallback(async () => {
@@ -570,7 +686,10 @@ export default function DocumentViewer() {
   useEffect(() => {
     if (!sidebarCollapsed) {
       const handleClickOutside = (e: MouseEvent) => {
-        if (sidebarRef.current && !sidebarRef.current.contains(e.target as Node)) {
+        if (
+          sidebarRef.current && !sidebarRef.current.contains(e.target as Node) &&
+          topToolbarRef.current && !topToolbarRef.current.contains(e.target as Node)
+        ) {
           setSidebarCollapsed(true);
         }
       };
@@ -581,6 +700,8 @@ export default function DocumentViewer() {
       };
     }
   }, [sidebarCollapsed]);
+
+
 
   // ── Page data for coordinate mapping ──
   const pageData = doc?.pages?.[activePage - 1];
@@ -607,7 +728,7 @@ export default function DocumentViewer() {
 
   const handleCanvasMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (drawMode) {
+      if (cursorTool === "draw") {
         // Draw mode: start drawing a new region
         const pos = getPointerPosOnImage(e);
         if (!pos) return;
@@ -617,7 +738,17 @@ export default function DocumentViewer() {
         setDrawEnd(pos);
         return;
       }
-      // Normal mode: Ctrl/Meta+drag = lasso select, plain drag = pan
+      if (cursorTool === "lasso") {
+        // Lasso mode: drag to select multiple regions
+        const pos = getPointerPosOnImage(e);
+        if (!pos) return;
+        e.preventDefault();
+        setIsLassoing(true);
+        setLassoStart(pos);
+        setLassoEnd(pos);
+        return;
+      }
+      // Pointer mode: Ctrl/Meta+drag = lasso select, plain drag = pan
       if (e.ctrlKey || e.metaKey) {
         const pos = getPointerPosOnImage(e);
         if (!pos) return;
@@ -635,12 +766,12 @@ export default function DocumentViewer() {
         panStartRef.current = { x: e.clientX, y: e.clientY, scrollLeft: el.scrollLeft, scrollTop: el.scrollTop };
       }
     },
-    [drawMode, getPointerPosOnImage, clearSelection]
+    [cursorTool, getPointerPosOnImage, clearSelection]
   );
 
   const handleCanvasMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (isDrawing && drawMode) {
+      if (isDrawing && cursorTool === "draw") {
         const pos = getPointerPosOnImage(e);
         if (pos) setDrawEnd(pos);
         return;
@@ -659,7 +790,7 @@ export default function DocumentViewer() {
         el.scrollTop = panStartRef.current.scrollTop - dy;
       }
     },
-    [isDrawing, drawMode, isLassoing, isPanning, getPointerPosOnImage]
+    [isDrawing, cursorTool, isLassoing, isPanning, getPointerPosOnImage]
   );
 
   // ── Snap-to-text helper for resize and draw ──
@@ -820,7 +951,6 @@ export default function DocumentViewer() {
   // ── Move / resize handlers ──
   const handleMoveStart = useCallback(
     (regionId: string, e: React.MouseEvent) => {
-      if (drawMode) return;
       const pos = getPointerPosOnImage(e);
       if (!pos) return;
       const region = regions.find((r) => r.id === regionId);
@@ -837,12 +967,11 @@ export default function DocumentViewer() {
       };
       setIsInteracting(true);
     },
-    [drawMode, getPointerPosOnImage, regions, setSelectedRegionIds],
+    [getPointerPosOnImage, regions, setSelectedRegionIds],
   );
 
   const handleResizeStart = useCallback(
     (regionId: string, handle: ResizeHandle, e: React.MouseEvent) => {
-      if (drawMode) return;
       const pos = getPointerPosOnImage(e);
       if (!pos) return;
       const region = regions.find((r) => r.id === regionId);
@@ -860,7 +989,7 @@ export default function DocumentViewer() {
       };
       setIsInteracting(true);
     },
-    [drawMode, getPointerPosOnImage, regions, setSelectedRegionIds],
+    [getPointerPosOnImage, regions, setSelectedRegionIds],
   );
 
   // ── Prevent overlap helper ──
@@ -1075,60 +1204,18 @@ export default function DocumentViewer() {
   return (
     <div style={styles.wrapper}>
       {/* Toolbar */}
-      <div style={styles.toolbar}>
-        <div style={styles.toolbarGroup}>
-          <button
-            className="btn-ghost btn-sm"
-            onClick={() => setActivePage(Math.max(1, activePage - 1))}
-            disabled={activePage <= 1}
-          >
-            <ChevronLeft size={14} />
-          </button>
-          <span style={styles.pageInfo}>
-            Page {activePage} / {pageCount}
-          </span>
-          <button
-            className="btn-ghost btn-sm"
-            onClick={() => setActivePage(Math.min(pageCount, activePage + 1))}
-            disabled={activePage >= pageCount}
-          >
-            <ChevronRight size={14} />
-          </button>
-        </div>
-
-        <div style={styles.toolbarGroup}>
-          <button className="btn-icon" onClick={() => setZoom(zoom - 0.1)}>
-            <ZoomOut size={16} />
-          </button>
-          <span style={styles.zoomLabel}>{Math.round(zoom * 100)}%</span>
-          <button className="btn-icon" onClick={() => setZoom(zoom + 0.1)}>
-            <ZoomIn size={16} />
-          </button>
-          <button className="btn-icon" onClick={() => setZoom(1)}>
-            <RotateCcw size={14} />
-          </button>
-        </div>
-
-        <div style={styles.toolbarGroup}>
-          <button
-            className="btn-ghost btn-sm"
-            onClick={undo}
-            disabled={!canUndo}
-            title="Undo (Ctrl+Z)"
-            style={{ padding: "2px 6px" }}
-          >
-            <Undo2 size={14} />
-          </button>
-          <button
-            className="btn-ghost btn-sm"
-            onClick={redo}
-            disabled={!canRedo}
-            title="Redo (Ctrl+Y)"
-            style={{ padding: "2px 6px" }}
-          >
-            <Redo2 size={14} />
-          </button>
-        </div>
+      <div ref={topToolbarRef} style={styles.toolbar}>
+        <button
+          className="btn-success"
+          onClick={handleAnonymize}
+          disabled={
+            isProcessing ||
+            (removeCount === 0 && tokenizeCount === 0)
+          }
+        >
+          <Shield size={14} />
+          Export secure file
+        </button>
 
         <div style={styles.toolbarGroup}>
           <span style={styles.statBadge}>
@@ -1143,13 +1230,6 @@ export default function DocumentViewer() {
         </div>
 
         <div style={styles.toolbarGroup}>
-          <button
-            className="btn-ghost btn-sm"
-            onClick={() => handleBatchAction("CANCEL")}
-            title="Dismiss all pending"
-          >
-            <XCircle size={14} /> Cancel All
-          </button>
           <button
             className="btn-danger btn-sm"
             onClick={() => handleBatchAction("REMOVE")}
@@ -1166,38 +1246,338 @@ export default function DocumentViewer() {
           </button>
         </div>
 
-        <button
-          className="btn-success"
-          onClick={handleAnonymize}
-          disabled={
-            isProcessing ||
-            (removeCount === 0 && tokenizeCount === 0)
-          }
-        >
-          <Shield size={14} />
-          Anonymize & Export
-        </button>
+        {/* Spacer to push right group */}
+        <div style={{ flex: 1 }} />
 
-        <button
-          className={drawMode ? "btn-primary" : "btn-ghost"}
-          onClick={() => setDrawMode(!drawMode)}
-          title="Draw manual anonymization region (click and drag on page)"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-            ...(drawMode
-              ? { boxShadow: "0 0 0 2px var(--accent-primary)" }
-              : {}),
-          }}
-        >
-          <PenTool size={14} />
-          {drawMode ? "Drawing..." : "Draw Region"}
-        </button>
+        {/* Vertical separator */}
+        <div style={{ width: 1, height: 24, background: "var(--border-color)" }} />
+
+        {/* Clear All + Autodetect — right side */}
+        <div style={styles.toolbarGroup}>
+          <button
+            className="btn-ghost btn-sm"
+            onClick={() => handleResetAll()}
+            title="Delete all regions"
+          >
+            <XCircle size={14} /> Clear All
+          </button>
+
+          {/* Autodetect button + dropdown */}
+          <div style={{ position: "relative" }}>
+          <button
+            className={showAutodetect ? "btn-primary" : "btn-ghost"}
+            onClick={() => setShowAutodetect(!showAutodetect)}
+            disabled={isProcessing}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              ...(showAutodetect
+                ? { boxShadow: "0 0 0 2px var(--accent-primary)" }
+                : {}),
+            }}
+          >
+            <ScanSearch size={14} />
+            Autodetect
+          </button>
+
+          {showAutodetect && (
+            <div
+              style={{
+                position: "absolute",
+                top: "100%",
+                right: 0,
+                marginTop: 6,
+                background: "var(--bg-secondary)",
+                border: "1px solid var(--border-color)",
+                borderRadius: 8,
+                padding: 16,
+                boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
+                zIndex: 100,
+                width: 300,
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
+                PII Autodetection
+              </div>
+
+              {/* Fuzziness slider */}
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>
+                  <span>Sensitivity (confidence threshold)</span>
+                  <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{autodetectFuzziness.toFixed(2)}</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.1}
+                  max={0.95}
+                  step={0.05}
+                  value={autodetectFuzziness}
+                  onChange={(e) => setAutodetectFuzziness(parseFloat(e.target.value))}
+                  style={{ width: "100%", accentColor: "var(--accent-primary)" }}
+                />
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-secondary)", marginTop: 2 }}>
+                  <span>More results</span>
+                  <span>Fewer results</span>
+                </div>
+              </div>
+
+              {/* Scope */}
+              <div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Scope</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    className={autodetectScope === "page" ? "btn-primary btn-sm" : "btn-ghost btn-sm"}
+                    onClick={() => setAutodetectScope("page")}
+                    style={{ flex: 1 }}
+                  >
+                    Current Page
+                  </button>
+                  <button
+                    className={autodetectScope === "all" ? "btn-primary btn-sm" : "btn-ghost btn-sm"}
+                    onClick={() => setAutodetectScope("all")}
+                    style={{ flex: 1 }}
+                  >
+                    All Pages
+                  </button>
+                </div>
+              </div>
+
+              {/* Detection layers */}
+              <div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Detection layers</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-primary)", cursor: "pointer" }}>
+                    <input type="checkbox" checked={autodetectRegex} onChange={(e) => setAutodetectRegex(e.target.checked)} style={{ accentColor: "var(--accent-primary)" }} />
+                    Regex (SSN, email, phone, etc.)
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-primary)", cursor: "pointer" }}>
+                    <input type="checkbox" checked={autodetectNer} onChange={(e) => setAutodetectNer(e.target.checked)} style={{ accentColor: "var(--accent-primary)" }} />
+                    AI / NER (names, orgs, locations)
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-primary)", cursor: "pointer" }}>
+                    <input type="checkbox" checked={autodetectLlm} onChange={(e) => setAutodetectLlm(e.target.checked)} style={{ accentColor: "var(--accent-primary)" }} />
+                    LLM (contextual, slowest)
+                  </label>
+                </div>
+              </div>
+
+              {/* Info text */}
+              <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.4 }}>
+                New regions are added. Existing overlapping regions are updated in place. Nothing is deleted.
+              </div>
+
+              {/* Run button */}
+              <button
+                className="btn-primary"
+                onClick={handleAutodetect}
+                disabled={isProcessing || (!autodetectRegex && !autodetectNer && !autodetectLlm)}
+                style={{ width: "100%" }}
+              >
+                <ScanSearch size={14} />
+                {isProcessing ? "Detecting…" : `Run on ${autodetectScope === "page" ? `Page ${activePage}` : "All Pages"}`}
+              </button>
+            </div>
+          )}
+        </div>
+        </div>
       </div>
 
       {/* Content area — everything below toolbar */}
-      <div style={styles.contentArea}>
+      <div ref={contentAreaRef} style={styles.contentArea}>
+
+      {/* Cursor tool toolbar — fixed next to left sidebar, like zoom control */}
+      <div
+        ref={cursorToolbarRef}
+        data-cursor-toolbar
+        onMouseDown={(e) => e.stopPropagation()}
+        style={{
+          position: "fixed",
+          top: 60,
+          left: 208,
+          zIndex: 30,
+          background: "rgba(30, 30, 30, 0.92)",
+          backdropFilter: "blur(8px)",
+          borderRadius: 10,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.4)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          userSelect: "none",
+        }}
+      >
+        {/* Collapse / expand toggle */}
+        <button
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            const next = !cursorToolbarExpanded;
+            setCursorToolbarExpanded(next);
+            try { localStorage.setItem('cursorToolbarExpanded', String(next)); } catch {}
+          }}
+          style={{
+            background: "transparent",
+            border: "none",
+            borderBottom: cursorToolbarExpanded ? "1px solid rgba(255,255,255,0.1)" : "none",
+            padding: cursorToolbarExpanded ? "4px 8px" : "6px 8px",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 4,
+            color: cursorToolbarExpanded ? "var(--text-secondary)" : "var(--accent-primary)",
+          }}
+          title={cursorToolbarExpanded ? "Collapse toolbar" : "Expand toolbar"}
+        >
+          {cursorToolbarExpanded ? (
+            <ChevronUp size={14} />
+          ) : (
+            <>
+              {cursorTool === "pointer" && <MousePointer size={16} />}
+              {cursorTool === "lasso" && <BoxSelect size={16} />}
+              {cursorTool === "draw" && <Pencil size={16} />}
+              <ChevronDown size={10} />
+            </>
+          )}
+        </button>
+
+        {/* Tool buttons */}
+        {cursorToolbarExpanded && (
+        <div
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{ padding: 4, display: "flex", flexDirection: "column", gap: 2 }}
+        >
+          {/* Pointer */}
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); setCursorTool("pointer"); }}
+            style={{
+              padding: "8px",
+              fontSize: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: cursorTool === "pointer" ? "var(--bg-primary)" : "transparent",
+              border: cursorTool === "pointer" ? "1px solid var(--accent-primary)" : "1px solid transparent",
+              borderRadius: 4,
+              cursor: "pointer",
+              color: cursorTool === "pointer" ? "var(--accent-primary)" : "var(--text-primary)",
+              fontWeight: cursorTool === "pointer" ? 600 : 400,
+              whiteSpace: "nowrap",
+            }}
+            title="Pointer — pan & select (Esc)"
+          >
+            <MousePointer size={16} />
+            {cursorToolbarExpanded && "Pointer"}
+          </button>
+
+          {/* Lasso */}
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); setCursorTool("lasso"); }}
+            style={{
+              padding: "8px",
+              fontSize: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: cursorTool === "lasso" ? "var(--bg-primary)" : "transparent",
+              border: cursorTool === "lasso" ? "1px solid var(--accent-primary)" : "1px solid transparent",
+              borderRadius: 4,
+              cursor: "pointer",
+              color: cursorTool === "lasso" ? "var(--accent-primary)" : "var(--text-primary)",
+              fontWeight: cursorTool === "lasso" ? 600 : 400,
+              whiteSpace: "nowrap",
+            }}
+            title="Lasso — drag to select multiple regions"
+          >
+            <BoxSelect size={16} />
+            {cursorToolbarExpanded && "Lasso"}
+          </button>
+
+          {/* Draw */}
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); setCursorTool("draw"); }}
+            style={{
+              padding: "8px",
+              fontSize: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: cursorTool === "draw" ? "var(--bg-primary)" : "transparent",
+              border: cursorTool === "draw" ? "1px solid var(--accent-primary)" : "1px solid transparent",
+              borderRadius: 4,
+              cursor: "pointer",
+              color: cursorTool === "draw" ? "var(--accent-primary)" : "var(--text-primary)",
+              fontWeight: cursorTool === "draw" ? 600 : 400,
+              whiteSpace: "nowrap",
+            }}
+            title="Draw — create new anonymization region"
+          >
+            <Pencil size={16} />
+            {cursorToolbarExpanded && "Draw"}
+          </button>
+
+          {/* Separator */}
+          <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "2px 4px" }} />
+
+          {/* Undo */}
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); undo(); }}
+            disabled={!canUndo}
+            style={{
+              padding: "8px",
+              fontSize: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: "transparent",
+              border: "1px solid transparent",
+              borderRadius: 4,
+              cursor: canUndo ? "pointer" : "default",
+              color: canUndo ? "var(--text-primary)" : "var(--text-secondary)",
+              opacity: canUndo ? 1 : 0.4,
+              whiteSpace: "nowrap",
+            }}
+            title="Undo (Ctrl+Z)"
+          >
+            <Undo2 size={16} />
+            {cursorToolbarExpanded && "Undo"}
+          </button>
+
+          {/* Redo */}
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); redo(); }}
+            disabled={!canRedo}
+            style={{
+              padding: "8px",
+              fontSize: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: "transparent",
+              border: "1px solid transparent",
+              borderRadius: 4,
+              cursor: canRedo ? "pointer" : "default",
+              color: canRedo ? "var(--text-primary)" : "var(--text-secondary)",
+              opacity: canRedo ? 1 : 0.4,
+              whiteSpace: "nowrap",
+            }}
+            title="Redo (Ctrl+Y)"
+          >
+            <Redo2 size={16} />
+            {cursorToolbarExpanded && "Redo"}
+          </button>
+        </div>
+        )}
+      </div>
 
       {/* Vault unlock prompt overlay */}
       {showVaultPrompt && (
@@ -1266,7 +1646,9 @@ export default function DocumentViewer() {
               alt={`Page ${activePage}`}
               style={{
                 ...styles.pageImage,
-                cursor: drawMode ? "crosshair" : isPanning ? "grabbing" : "grab",
+                cursor: cursorTool === "draw" ? CURSOR_CROSSHAIR
+                  : cursorTool === "lasso" ? 'crosshair'
+                  : isPanning ? 'grabbing' : 'default',
               }}
               onLoad={onImageLoad}
               draggable={false}
@@ -1329,12 +1711,16 @@ export default function DocumentViewer() {
                       toggleSelectedRegionId(region.id, e.ctrlKey || e.metaKey);
                     }}
                     onAction={handleRegionAction}
+                    onClear={handleClearRegion}
                     onRefresh={handleRefreshRegion}
                     onHighlightAll={handleHighlightAll}
                     onMoveStart={handleMoveStart}
                     onResizeStart={handleResizeStart}
                     onUpdateLabel={handleUpdateLabel}
                     onUpdateText={handleUpdateText}
+                    portalTarget={contentAreaRef.current}
+                    imageContainerEl={imageContainerRef.current}
+                    cursorToolbarExpanded={cursorToolbarExpanded}
                   />
                 );
               })}
@@ -1408,13 +1794,12 @@ export default function DocumentViewer() {
                       onClick={(e) => {
                         e.stopPropagation();
                         pushUndo();
-                        selRegions.forEach((r) => {
-                          setRegionAction(activeDocId!, r.id, "CANCEL").catch(() => {});
-                          updateRegionAction(r.id, "CANCEL");
-                        });
+                        const ids = selRegions.map((r) => r.id);
+                        batchDeleteRegions(activeDocId!, ids).catch(() => {});
+                        ids.forEach((id) => removeRegion(id));
                         clearSelection();
                       }}
-                      title="Cancel all — keep original content"
+                      title="Reset selected — remove from document"
                       style={{ padding: "2px 6px" }}
                     >
                       <X size={12} />
@@ -1456,6 +1841,153 @@ export default function DocumentViewer() {
               );
             })()}
           </div>
+        </div>
+
+        {/* Acrobat-style floating page navigation bar */}
+        {pageCount > 1 && (
+          <div
+            style={{
+              position: "fixed",
+              top: 60,
+              right: sidebarCollapsed ? 76 : 336,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              background: "rgba(30, 30, 30, 0.92)",
+              backdropFilter: "blur(8px)",
+              borderRadius: 10,
+              padding: "6px 12px",
+              boxShadow: "0 2px 12px rgba(0,0,0,0.4)",
+              zIndex: 30,
+              userSelect: "none",
+              transition: "right 0.2s ease",
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => setActivePage(1)}
+              disabled={activePage <= 1}
+              title="First page"
+              style={{ padding: "6px 8px", color: "var(--text-secondary)" }}
+            >
+              <ChevronsLeft size={18} />
+            </button>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => setActivePage(Math.max(1, activePage - 1))}
+              disabled={activePage <= 1}
+              title="Previous page"
+              style={{ padding: "6px 8px", color: "var(--text-secondary)" }}
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 6px" }}>
+              <input
+                type="number"
+                min={1}
+                max={pageCount}
+                value={activePage}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (!isNaN(val) && val >= 1 && val <= pageCount) {
+                    setActivePage(val);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.currentTarget.blur();
+                  }
+                }}
+                style={{
+                  width: 42,
+                  padding: "4px 6px",
+                  fontSize: 15,
+                  fontWeight: 600,
+                  textAlign: "center",
+                  background: "rgba(255,255,255,0.08)",
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  borderRadius: 5,
+                  color: "var(--text-primary)",
+                  outline: "none",
+                  MozAppearance: "textfield",
+                }}
+                title="Go to page"
+              />
+              <span style={{ fontSize: 15, color: "var(--text-secondary)" }}>/</span>
+              <span style={{ fontSize: 15, color: "var(--text-secondary)", fontWeight: 500 }}>{pageCount}</span>
+            </div>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => setActivePage(Math.min(pageCount, activePage + 1))}
+              disabled={activePage >= pageCount}
+              title="Next page"
+              style={{ padding: "6px 8px", color: "var(--text-secondary)" }}
+            >
+              <ChevronRight size={18} />
+            </button>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => setActivePage(pageCount)}
+              disabled={activePage >= pageCount}
+              title="Last page"
+              style={{ padding: "6px 8px", color: "var(--text-secondary)" }}
+            >
+              <ChevronsRight size={18} />
+            </button>
+          </div>
+        )}
+
+        {/* Acrobat-style floating zoom control */}
+        <div
+          style={{
+            position: "fixed",
+            top: 60,
+            left: "50%",
+            transform: "translateX(-50%)",
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            background: "rgba(30, 30, 30, 0.92)",
+            backdropFilter: "blur(8px)",
+            borderRadius: 10,
+            padding: "6px 10px",
+            boxShadow: "0 2px 12px rgba(0,0,0,0.4)",
+            zIndex: 30,
+            userSelect: "none",
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            className="btn-ghost btn-sm"
+            onClick={() => setZoom(Math.max(0.1, zoom - 0.1))}
+            title="Zoom out (\u2212)"
+            style={{ padding: "6px 8px", color: "var(--text-secondary)" }}
+          >
+            <ZoomOut size={18} />
+          </button>
+          <span
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: "var(--text-primary)",
+              minWidth: 48,
+              textAlign: "center",
+              cursor: "pointer",
+            }}
+            onClick={() => setZoom(1)}
+            title="Reset zoom to 100%"
+          >
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            className="btn-ghost btn-sm"
+            onClick={() => setZoom(zoom + 0.1)}
+            title="Zoom in (+)"
+            style={{ padding: "6px 8px", color: "var(--text-secondary)" }}
+          >
+            <ZoomIn size={18} />
+          </button>
         </div>
       </div>
 
@@ -1605,6 +2137,18 @@ export default function DocumentViewer() {
               }}
               onClick={(e) => toggleSelectedRegionId(r.id, e.ctrlKey || e.metaKey)}
             >
+              {/* Clear — top-right close button */}
+              <button
+                className="btn-ghost btn-sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleClearRegion(r.id);
+                }}
+                title="Clear — remove from document"
+                style={styles.sidebarCloseBtn}
+              >
+                <X size={14} />
+              </button>
               <div style={styles.regionHeader}>
                 <span
                   style={{
@@ -1621,42 +2165,76 @@ export default function DocumentViewer() {
               </div>
               <p style={styles.regionText}>"{r.text}"</p>
               <div style={styles.regionActions}>
-                <button
-                  className="btn-ghost btn-sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRegionAction(r.id, "CANCEL");
-                  }}
-                >
-                  Cancel
-                </button>
+                {/* Replace all */}
                 <button
                   className="btn-ghost btn-sm"
                   onClick={(e) => {
                     e.stopPropagation();
                     handleHighlightAll(r.id);
                   }}
-                  title="Select all identical"
+                  title="Replace all matching"
+                  style={styles.sidebarBtn}
                 >
-                  <Highlighter size={12} />
+                  <Type size={13} />
                 </button>
+                {/* Detect */}
                 <button
-                  className="btn-danger btn-sm"
+                  className="btn-ghost btn-sm"
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleRegionAction(r.id, "REMOVE");
+                    handleRefreshRegion(r.id);
                   }}
+                  title="Detect — re-analyze"
+                  style={styles.sidebarBtn}
                 >
-                  Remove
+                  <Search size={13} />
                 </button>
+                {/* Edit */}
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedRegionIds([r.id]);
+                  }}
+                  title="Edit label/content"
+                  style={styles.sidebarBtn}
+                >
+                  <Edit3 size={13} />
+                </button>
+                {/* Separator */}
+                <div style={{ width: 1, height: 18, background: "rgba(255,255,255,0.15)", margin: "0 2px" }} />
+
+                {/* Tokenize */}
                 <button
                   className="btn-tokenize btn-sm"
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleRegionAction(r.id, "TOKENIZE");
+                    handleRegionAction(r.id, r.action === "TOKENIZE" ? "PENDING" : "TOKENIZE");
+                  }}
+                  title={r.action === "TOKENIZE" ? "Undo tokenize" : "Tokenize"}
+                  style={{
+                    ...styles.sidebarBtn,
+                    border: r.action === "TOKENIZE" ? "1px solid #fff" : "1px solid transparent",
+                    color: r.action === "TOKENIZE" ? "#fff" : "var(--tokenize)",
                   }}
                 >
-                  Tokenize
+                  <Key size={13} />
+                </button>
+                {/* Remove */}
+                <button
+                  className="btn-danger btn-sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRegionAction(r.id, r.action === "REMOVE" ? "PENDING" : "REMOVE");
+                  }}
+                  title={r.action === "REMOVE" ? "Undo remove" : "Remove"}
+                  style={{
+                    ...styles.sidebarBtn,
+                    border: r.action === "REMOVE" ? "1px solid #fff" : "1px solid transparent",
+                    color: r.action === "REMOVE" ? "#fff" : "var(--danger)",
+                  }}
+                >
+                  <Trash2 size={13} />
                 </button>
               </div>
               {r.action !== "PENDING" && (
@@ -1692,6 +2270,7 @@ export default function DocumentViewer() {
 
 const styles: Record<string, React.CSSProperties> = {
   wrapper: {
+    position: "relative" as const,
     display: "flex",
     flexDirection: "column",
     height: "100%",
@@ -1773,7 +2352,9 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 8,
   },
   regionItem: {
+    position: "relative" as const,
     padding: 10,
+    paddingRight: 28,
     marginBottom: 6,
     borderRadius: 6,
     borderLeft: "3px solid",
@@ -1816,7 +2397,32 @@ const styles: Record<string, React.CSSProperties> = {
   },
   regionActions: {
     display: "flex",
-    gap: 4,
+    alignItems: "center",
+    gap: 2,
+  },
+  sidebarBtn: {
+    padding: "4px 6px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "transparent",
+    borderRadius: 4,
+    cursor: "pointer",
+  },
+  sidebarCloseBtn: {
+    position: "absolute" as const,
+    top: 4,
+    right: 4,
+    padding: 4,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.1)",
+    borderRadius: 5,
+    cursor: "pointer",
+    color: "var(--text-secondary)",
+    transition: "opacity 0.15s ease, color 0.15s ease, background 0.15s ease",
   },
   actionStatus: {
     fontSize: 11,

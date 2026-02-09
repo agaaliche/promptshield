@@ -83,9 +83,16 @@ _CONTEXT_KEYWORDS: dict[PIIType, list[str]] = {
                     "issued", "valid"],
     PIIType.PERSON: ["name", "patient", "client", "applicant", "employee",
                       "mr", "mrs", "ms", "dr", "prof", "sir", "madam",
-                      "first name", "last name", "full name", "surname"],
+                      "first name", "last name", "full name", "surname",
+                      # French
+                      "nom", "prénom", "prenom", "patient", "client",
+                      "employé", "employe", "salarié", "salarie",
+                      "monsieur", "madame", "mademoiselle"],
     PIIType.ADDRESS: ["address", "street", "city", "state", "zip", "postal",
-                       "residence", "home", "mailing"],
+                       "residence", "home", "mailing",
+                       # French
+                       "adresse", "rue", "avenue", "boulevard", "ville",
+                       "code postal", "domicile"],
     PIIType.PASSPORT: ["passport"],
     PIIType.DRIVER_LICENSE: ["driver", "license", "licence", "dl", "driving"],
     PIIType.IP_ADDRESS: ["ip", "address"],
@@ -221,6 +228,29 @@ _PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r"\.?[ \t]+[A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20}){1,3}\b",
         PIIType.PERSON, 0.88, _NOFLAGS,
     ),
+
+    # ── French company names (high precision) ──
+    # Pattern: "CompanyName SA", "CompanyName SAS", "CompanyName SARL", etc.
+    # French legal-form suffixes are almost never used in non-company contexts.
+    (
+        r"\b[A-ZÀ-Ü][a-zà-ü\-']{1,25}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zà-ü\-']{1,25}){0,4}"
+        r"[ \t]+(?:SA|SAS|SARL|EURL|SCI|SNC|SE)\b",
+        PIIType.ORG, 0.90, _NOFLAGS,
+    ),
+    # "Groupe X", "Société X", "Compagnie X"
+    (
+        r"\b(?:Groupe|Société|Societe|Compagnie|Établissements?|Ets)"
+        r"[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}){0,3}\b",
+        PIIType.ORG, 0.85, _NOFLAGS,
+    ),
+    # French title + Name: "M. Dupont", "Mme Lefèvre", "Mlle Martin"
+    (
+        r"\b(?:M\.|Mme|Mlle)"
+        r"[ \t]+[A-ZÀ-Ü][a-zà-ü]{1,20}(?:[ \t]+[A-ZÀ-Ü][a-zà-ü]{1,20}){1,3}\b",
+        PIIType.PERSON, 0.88, _NOFLAGS,
+    ),
 ]
 
 # Label-value name patterns — handled separately because we want to
@@ -243,6 +273,17 @@ _LABEL_NAME_PATTERNS: list[tuple[re.Pattern, PIIType, float]] = [
         r"(?:Passport)[ \t]*(?:No\.?|Number|#)?[ \t]*[:]?[ \t]*([A-Z]{2}\d{7})",
         re.IGNORECASE,
     ), PIIType.PASSPORT, 0.85),
+    # French: "Nom : Dupont", "Prénom : Jean"
+    (re.compile(
+        r"(?:Nom|Prénom|Prenom|Nom de famille|Nom complet)"
+        r"[ \t]*[:][ \t]*([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}){0,3})",
+    ), PIIType.PERSON, 0.85),
+    # French: "Client : Dupont Jean", "Patient : Martin Pierre"
+    (re.compile(
+        r"(?:Patient|Client|Employé|Employe|Salarié|Salarie|Bénéficiaire|Beneficiaire|Assuré|Assure)"
+        r"[ \t]*[:][ \t]*([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}){0,3})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.85),
 ]
 
 # Compile patterns — each pattern now carries its own flags

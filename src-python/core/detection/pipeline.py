@@ -8,7 +8,16 @@ from typing import Optional
 
 from core.config import config
 from core.detection.regex_detector import RegexMatch, detect_regex
-from core.detection.ner_detector import NERMatch, detect_ner, is_ner_available, detect_names_heuristic, _is_english_text
+from core.detection.ner_detector import (
+    NERMatch,
+    detect_ner,
+    is_ner_available,
+    detect_names_heuristic,
+    _is_english_text,
+    _is_french_text,
+    detect_ner_french,
+    is_french_ner_available,
+)
 from core.detection.gliner_detector import GLiNERMatch, detect_gliner, is_gliner_available
 from core.detection.bert_detector import (
     NERMatch as BERTNERMatch,
@@ -388,6 +397,30 @@ def detect_pii_on_page(
                 f"{len(heuristic_matches)} name candidates"
             )
 
+        # French NER — runs alongside GLiNER to provide cross-layer boost
+        if not _is_english_text(text) and _is_french_text(text) and is_french_ner_available():
+            try:
+                fr_matches = detect_ner_french(text)
+                if fr_matches:
+                    # Merge French NER results, skipping overlaps with existing
+                    existing_spans = {(m.start, m.end) for m in ner_matches}
+                    added = 0
+                    for fm in fr_matches:
+                        overlaps = any(
+                            fm.start < e_end and fm.end > e_start
+                            for e_start, e_end in existing_spans
+                        )
+                        if not overlaps:
+                            ner_matches.append(fm)
+                            existing_spans.add((fm.start, fm.end))
+                            added += 1
+                    logger.info(
+                        f"Page {page_data.page_number}: French NER found "
+                        f"{len(fr_matches)} matches, added {added} non-overlapping"
+                    )
+            except Exception as e:
+                logger.error(f"French NER detection failed: {e}")
+
     # Layer 2b: GLiNER (multilingual NER — runs on ALL languages)
     gliner_matches: list[GLiNERMatch] = []
     if config.ner_enabled and is_gliner_available():
@@ -461,6 +494,17 @@ def reanalyze_bbox(
         for hm in heuristic_matches:
             if not any(hm.start < ee and hm.end > es for es, ee in existing_spans):
                 ner_matches.append(hm)
+
+        # French NER supplement
+        if not _is_english_text(text) and _is_french_text(text) and is_french_ner_available():
+            try:
+                fr_matches = detect_ner_french(text)
+                existing_spans = {(m.start, m.end) for m in ner_matches}
+                for fm in fr_matches:
+                    if not any(fm.start < ee and fm.end > es for es, ee in existing_spans):
+                        ner_matches.append(fm)
+            except Exception:
+                pass
 
     llm_matches: list[LLMMatch] = []
     if config.llm_detection_enabled and llm_engine is not None:

@@ -36,6 +36,7 @@ interface AppState {
   regions: PIIRegion[];
   setRegions: (regions: PIIRegion[]) => void;
   updateRegionAction: (regionId: string, action: RegionAction) => void;
+  removeRegion: (regionId: string) => void;
   updateRegionBBox: (regionId: string, bbox: BBox) => void;
   updateRegion: (regionId: string, updates: Partial<PIIRegion>) => void;
   selectedRegionIds: string[];
@@ -120,6 +121,11 @@ export const useAppStore = create<AppState>((set) => ({
       regions: s.regions.map((r) =>
         r.id === regionId ? { ...r, action } : r
       ),
+    })),
+  removeRegion: (regionId) =>
+    set((s) => ({
+      regions: s.regions.filter((r) => r.id !== regionId),
+      selectedRegionIds: s.selectedRegionIds.filter((id) => id !== regionId),
     })),
   updateRegionBBox: (regionId, bbox) =>
     set((s) => ({

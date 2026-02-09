@@ -76,6 +76,14 @@ export interface DetectionResult {
   regions: PIIRegion[];
 }
 
+export interface RedetectResult {
+  doc_id: string;
+  added: number;
+  updated: number;
+  total_regions: number;
+  regions: PIIRegion[];
+}
+
 export interface AnonymizeResponse {
   doc_id: string;
   output_pdf_path: string | null;

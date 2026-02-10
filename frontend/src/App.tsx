@@ -93,7 +93,21 @@ function App() {
         setDocLoadingMessage("Loading regions…");
         setRegions(resolveAllOverlaps(regions));
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (cancelled) return;
+        // Document no longer exists on the backend (e.g. server restart) —
+        // remove it from the local list and fall back to the upload view.
+        const state = useAppStore.getState();
+        const remaining = state.documents.filter((d) => d.doc_id !== activeDocId);
+        setDocuments(remaining);
+        if (remaining.length > 0) {
+          setActiveDocId(remaining[0].doc_id);
+        } else {
+          setActiveDocId(null);
+          setRegions([]);
+          setCurrentView("upload");
+        }
+      })
       .finally(() => {
         if (!cancelled) {
           setDocLoading(false);
@@ -105,7 +119,7 @@ function App() {
       });
 
     return () => { cancelled = true; };
-  }, [activeDocId, setRegions, updateDocument, setDocLoading, setDocLoadingMessage]);
+  }, [activeDocId, setRegions, updateDocument, setDocLoading, setDocLoadingMessage, setDocuments, setActiveDocId, setCurrentView]);
 
   const renderView = () => {
     switch (currentView) {

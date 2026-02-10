@@ -438,6 +438,128 @@ def _merge_detections(
     return regions
 
 
+# ---------------------------------------------------------------------------
+# Cross-page propagation
+# ---------------------------------------------------------------------------
+
+def propagate_regions_across_pages(
+    regions: list[PIIRegion],
+    pages: list[PageData],
+) -> list[PIIRegion]:
+    """Ensure every detected PII text is flagged on *every* page where it
+    appears, not just the page where it was first detected.
+
+    For each unique PII text in *regions*, search all pages for additional
+    occurrences that don't already have a corresponding region, and create
+    new regions with properly-computed bounding boxes.
+
+    The new regions inherit ``pii_type``, ``confidence``, ``source``, and
+    ``action`` from the original detection (the one with highest confidence
+    if the same text was found by multiple detectors).
+
+    Returns the full region list (originals + propagated).
+    """
+    if not regions or not pages:
+        return regions
+
+    # Build a lookup: page_number → PageData
+    page_map: dict[int, PageData] = {p.page_number: p for p in pages}
+
+    # Collect unique PII texts and their best (highest-confidence) region
+    # as the "template" for propagated copies.
+    text_to_template: dict[str, PIIRegion] = {}
+    for r in regions:
+        key = r.text.strip()
+        if not key or len(key) < 2:
+            continue
+        existing = text_to_template.get(key)
+        if existing is None or r.confidence > existing.confidence:
+            text_to_template[key] = r
+
+    if not text_to_template:
+        return regions
+
+    # Build a set of (page_number, char_start, char_end) already covered
+    covered: set[tuple[int, int, int]] = set()
+    for r in regions:
+        covered.add((r.page_number, r.char_start, r.char_end))
+
+    propagated: list[PIIRegion] = []
+
+    for pii_text, template in text_to_template.items():
+        for page_data in pages:
+            # Search for all occurrences of pii_text in the page's full_text
+            full_text = page_data.full_text
+            if not full_text:
+                continue
+
+            start = 0
+            while True:
+                idx = full_text.find(pii_text, start)
+                if idx == -1:
+                    break
+                char_start = idx
+                char_end = idx + len(pii_text)
+                start = char_end  # advance past this occurrence
+
+                # Skip if already covered by an existing region
+                # (check for any significant overlap, not exact match)
+                already = False
+                for pg, cs, ce in covered:
+                    if pg != page_data.page_number:
+                        continue
+                    # Overlap check: the spans share at least 50%
+                    ov_start = max(char_start, cs)
+                    ov_end = min(char_end, ce)
+                    if ov_end > ov_start:
+                        ov_len = ov_end - ov_start
+                        if ov_len >= 0.5 * len(pii_text):
+                            already = True
+                            break
+                if already:
+                    continue
+
+                # Compute bbox for this occurrence
+                block_offsets = _compute_block_offsets(
+                    page_data.text_blocks, full_text,
+                )
+                bbox = _char_offset_to_bbox(char_start, char_end, block_offsets)
+                if bbox is None:
+                    continue
+
+                new_region = PIIRegion(
+                    id=uuid.uuid4().hex[:12],
+                    page_number=page_data.page_number,
+                    bbox=bbox,
+                    text=pii_text,
+                    pii_type=template.pii_type,
+                    confidence=template.confidence,
+                    source=template.source,
+                    char_start=char_start,
+                    char_end=char_end,
+                    action=template.action,
+                )
+                propagated.append(new_region)
+                covered.add((page_data.page_number, char_start, char_end))
+
+    if propagated:
+        logger.info(
+            f"Propagated {len(propagated)} additional regions across "
+            f"{len(pages)} pages from {len(text_to_template)} unique PII texts"
+        )
+
+    all_regions = regions + propagated
+
+    # Final overlap resolution on the combined set, grouped by page
+    result: list[PIIRegion] = []
+    pages_with_regions: set[int] = {r.page_number for r in all_regions}
+    for pn in sorted(pages_with_regions):
+        page_regions = [r for r in all_regions if r.page_number == pn]
+        result.extend(_resolve_bbox_overlaps(page_regions))
+
+    return result
+
+
 def detect_pii_on_page(
     page_data: PageData,
     llm_engine=None,

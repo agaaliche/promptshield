@@ -55,7 +55,7 @@ async def detect_pii(doc_id: str):
     doc = get_doc(doc_id)  # 404 before heavy imports
 
     try:
-        from core.detection.pipeline import detect_pii_on_page
+        from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages
         doc.status = DocumentStatus.DETECTING
         doc.regions = []
 
@@ -97,7 +97,11 @@ async def detect_pii(doc_id: str):
             return all_regions
 
         # Run CPU-bound detection in a thread pool
-        doc.regions = await asyncio.get_event_loop().run_in_executor(None, _run_detection)
+        all_regions = await asyncio.get_event_loop().run_in_executor(None, _run_detection)
+
+        # Propagate: if text was detected on one page, flag it on every
+        # other page where it also appears.
+        doc.regions = propagate_regions_across_pages(all_regions, doc.pages)
 
         doc.status = DocumentStatus.REVIEWING
         logger.info(f"Detection complete for '{doc.original_filename}': {len(doc.regions)} regions")
@@ -150,7 +154,7 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
     doc = get_doc(doc_id)  # 404 before heavy imports
 
     try:
-        from core.detection.pipeline import detect_pii_on_page, _bbox_overlap_area, _bbox_area
+        from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages, _bbox_overlap_area, _bbox_area
 
         # Temporarily override config thresholds for this detection run
         original_threshold = config.confidence_threshold
@@ -235,7 +239,11 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
                 existing_on_scanned.append(nr)
                 added_count += 1
 
-        doc.regions = existing_other + existing_on_scanned
+        merged_regions = existing_other + existing_on_scanned
+
+        # Propagate newly detected text across all pages
+        doc.regions = propagate_regions_across_pages(merged_regions, doc.pages)
+
         doc.status = DocumentStatus.REVIEWING
         save_doc(doc)
 

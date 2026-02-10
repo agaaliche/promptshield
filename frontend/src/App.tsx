@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useAppStore } from "./store";
 import { checkHealth, getVaultStatus, getLLMStatus, listDocuments, getRegions, getDocument } from "./api";
 import Sidebar from "./components/Sidebar";
+import Snackbar from "./components/Snackbar";
 import UploadView from "./components/UploadView";
 import DocumentViewer from "./components/DocumentViewer";
 import DetokenizeView from "./components/DetokenizeView";
@@ -95,6 +96,7 @@ function App() {
 
   return (
     <div style={{ display: "flex", height: "100vh", width: "100vw" }}>
+      <Snackbar />
       <Sidebar />
       <main style={{ flex: 1, overflow: "hidden", position: "relative", minHeight: 0, height: "100%" }}>
         {!backendReady ? (

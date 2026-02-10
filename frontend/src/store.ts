@@ -7,6 +7,8 @@ import type {
   PIIRegion,
   RegionAction,
   LLMStatus,
+  UploadItem,
+  SnackbarItem,
 } from "./types";
 
 interface AppState {
@@ -82,12 +84,35 @@ interface AppState {
   setIsProcessing: (v: boolean) => void;
   statusMessage: string;
   setStatusMessage: (msg: string) => void;
+
+  // ── Snackbar ──
+  snackbars: SnackbarItem[];
+  addSnackbar: (message: string, type?: "success" | "error" | "info") => void;
+  removeSnackbar: (id: string) => void;
+
+  // ── Left sidebar ──
+  leftSidebarWidth: number;
+  setLeftSidebarWidth: (w: number) => void;
+
+  // ── Upload queue ──
+  uploadQueue: UploadItem[];
+  setUploadQueue: (items: UploadItem[]) => void;
+  addToUploadQueue: (items: UploadItem[]) => void;
+  updateUploadItem: (id: string, updates: Partial<UploadItem>) => void;
+  clearCompletedUploads: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
   // Connection
   backendReady: false,
   setBackendReady: (v) => set({ backendReady: v }),
+
+  // Left sidebar
+  leftSidebarWidth: parseInt(localStorage.getItem('leftSidebarWidth') || '200', 10),
+  setLeftSidebarWidth: (w) => {
+    localStorage.setItem('leftSidebarWidth', String(w));
+    set({ leftSidebarWidth: w });
+  },
 
   // Vault
   vaultUnlocked: false,
@@ -229,5 +254,32 @@ export const useAppStore = create<AppState>((set) => ({
   isProcessing: false,
   setIsProcessing: (v) => set({ isProcessing: v }),
   statusMessage: "",
-  setStatusMessage: (msg) => set({ statusMessage: msg }),
+  setStatusMessage: (msg) => {
+    set({ statusMessage: msg });
+    if (!msg) return;
+    const isError = /fail|error/i.test(msg);
+    const type = isError ? "error" : "success";
+    const id = `snack-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    set((s) => ({ snackbars: [...s.snackbars, { id, message: msg, type, createdAt: Date.now() }] }));
+  },
+
+  // Snackbar
+  snackbars: [],
+  addSnackbar: (message, type = "info") => {
+    const id = `snack-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    set((s) => ({ snackbars: [...s.snackbars, { id, message, type, createdAt: Date.now() }] }));
+  },
+  removeSnackbar: (id) =>
+    set((s) => ({ snackbars: s.snackbars.filter((s2) => s2.id !== id) })),
+
+  // Upload queue
+  uploadQueue: [],
+  setUploadQueue: (items) => set({ uploadQueue: items }),
+  addToUploadQueue: (items) => set((s) => ({ uploadQueue: [...s.uploadQueue, ...items] })),
+  updateUploadItem: (id, updates) => set((s) => ({
+    uploadQueue: s.uploadQueue.map((u) => u.id === id ? { ...u, ...updates } : u),
+  })),
+  clearCompletedUploads: () => set((s) => ({
+    uploadQueue: s.uploadQueue.filter((u) => u.status !== "done"),
+  })),
 }));

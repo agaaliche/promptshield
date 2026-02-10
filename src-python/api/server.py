@@ -260,6 +260,11 @@ async def list_documents():
             "page_count": d.page_count,
             "status": d.status.value,
             "regions_count": len(d.regions),
+            "is_protected": (
+                len(d.regions) > 0
+                and not any(r.action == RegionAction.PENDING for r in d.regions)
+                and any(r.action in (RegionAction.TOKENIZE, RegionAction.REMOVE) for r in d.regions)
+            ),
             "created_at": d.created_at.isoformat(),
         }
         for d in _documents.values()

@@ -60,6 +60,7 @@ export interface DocumentInfo {
   status: DocumentStatus;
   pages: PageData[];
   regions: PIIRegion[];
+  is_protected?: boolean;
   created_at: string;
 }
 
@@ -140,3 +141,19 @@ export const PII_COLORS: Record<PIIType, string> = {
   CUSTOM: "#9c27b0",
   UNKNOWN: "#757575",
 };
+
+export interface UploadItem {
+  id: string;
+  name: string;
+  parentPath: string;
+  status: "queued" | "uploading" | "detecting" | "done" | "error";
+  progress: number;
+  error?: string;
+}
+
+export interface SnackbarItem {
+  id: string;
+  message: string;
+  type: "success" | "error" | "info";
+  createdAt: number;
+}

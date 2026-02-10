@@ -1,9 +1,10 @@
 /** Upload view — drag & drop or file picker for document upload. */
 
 import { useCallback, useRef, useState } from "react";
-import { Upload, AlertCircle } from "lucide-react";
+import { Upload, AlertCircle, FolderUp } from "lucide-react";
 import { uploadDocument, getDocument, detectPII } from "../api";
 import { useAppStore } from "../store";
+import type { UploadItem } from "../types";
 
 const ACCEPT =
   ".pdf,.jpg,.jpeg,.png,.tiff,.tif,.bmp,.webp,.docx,.xlsx,.pptx,.doc,.xls,.ppt";
@@ -12,51 +13,71 @@ export default function UploadView() {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
   const {
     setActiveDocId,
     setRegions,
     setCurrentView,
-    setIsProcessing,
-    setStatusMessage,
     addDocument,
+    updateDocument,
     isProcessing,
+    addToUploadQueue,
+    updateUploadItem,
+    clearCompletedUploads,
   } = useAppStore();
 
   const handleFiles = useCallback(
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
+      const fileArray = Array.from(files);
       setError("");
-      setIsProcessing(true);
 
-      try {
-        const file = files[0]; // Process one file at a time for now
-        setStatusMessage(`Uploading ${file.name}...`);
-
-        const uploadRes = await uploadDocument(file);
-        setStatusMessage(`Processing ${file.name} (${uploadRes.page_count} pages)...`);
-
-        // Fetch full document data
-        const doc = await getDocument(uploadRes.doc_id);
-        addDocument(doc);
-        setActiveDocId(doc.doc_id);
-
-        // Run PII detection
-        setStatusMessage("Detecting PII...");
-        const detection = await detectPII(doc.doc_id);
-        setRegions(detection.regions);
-
-        setStatusMessage(
-          `Found ${detection.total_regions} potential PII region(s)`
-        );
-        setCurrentView("viewer");
-      } catch (e: any) {
-        setError(e.message || "Upload failed");
-        setStatusMessage("");
-      } finally {
-        setIsProcessing(false);
+      // Build queue items — they appear immediately in the Sidebar accordion
+      const items: { file: File; item: UploadItem }[] = [];
+      for (let i = 0; i < fileArray.length; i++) {
+        const file = fileArray[i];
+        const relPath = (file as any).webkitRelativePath || "";
+        const parentPath = relPath ? relPath.substring(0, relPath.lastIndexOf("/")) : "";
+        const id = `upload-${Date.now()}-${i}`;
+        items.push({
+          file,
+          item: { id, name: file.name, parentPath, status: "queued", progress: 0 },
+        });
       }
+
+      // Add to store queue — Sidebar will show them immediately
+      addToUploadQueue(items.map((i) => i.item));
+      // Switch to viewer so the Sidebar accordion is visible
+      setCurrentView("viewer");
+
+      // Process sequentially
+      for (const { file, item } of items) {
+        try {
+          updateUploadItem(item.id, { status: "uploading", progress: 30 });
+          const uploadRes = await uploadDocument(file);
+
+          updateUploadItem(item.id, { progress: 50 });
+          const doc = await getDocument(uploadRes.doc_id);
+          addDocument(doc);
+          setActiveDocId(doc.doc_id);
+
+          updateUploadItem(item.id, { status: "detecting", progress: 70 });
+          const detection = await detectPII(doc.doc_id);
+          setRegions(detection.regions);
+          updateDocument(doc.doc_id, { regions: detection.regions });
+
+          updateUploadItem(item.id, { status: "done", progress: 100 });
+        } catch (e: any) {
+          updateUploadItem(item.id, { status: "error", error: e.message || "Failed" });
+          setError(e.message || "Upload failed");
+        }
+      }
+
+      setTimeout(() => {
+        clearCompletedUploads();
+      }, 2000);
     },
-    [setActiveDocId, setRegions, setCurrentView, setIsProcessing, setStatusMessage, addDocument]
+    [setActiveDocId, setRegions, setCurrentView, addDocument, updateDocument, addToUploadQueue, updateUploadItem, clearCompletedUploads]
   );
 
   const onDrop = useCallback(
@@ -73,7 +94,7 @@ export default function UploadView() {
       <div style={styles.header}>
         <h1 style={styles.title}>prompt<span style={{ color: 'var(--accent-primary)' }}>Shield</span></h1>
         <p style={styles.subtitle}>
-          Upload a document to detect and anonymize personal information
+          Upload documents to detect and anonymize personal information
         </p>
       </div>
 
@@ -95,24 +116,40 @@ export default function UploadView() {
           ref={fileRef}
           type="file"
           accept={ACCEPT}
+          multiple
           style={{ display: "none" }}
-          onChange={(e) => handleFiles(e.target.files)}
+          onChange={(e) => { handleFiles(e.target.files); if (e.target) e.target.value = ""; }}
+        />
+        <input
+          ref={folderRef}
+          type="file"
+          // @ts-expect-error webkitdirectory is non-standard
+          webkitdirectory=""
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => { handleFiles(e.target.files); if (e.target) e.target.value = ""; }}
         />
 
         {isProcessing ? (
           <div style={styles.processingContent}>
             <div style={styles.spinner} />
-            <p style={styles.processingText}>Processing document...</p>
+            <p style={styles.processingText}>Processing documents...</p>
           </div>
         ) : (
           <>
             <Upload size={48} style={{ color: "var(--accent-primary)", marginBottom: 16 }} />
             <p style={styles.dropText}>
-              Drag & drop a document here, or click to browse
+              Drag & drop files here, or click to browse
             </p>
             <p style={styles.formatText}>
               Supports: PDF, DOCX, XLSX, PPTX, JPG, PNG, TIFF, BMP
             </p>
+            <button
+              style={styles.folderBtn}
+              onClick={(e) => { e.stopPropagation(); folderRef.current?.click(); }}
+            >
+              <FolderUp size={16} /> Upload folder
+            </button>
           </>
         )}
       </div>
@@ -190,7 +227,20 @@ const styles: Record<string, React.CSSProperties> = {
     opacity: 0.7,
   },
   dropText: { fontSize: 15, fontWeight: 500, marginBottom: 8 },
-  formatText: { fontSize: 12, color: "var(--text-muted)" },
+  formatText: { fontSize: 12, color: "var(--text-muted)", marginBottom: 16 },
+  folderBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "8px 16px",
+    fontSize: 13,
+    border: "1px solid var(--border-color)",
+    borderRadius: 6,
+    background: "transparent",
+    color: "var(--text-secondary)",
+    cursor: "pointer",
+    transition: "all 0.15s ease",
+  },
   processingContent: {
     display: "flex",
     flexDirection: "column",

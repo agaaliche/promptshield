@@ -1,6 +1,7 @@
 /** Document viewer — renders page bitmap with PII highlight overlays. */
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
   ChevronLeft,
   ChevronRight,
@@ -11,7 +12,6 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
-  XCircle,
   Shield,
   Lock,
   PenTool,
@@ -48,7 +48,7 @@ import {
   batchDeleteRegions,
 } from "../api";
 import { PII_COLORS, type BBox, type PIIRegion, type PIIType, type RegionAction } from "../types";
-import { CURSOR_CROSSHAIR } from "../cursors";
+import { CURSOR_CROSSHAIR, CURSOR_GRAB, CURSOR_GRABBING } from "../cursors";
 import RegionOverlay, { type ResizeHandle } from "./RegionOverlay";
 
 export default function DocumentViewer() {
@@ -145,10 +145,166 @@ export default function DocumentViewer() {
   });
   const cursorToolbarRef = useRef<HTMLDivElement>(null);
   const contentAreaRef = useRef<HTMLDivElement>(null);
+  
+  // Cursor toolbar drag state
+  const [cursorToolbarPos, setCursorToolbarPos] = useState(() => {
+    try {
+      const saved = localStorage.getItem('cursorToolbarPos');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return { x: 208, y: 60 };
+  });
+  const [isDraggingCursorToolbar, setIsDraggingCursorToolbar] = useState(false);
+  const cursorToolbarDragStart = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
+  
+  // Multi-select toolbar state
+  const [multiSelectToolbarExpanded, setMultiSelectToolbarExpanded] = useState(() => {
+    try {
+      const saved = localStorage.getItem('multiSelectToolbarExpanded');
+      return saved === 'true';
+    } catch {}
+    return false;
+  });
+  const [multiSelectToolbarPos, setMultiSelectToolbarPos] = useState(() => {
+    try {
+      const saved = localStorage.getItem('multiSelectToolbarPos');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return { x: 300, y: 200 };
+  });
+  const [isDraggingMultiSelectToolbar, setIsDraggingMultiSelectToolbar] = useState(false);
+  const multiSelectToolbarDragStart = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
+  const multiSelectToolbarRef = useRef<HTMLDivElement>(null);
+  const [showMultiSelectEdit, setShowMultiSelectEdit] = useState(false);
+  const [multiSelectEditLabel, setMultiSelectEditLabel] = useState<PIIType>("PERSON");
+  
   const setCursorTool = useCallback((tool: CursorTool) => {
     setCursorToolRaw(tool);
     setDrawMode(tool === "draw");
   }, [setDrawMode]);
+  
+  // Cursor toolbar drag handlers
+  useEffect(() => {
+    if (!isDraggingCursorToolbar) return;
+    const PAD = 8;
+    const handleMouseMove = (e: MouseEvent) => {
+      const tb = cursorToolbarRef.current;
+      const area = contentAreaRef.current;
+      if (!tb || !area) return;
+      const dx = e.clientX - cursorToolbarDragStart.current.mouseX;
+      const dy = e.clientY - cursorToolbarDragStart.current.mouseY;
+      let newX = cursorToolbarDragStart.current.startX + dx;
+      let newY = cursorToolbarDragStart.current.startY + dy;
+      
+      // Boundaries: use actual content area rect, minus sidebar
+      const areaRect = area.getBoundingClientRect();
+      const sbWidth = sidebarRef.current?.offsetWidth ?? (sidebarCollapsed ? 60 : 320);
+      const minX = areaRect.left + PAD;
+      const minY = areaRect.top + PAD;
+      const maxX = areaRect.right - sbWidth - tb.offsetWidth - PAD;
+      const maxY = areaRect.bottom - tb.offsetHeight - PAD;
+      
+      newX = Math.max(minX, Math.min(maxX, newX));
+      newY = Math.max(minY, Math.min(maxY, newY));
+      
+      setCursorToolbarPos({ x: newX, y: newY });
+    };
+    const handleMouseUp = () => {
+      setIsDraggingCursorToolbar(false);
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDraggingCursorToolbar]);
+  
+  // Save cursor toolbar position
+  useEffect(() => {
+    try {
+      localStorage.setItem('cursorToolbarPos', JSON.stringify(cursorToolbarPos));
+    } catch {}
+  }, [cursorToolbarPos]);
+  
+  // Multi-select toolbar drag handlers
+  useEffect(() => {
+    if (!isDraggingMultiSelectToolbar) return;
+    const PAD = 8;
+    const handleMouseMove = (e: MouseEvent) => {
+      const tb = multiSelectToolbarRef.current;
+      const area = contentAreaRef.current;
+      if (!tb || !area) return;
+      const dx = e.clientX - multiSelectToolbarDragStart.current.mouseX;
+      const dy = e.clientY - multiSelectToolbarDragStart.current.mouseY;
+      let newX = multiSelectToolbarDragStart.current.startX + dx;
+      let newY = multiSelectToolbarDragStart.current.startY + dy;
+      
+      // Boundaries: use actual content area rect, minus sidebar
+      const areaRect = area.getBoundingClientRect();
+      const sbWidth = sidebarRef.current?.offsetWidth ?? (sidebarCollapsed ? 60 : 320);
+      const minX = areaRect.left + PAD;
+      const minY = areaRect.top + PAD;
+      const maxX = areaRect.right - sbWidth - tb.offsetWidth - PAD;
+      const maxY = areaRect.bottom - tb.offsetHeight - PAD;
+      
+      newX = Math.max(minX, Math.min(maxX, newX));
+      newY = Math.max(minY, Math.min(maxY, newY));
+      
+      setMultiSelectToolbarPos({ x: newX, y: newY });
+    };
+    const handleMouseUp = () => {
+      setIsDraggingMultiSelectToolbar(false);
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDraggingMultiSelectToolbar]);
+  
+  // Save multi-select toolbar state
+  useEffect(() => {
+    try {
+      localStorage.setItem('multiSelectToolbarPos', JSON.stringify(multiSelectToolbarPos));
+    } catch {}
+  }, [multiSelectToolbarPos]);
+  
+  useEffect(() => {
+    try {
+      localStorage.setItem('multiSelectToolbarExpanded', String(multiSelectToolbarExpanded));
+    } catch {}
+  }, [multiSelectToolbarExpanded]);
+
+  // Push floating toolbars out of the sidebar when it expands
+  useEffect(() => {
+    const area = contentAreaRef.current;
+    if (!area) return;
+    const PAD = 8;
+    // Use target width, not measured — sidebar is still transitioning
+    const sbWidth = sidebarCollapsed ? 60 : 320;
+    const areaRect = area.getBoundingClientRect();
+    const maxRight = areaRect.right - sbWidth - PAD;
+
+    // Cursor toolbar
+    const ctb = cursorToolbarRef.current;
+    if (ctb) {
+      const maxX = maxRight - ctb.offsetWidth;
+      if (cursorToolbarPos.x > maxX) {
+        setCursorToolbarPos((prev) => ({ ...prev, x: Math.max(areaRect.left + PAD, maxX) }));
+      }
+    }
+    // Multi-select toolbar
+    const mtb = multiSelectToolbarRef.current;
+    if (mtb) {
+      const maxX = maxRight - mtb.offsetWidth;
+      if (multiSelectToolbarPos.x > maxX) {
+        setMultiSelectToolbarPos((prev) => ({ ...prev, x: Math.max(areaRect.left + PAD, maxX) }));
+      }
+    }
+  }, [sidebarCollapsed]);
+
   const autoRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Keep mutable refs so global event handlers see latest values
   const zoomRef = useRef(zoom);
@@ -173,14 +329,19 @@ export default function DocumentViewer() {
   const removeCount = regions.filter((r) => r.action === "REMOVE").length;
   const tokenizeCount = regions.filter((r) => r.action === "TOKENIZE").length;
 
-  // Auto-select first region on page change
+  // Auto-select first region on page change (only on activePage change)
+  const prevPageRef = useRef(activePage);
   useEffect(() => {
-    if (pageRegions.length > 0) {
-      setSelectedRegionIds([pageRegions[0].id]);
-    } else {
-      setSelectedRegionIds([]);
+    if (activePage !== prevPageRef.current) {
+      prevPageRef.current = activePage;
+      const pRegions = regions.filter((r) => r.page_number === activePage);
+      if (pRegions.length > 0) {
+        setSelectedRegionIds([pRegions[0].id]);
+      } else {
+        setSelectedRegionIds([]);
+      }
     }
-  }, [activePage, pageRegions, setSelectedRegionIds]);
+  }, [activePage, regions, setSelectedRegionIds]);
 
   // ── Region actions ──
   const handleRegionAction = useCallback(
@@ -227,9 +388,11 @@ export default function DocumentViewer() {
       if (!activeDocId) return;
       try {
         pushUndo();
-        await deleteRegion(activeDocId, regionId);
         removeRegion(regionId);
+        await deleteRegion(activeDocId, regionId);
       } catch (e: any) {
+        // 404 means region already deleted on server — not an error
+        if (e.message?.includes("404")) return;
         console.error("Failed to delete region:", e);
         setStatusMessage(`Delete failed: ${e.message}`);
       }
@@ -267,30 +430,28 @@ export default function DocumentViewer() {
     async (regionId: string, newType: PIIType) => {
       if (!activeDocId) return;
       try {
+        updateRegion(regionId, { pii_type: newType });
         await updateRegionLabel(activeDocId, regionId, newType);
-        // Update local state
-        setRegions(regions.map(r => r.id === regionId ? { ...r, pii_type: newType } : r));
       } catch (e: any) {
         console.error("Update label failed:", e);
         setStatusMessage(`Update failed: ${e.message}`);
       }
     },
-    [activeDocId, regions, setRegions, setStatusMessage]
+    [activeDocId, updateRegion, setStatusMessage]
   );
 
   const handleUpdateText = useCallback(
     async (regionId: string, newText: string) => {
       if (!activeDocId) return;
       try {
+        updateRegion(regionId, { text: newText });
         await updateRegionText(activeDocId, regionId, newText);
-        // Update local state
-        setRegions(regions.map(r => r.id === regionId ? { ...r, text: newText } : r));
       } catch (e: any) {
         console.error("Update text failed:", e);
         setStatusMessage(`Update failed: ${e.message}`);
       }
     },
-    [activeDocId, regions, setRegions, setStatusMessage]
+    [activeDocId, updateRegion, setStatusMessage]
   );
 
   const handlePasteRegions = useCallback(
@@ -340,7 +501,6 @@ export default function DocumentViewer() {
         setRegions([...regions, ...newRegions]);
         setSelectedRegionIds(newIds);
         setStatusMessage(`Pasted ${newRegions.length} region(s) on page ${activePage}`);
-        setTimeout(() => setStatusMessage(""), 2000);
       } catch (e: any) {
         console.error("Failed to paste regions:", e);
         setStatusMessage(`Paste failed: ${e.message}`);
@@ -493,7 +653,10 @@ export default function DocumentViewer() {
         case "Delete":
           if (selectedRegionIds.length > 0) {
             e.preventDefault();
-            selectedRegionIds.forEach((id) => handleClearRegion(id));
+            pushUndo();
+            const delIds = [...selectedRegionIds];
+            delIds.forEach((id) => removeRegion(id));
+            batchDeleteRegions(activeDocId!, delIds).catch(() => {});
           }
           break;
         case "Backspace":
@@ -522,11 +685,13 @@ export default function DocumentViewer() {
               const regionsToCopy = regions.filter((r) => selectedRegionIds.includes(r.id));
               setCopiedRegions(regionsToCopy);
               setStatusMessage(`Copied ${regionsToCopy.length} region(s)`);
-              setTimeout(() => setStatusMessage(""), 2000);
             }
           } else if (selectedRegionIds.length > 0) {
             e.preventDefault();
-            selectedRegionIds.forEach((id) => handleClearRegion(id));
+            pushUndo();
+            const clearIds = [...selectedRegionIds];
+            clearIds.forEach((id) => removeRegion(id));
+            batchDeleteRegions(activeDocId!, clearIds).catch(() => {});
           }
           break;
         case "v":
@@ -681,25 +846,6 @@ export default function DocumentViewer() {
       if (observer) observer.disconnect();
     };
   }, [imgLoaded]);
-
-  // ── Click outside sidebar to collapse ──
-  useEffect(() => {
-    if (!sidebarCollapsed) {
-      const handleClickOutside = (e: MouseEvent) => {
-        if (
-          sidebarRef.current && !sidebarRef.current.contains(e.target as Node) &&
-          topToolbarRef.current && !topToolbarRef.current.contains(e.target as Node)
-        ) {
-          setSidebarCollapsed(true);
-        }
-      };
-
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => {
-        document.removeEventListener('mousedown', handleClickOutside);
-      };
-    }
-  }, [sidebarCollapsed]);
 
 
 
@@ -1205,95 +1351,37 @@ export default function DocumentViewer() {
     <div style={styles.wrapper}>
       {/* Toolbar */}
       <div ref={topToolbarRef} style={styles.toolbar}>
+        <div style={{ position: "relative" }}>
         <button
-          className="btn-success"
-          onClick={handleAnonymize}
-          disabled={
-            isProcessing ||
-            (removeCount === 0 && tokenizeCount === 0)
-          }
+          className="btn-primary"
+          onClick={() => setShowAutodetect(!showAutodetect)}
+          disabled={isProcessing}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            ...(showAutodetect
+              ? { boxShadow: "0 0 0 2px var(--accent-primary)" }
+              : {}),
+          }}
         >
-          <Shield size={14} />
-          Export secure file
+          <ScanSearch size={14} />
+          Detect
         </button>
 
-        <div style={styles.toolbarGroup}>
-          <span style={styles.statBadge}>
-            {pendingCount} pending
-          </span>
-          <span style={{ ...styles.statBadge, color: "var(--accent-danger)" }}>
-            {removeCount} remove
-          </span>
-          <span style={{ ...styles.statBadge, color: "var(--accent-tokenize)" }}>
-            {tokenizeCount} tokenize
-          </span>
-        </div>
-
-        <div style={styles.toolbarGroup}>
-          <button
-            className="btn-danger btn-sm"
-            onClick={() => handleBatchAction("REMOVE")}
-            title="Remove all pending"
-          >
-            Remove All
-          </button>
-          <button
-            className="btn-tokenize btn-sm"
-            onClick={() => handleBatchAction("TOKENIZE")}
-            title="Tokenize all pending"
-          >
-            Tokenize All
-          </button>
-        </div>
-
-        {/* Spacer to push right group */}
-        <div style={{ flex: 1 }} />
-
-        {/* Vertical separator */}
-        <div style={{ width: 1, height: 24, background: "var(--border-color)" }} />
-
-        {/* Clear All + Autodetect — right side */}
-        <div style={styles.toolbarGroup}>
-          <button
-            className="btn-ghost btn-sm"
-            onClick={() => handleResetAll()}
-            title="Delete all regions"
-          >
-            <XCircle size={14} /> Clear All
-          </button>
-
-          {/* Autodetect button + dropdown */}
-          <div style={{ position: "relative" }}>
-          <button
-            className={showAutodetect ? "btn-primary" : "btn-ghost"}
-            onClick={() => setShowAutodetect(!showAutodetect)}
-            disabled={isProcessing}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              ...(showAutodetect
-                ? { boxShadow: "0 0 0 2px var(--accent-primary)" }
-                : {}),
-            }}
-          >
-            <ScanSearch size={14} />
-            Autodetect
-          </button>
-
-          {showAutodetect && (
+        {showAutodetect && (
             <div
               style={{
                 position: "absolute",
                 top: "100%",
-                right: 0,
+                left: 0,
                 marginTop: 6,
                 background: "var(--bg-secondary)",
                 border: "1px solid var(--border-color)",
                 borderRadius: 8,
                 padding: 16,
                 boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
-                zIndex: 100,
+                zIndex: 9999,
                 width: 300,
                 display: "flex",
                 flexDirection: "column",
@@ -1382,9 +1470,145 @@ export default function DocumentViewer() {
                 {isProcessing ? "Detecting…" : `Run on ${autodetectScope === "page" ? `Page ${activePage}` : "All Pages"}`}
               </button>
             </div>
+        )}
+        </div>
+        <button
+          className="btn-success"
+          onClick={handleAnonymize}
+          disabled={
+            isProcessing ||
+            (removeCount === 0 && tokenizeCount === 0)
+          }
+        >
+          <Shield size={14} />
+          Export secure file
+        </button>
+
+        {/* Spacer — left buttons stay in flow, center group is absolutely positioned */}
+        <div style={{ flex: 1 }} />
+
+        {/* Page navigation + Zoom — centered on window width via fixed positioning */}
+        <div style={{
+          position: "fixed",
+          left: "50%",
+          transform: "translateX(-50%)",
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          pointerEvents: "auto",
+          zIndex: 41,
+        }}>
+          {pageCount > 1 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() => setActivePage(1)}
+                disabled={activePage <= 1}
+                title="First page"
+                style={{ padding: "4px 6px", color: "var(--text-secondary)" }}
+              >
+                <ChevronsLeft size={16} />
+              </button>
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() => setActivePage(Math.max(1, activePage - 1))}
+                disabled={activePage <= 1}
+                title="Previous page"
+                style={{ padding: "4px 6px", color: "var(--text-secondary)" }}
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 4px" }}>
+                <input
+                  type="number"
+                  min={1}
+                  max={pageCount}
+                  value={activePage}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    if (!isNaN(val) && val >= 1 && val <= pageCount) {
+                      setActivePage(val);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  style={{
+                    width: 36,
+                    padding: "3px 4px",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    textAlign: "center",
+                    background: "rgba(255,255,255,0.08)",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    borderRadius: 4,
+                    color: "var(--text-primary)",
+                    outline: "none",
+                    MozAppearance: "textfield",
+                  }}
+                  title="Go to page"
+                />
+                <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>/</span>
+                <span style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500 }}>{pageCount}</span>
+              </div>
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() => setActivePage(Math.min(pageCount, activePage + 1))}
+                disabled={activePage >= pageCount}
+                title="Next page"
+                style={{ padding: "4px 6px", color: "var(--text-secondary)" }}
+              >
+                <ChevronRight size={16} />
+              </button>
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() => setActivePage(pageCount)}
+                disabled={activePage >= pageCount}
+                title="Last page"
+                style={{ padding: "4px 6px", color: "var(--text-secondary)" }}
+              >
+                <ChevronsRight size={16} />
+              </button>
+            </div>
           )}
+
+          {/* Zoom controls — right of page nav */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: pageCount > 1 ? 25 : 0 }}>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => setZoom(Math.max(0.1, zoom - 0.1))}
+              title="Zoom out"
+              style={{ padding: "4px 6px", color: "var(--text-secondary)" }}
+            >
+              <ZoomOut size={16} />
+            </button>
+            <span
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: "var(--text-primary)",
+                minWidth: 40,
+                textAlign: "center",
+                cursor: "pointer",
+              }}
+              onClick={() => setZoom(1)}
+              title="Reset zoom to 100%"
+            >
+              {Math.round(zoom * 100)}%
+            </span>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => setZoom(zoom + 0.1)}
+              title="Zoom in"
+              style={{ padding: "4px 6px", color: "var(--text-secondary)" }}
+            >
+              <ZoomIn size={16} />
+            </button>
+          </div>
         </div>
-        </div>
+
       </div>
 
       {/* Content area — everything below toolbar */}
@@ -1397,56 +1621,71 @@ export default function DocumentViewer() {
         onMouseDown={(e) => e.stopPropagation()}
         style={{
           position: "fixed",
-          top: 60,
-          left: 208,
+          top: cursorToolbarPos.y,
+          left: cursorToolbarPos.x,
           zIndex: 30,
-          background: "rgba(30, 30, 30, 0.92)",
-          backdropFilter: "blur(8px)",
-          borderRadius: 10,
-          boxShadow: "0 2px 12px rgba(0,0,0,0.4)",
+          background: "var(--bg-secondary)",
+          borderRadius: 8,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
           userSelect: "none",
+          cursor: isDraggingCursorToolbar ? CURSOR_GRABBING : "default",
         }}
       >
-        {/* Collapse / expand toggle */}
-        <button
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
+        {/* Drag handle header */}
+        <div
+          onMouseDown={(e) => {
             e.stopPropagation();
-            const next = !cursorToolbarExpanded;
-            setCursorToolbarExpanded(next);
-            try { localStorage.setItem('cursorToolbarExpanded', String(next)); } catch {}
+            setIsDraggingCursorToolbar(true);
+            cursorToolbarDragStart.current = {
+              mouseX: e.clientX,
+              mouseY: e.clientY,
+              startX: cursorToolbarPos.x,
+              startY: cursorToolbarPos.y,
+            };
           }}
           style={{
-            background: "transparent",
-            border: "none",
-            borderBottom: cursorToolbarExpanded ? "1px solid rgba(255,255,255,0.1)" : "none",
-            padding: cursorToolbarExpanded ? "4px 8px" : "6px 8px",
-            cursor: "pointer",
+            padding: "4px 6px",
+            background: "var(--bg-primary)",
+            cursor: isDraggingCursorToolbar ? CURSOR_GRABBING : CURSOR_GRAB,
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
-            gap: 4,
-            color: cursorToolbarExpanded ? "var(--text-secondary)" : "var(--accent-primary)",
+            justifyContent: "space-between",
+            borderBottom: "1px solid var(--border-color)",
           }}
-          title={cursorToolbarExpanded ? "Collapse toolbar" : "Expand toolbar"}
         >
-          {cursorToolbarExpanded ? (
-            <ChevronUp size={14} />
-          ) : (
-            <>
-              {cursorTool === "pointer" && <MousePointer size={16} />}
-              {cursorTool === "lasso" && <BoxSelect size={16} />}
-              {cursorTool === "draw" && <Pencil size={16} />}
-              <ChevronDown size={10} />
-            </>
-          )}
-        </button>
+          <div style={{ 
+            width: 24, 
+            height: 4, 
+            background: "var(--text-secondary)", 
+            borderRadius: 2,
+            opacity: 0.5,
+          }} />
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setCursorToolbarExpanded(!cursorToolbarExpanded);
+              try { localStorage.setItem('cursorToolbarExpanded', String(!cursorToolbarExpanded)); } catch {}
+            }}
+            style={{
+              background: "transparent",
+              border: "none",
+              padding: 2,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              color: "var(--text-secondary)",
+            }}
+            title={cursorToolbarExpanded ? "Collapse" : "Expand"}
+          >
+            {cursorToolbarExpanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+          </button>
+        </div>
 
-        {/* Tool buttons */}
-        {cursorToolbarExpanded && (
+        {/* Toolbar buttons */}
         <div
           onMouseDown={(e) => e.stopPropagation()}
           style={{ padding: 4, display: "flex", flexDirection: "column", gap: 2 }}
@@ -1524,7 +1763,7 @@ export default function DocumentViewer() {
           </button>
 
           {/* Separator */}
-          <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "2px 4px" }} />
+          <div style={{ height: 1, background: "rgba(255,255,255,0.15)", margin: "2px 4px" }} />
 
           {/* Undo */}
           <button
@@ -1576,8 +1815,350 @@ export default function DocumentViewer() {
             {cursorToolbarExpanded && "Redo"}
           </button>
         </div>
-        )}
       </div>
+
+      {/* Multi-select toolbar — shown when multiple regions selected */}
+      {selectedRegionIds.length > 1 && (
+        <div
+          ref={multiSelectToolbarRef}
+          data-multi-select-toolbar
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: "fixed",
+            left: multiSelectToolbarPos.x,
+            top: multiSelectToolbarPos.y,
+            zIndex: 30,
+            background: "var(--bg-secondary)",
+            borderRadius: 8,
+            boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            cursor: isDraggingMultiSelectToolbar ? CURSOR_GRABBING : "default",
+          }}
+        >
+          {/* Drag handle header */}
+          <div
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              setIsDraggingMultiSelectToolbar(true);
+              multiSelectToolbarDragStart.current = {
+                mouseX: e.clientX,
+                mouseY: e.clientY,
+                startX: multiSelectToolbarPos.x,
+                startY: multiSelectToolbarPos.y,
+              };
+            }}
+            style={{
+              padding: "4px 6px",
+              background: "var(--bg-primary)",
+              cursor: isDraggingMultiSelectToolbar ? CURSOR_GRABBING : CURSOR_GRAB,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              borderBottom: "1px solid var(--border-color)",
+            }}
+          >
+            <div style={{ 
+              width: 24, 
+              height: 4, 
+              background: "var(--text-secondary)", 
+              borderRadius: 2,
+              opacity: 0.5,
+            }} />
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMultiSelectToolbarExpanded(!multiSelectToolbarExpanded);
+              }}
+              style={{
+                background: "transparent",
+                border: "none",
+                padding: 2,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                color: "var(--text-secondary)",
+              }}
+              title={multiSelectToolbarExpanded ? "Collapse" : "Expand"}
+            >
+              {multiSelectToolbarExpanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+            </button>
+          </div>
+
+          {/* Toolbar buttons */}
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{ padding: 4, display: "flex", flexDirection: "column", gap: 2 }}
+          >
+            {/* Replace all */}
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!activeDocId || selectedRegionIds.length === 0) return;
+                pushUndo();
+                selectedRegionIds.forEach(id => handleHighlightAll(id));
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--text-primary)",
+                whiteSpace: "nowrap",
+              }}
+              title="Replace all matching text"
+              className="btn-ghost btn-sm"
+            >
+              <Type size={16} />
+              {multiSelectToolbarExpanded && "Replace all"}
+            </button>
+
+            {/* Detect */}
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!activeDocId || selectedRegionIds.length === 0) return;
+                pushUndo();
+                selectedRegionIds.forEach(id => handleRefreshRegion(id));
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--text-primary)",
+                whiteSpace: "nowrap",
+              }}
+              title="Re-detect content"
+              className="btn-ghost btn-sm"
+            >
+              <Search size={16} />
+              {multiSelectToolbarExpanded && "Detect"}
+            </button>
+
+            {/* Edit */}
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowMultiSelectEdit(!showMultiSelectEdit);
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: showMultiSelectEdit ? "var(--bg-primary)" : "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--text-primary)",
+                fontWeight: showMultiSelectEdit ? 600 : 400,
+                whiteSpace: "nowrap",
+              }}
+              title="Edit label"
+              className="btn-ghost btn-sm"
+            >
+              <Edit3 size={16} />
+              {multiSelectToolbarExpanded && "Edit"}
+            </button>
+
+            {/* Clear */}
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!activeDocId || selectedRegionIds.length === 0) return;
+                pushUndo();
+                const ids = [...selectedRegionIds];
+                batchDeleteRegions(activeDocId, ids).catch(() => {});
+                ids.forEach(id => removeRegion(id));
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--text-primary)",
+                whiteSpace: "nowrap",
+              }}
+              title="Clear — remove from document"
+              className="btn-ghost btn-sm"
+            >
+              <X size={16} />
+              {multiSelectToolbarExpanded && "Clear"}
+            </button>
+
+            {/* Separator */}
+            <div style={{ height: 1, background: "rgba(255,255,255,0.15)", margin: "2px 4px" }} />
+
+            {/* Tokenize */}
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!activeDocId || selectedRegionIds.length === 0) return;
+                pushUndo();
+                selectedRegionIds.forEach(id => {
+                  setRegionAction(activeDocId, id, "TOKENIZE").catch(() => {});
+                  updateRegionAction(id, "TOKENIZE");
+                });
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--tokenize)",
+                whiteSpace: "nowrap",
+              }}
+              title="Tokenize"
+              className="btn-tokenize btn-sm"
+            >
+              <Key size={16} />
+              {multiSelectToolbarExpanded && "Tokenize"}
+            </button>
+
+            {/* Remove */}
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!activeDocId || selectedRegionIds.length === 0) return;
+                pushUndo();
+                selectedRegionIds.forEach(id => {
+                  setRegionAction(activeDocId, id, "REMOVE").catch(() => {});
+                  updateRegionAction(id, "REMOVE");
+                });
+              }}
+              style={{
+                padding: "8px",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "transparent",
+                border: "1px solid transparent",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: "var(--danger)",
+                whiteSpace: "nowrap",
+              }}
+              title="Remove"
+              className="btn-danger btn-sm"
+            >
+              <Trash2 size={16} />
+              {multiSelectToolbarExpanded && "Remove"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Multi-select edit dialog */}
+      {showMultiSelectEdit && selectedRegionIds.length > 1 && (
+        <div
+          style={{
+            position: "fixed",
+            left: multiSelectToolbarPos.x + 100,
+            top: multiSelectToolbarPos.y,
+            zIndex: 1000,
+            background: "var(--bg-secondary)",
+            borderRadius: 8,
+            boxShadow: "0 4px 24px rgba(0,0,0,0.6)",
+            minWidth: 280,
+            maxWidth: 350,
+            border: "1px solid var(--border-color)",
+            padding: 12,
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>
+            Change Label for {selectedRegionIds.length} Regions
+          </div>
+          <select
+            autoFocus
+            value={multiSelectEditLabel}
+            onChange={(e) => setMultiSelectEditLabel(e.target.value as PIIType)}
+            style={{
+              width: "100%",
+              padding: "6px 8px",
+              fontSize: 13,
+              background: "var(--bg-primary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 4,
+              color: "var(--text-primary)",
+              marginBottom: 8,
+            }}
+          >
+            <option value="PERSON">PERSON</option>
+            <option value="ORG">ORG</option>
+            <option value="EMAIL">EMAIL</option>
+            <option value="PHONE">PHONE</option>
+            <option value="SSN">SSN</option>
+            <option value="CREDIT_CARD">CREDIT_CARD</option>
+            <option value="DATE">DATE</option>
+            <option value="ADDRESS">ADDRESS</option>
+            <option value="LOCATION">LOCATION</option>
+            <option value="IP_ADDRESS">IP_ADDRESS</option>
+            <option value="IBAN">IBAN</option>
+            <option value="PASSPORT">PASSPORT</option>
+            <option value="DRIVER_LICENSE">DRIVER_LICENSE</option>
+            <option value="CUSTOM">CUSTOM</option>
+            <option value="UNKNOWN">UNKNOWN</option>
+          </select>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="btn-primary"
+              onClick={() => {
+                if (!activeDocId || selectedRegionIds.length === 0) return;
+                pushUndo();
+                selectedRegionIds.forEach(id => {
+                  updateRegion(id, { pii_type: multiSelectEditLabel });
+                  updateRegionLabel(activeDocId, id, multiSelectEditLabel).catch(() => {});
+                });
+                setShowMultiSelectEdit(false);
+              }}
+              style={{ flex: 1 }}
+            >
+              Apply
+            </button>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => setShowMultiSelectEdit(false)}
+              style={{ flex: 1 }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Vault unlock prompt overlay */}
       {showVaultPrompt && (
@@ -1725,7 +2306,7 @@ export default function DocumentViewer() {
                 );
               })}
 
-            {/* Multi-select bounding box + actions */}
+            {/* Multi-select bounding box */}
             {imgLoaded && pageData && selectedRegionIds.length > 1 && (() => {
               const selRegions = pageRegions.filter((r) => selectedRegionIds.includes(r.id) && r.action !== "CANCEL");
               if (selRegions.length < 2) return null;
@@ -1773,222 +2354,12 @@ export default function DocumentViewer() {
                   >
                     {label}
                   </div>
-                  {/* Action buttons */}
-                  <div
-                    onMouseDown={(e) => e.stopPropagation()}
-                    style={{
-                      position: "absolute",
-                      left: bx0 - pad,
-                      top: by1 + pad + 4,
-                      display: "flex",
-                      gap: 3,
-                      zIndex: 9,
-                      background: "var(--bg-secondary)",
-                      borderRadius: 4,
-                      padding: 3,
-                      boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
-                    }}
-                  >
-                    <button
-                      className="btn-ghost btn-sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        pushUndo();
-                        const ids = selRegions.map((r) => r.id);
-                        batchDeleteRegions(activeDocId!, ids).catch(() => {});
-                        ids.forEach((id) => removeRegion(id));
-                        clearSelection();
-                      }}
-                      title="Reset selected — remove from document"
-                      style={{ padding: "2px 6px" }}
-                    >
-                      <X size={12} />
-                    </button>
-                    <button
-                      className="btn-danger btn-sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        pushUndo();
-                        selRegions.forEach((r) => {
-                          setRegionAction(activeDocId!, r.id, "REMOVE").catch(() => {});
-                          updateRegionAction(r.id, "REMOVE");
-                        });
-                        clearSelection();
-                      }}
-                      title="Remove all — permanently redact"
-                      style={{ padding: "2px 6px" }}
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                    <button
-                      className="btn-tokenize btn-sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        pushUndo();
-                        selRegions.forEach((r) => {
-                          setRegionAction(activeDocId!, r.id, "TOKENIZE").catch(() => {});
-                          updateRegionAction(r.id, "TOKENIZE");
-                        });
-                        clearSelection();
-                      }}
-                      title="Tokenize all — replace with reversible tokens"
-                      style={{ padding: "2px 6px" }}
-                    >
-                      <Key size={12} />
-                    </button>
-                  </div>
                 </>
               );
             })()}
           </div>
         </div>
 
-        {/* Acrobat-style floating page navigation bar */}
-        {pageCount > 1 && (
-          <div
-            style={{
-              position: "fixed",
-              top: 60,
-              right: sidebarCollapsed ? 76 : 336,
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              background: "rgba(30, 30, 30, 0.92)",
-              backdropFilter: "blur(8px)",
-              borderRadius: 10,
-              padding: "6px 12px",
-              boxShadow: "0 2px 12px rgba(0,0,0,0.4)",
-              zIndex: 30,
-              userSelect: "none",
-              transition: "right 0.2s ease",
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <button
-              className="btn-ghost btn-sm"
-              onClick={() => setActivePage(1)}
-              disabled={activePage <= 1}
-              title="First page"
-              style={{ padding: "6px 8px", color: "var(--text-secondary)" }}
-            >
-              <ChevronsLeft size={18} />
-            </button>
-            <button
-              className="btn-ghost btn-sm"
-              onClick={() => setActivePage(Math.max(1, activePage - 1))}
-              disabled={activePage <= 1}
-              title="Previous page"
-              style={{ padding: "6px 8px", color: "var(--text-secondary)" }}
-            >
-              <ChevronLeft size={18} />
-            </button>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 6px" }}>
-              <input
-                type="number"
-                min={1}
-                max={pageCount}
-                value={activePage}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value, 10);
-                  if (!isNaN(val) && val >= 1 && val <= pageCount) {
-                    setActivePage(val);
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.currentTarget.blur();
-                  }
-                }}
-                style={{
-                  width: 42,
-                  padding: "4px 6px",
-                  fontSize: 15,
-                  fontWeight: 600,
-                  textAlign: "center",
-                  background: "rgba(255,255,255,0.08)",
-                  border: "1px solid rgba(255,255,255,0.15)",
-                  borderRadius: 5,
-                  color: "var(--text-primary)",
-                  outline: "none",
-                  MozAppearance: "textfield",
-                }}
-                title="Go to page"
-              />
-              <span style={{ fontSize: 15, color: "var(--text-secondary)" }}>/</span>
-              <span style={{ fontSize: 15, color: "var(--text-secondary)", fontWeight: 500 }}>{pageCount}</span>
-            </div>
-            <button
-              className="btn-ghost btn-sm"
-              onClick={() => setActivePage(Math.min(pageCount, activePage + 1))}
-              disabled={activePage >= pageCount}
-              title="Next page"
-              style={{ padding: "6px 8px", color: "var(--text-secondary)" }}
-            >
-              <ChevronRight size={18} />
-            </button>
-            <button
-              className="btn-ghost btn-sm"
-              onClick={() => setActivePage(pageCount)}
-              disabled={activePage >= pageCount}
-              title="Last page"
-              style={{ padding: "6px 8px", color: "var(--text-secondary)" }}
-            >
-              <ChevronsRight size={18} />
-            </button>
-          </div>
-        )}
-
-        {/* Acrobat-style floating zoom control */}
-        <div
-          style={{
-            position: "fixed",
-            top: 60,
-            left: "50%",
-            transform: "translateX(-50%)",
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-            background: "rgba(30, 30, 30, 0.92)",
-            backdropFilter: "blur(8px)",
-            borderRadius: 10,
-            padding: "6px 10px",
-            boxShadow: "0 2px 12px rgba(0,0,0,0.4)",
-            zIndex: 30,
-            userSelect: "none",
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <button
-            className="btn-ghost btn-sm"
-            onClick={() => setZoom(Math.max(0.1, zoom - 0.1))}
-            title="Zoom out (\u2212)"
-            style={{ padding: "6px 8px", color: "var(--text-secondary)" }}
-          >
-            <ZoomOut size={18} />
-          </button>
-          <span
-            style={{
-              fontSize: 14,
-              fontWeight: 600,
-              color: "var(--text-primary)",
-              minWidth: 48,
-              textAlign: "center",
-              cursor: "pointer",
-            }}
-            onClick={() => setZoom(1)}
-            title="Reset zoom to 100%"
-          >
-            {Math.round(zoom * 100)}%
-          </span>
-          <button
-            className="btn-ghost btn-sm"
-            onClick={() => setZoom(zoom + 0.1)}
-            title="Zoom in (+)"
-            style={{ padding: "6px 8px", color: "var(--text-secondary)" }}
-          >
-            <ZoomIn size={18} />
-          </button>
-        </div>
       </div>
 
       {/* PII Type Picker dialog — shown after drawing a region */}
@@ -2101,10 +2472,11 @@ export default function DocumentViewer() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
+              background: 'rgba(0,0,0,0.15)',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Shield size={18} color="var(--text-secondary)" />
-                <span>Detected PII ({pageRegions.length})</span>
+                <span>Detected ({pageRegions.length})</span>
               </div>
               <button
                 onClick={() => setSidebarCollapsed(true)}
@@ -2123,6 +2495,117 @@ export default function DocumentViewer() {
                 <ChevronRight size={16} />
               </button>
             </div>
+            {/* Bulk actions toolbar */}
+            {pageRegions.length > 0 && (() => {
+              const activeRegions = pageRegions.filter(r => r.action !== "CANCEL");
+              const allTokenized = activeRegions.length > 0 && activeRegions.every(r => r.action === "TOKENIZE");
+              const allRemoved = activeRegions.length > 0 && activeRegions.every(r => r.action === "REMOVE");
+              return (
+              <div style={{
+                padding: "6px 12px",
+                borderBottom: "1px solid var(--border-color)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+              }}>
+                <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  onClick={() => {
+                    if (!activeDocId) return;
+                    pushUndo();
+                    const ids = activeRegions.map(r => r.id);
+                    const newAction = allTokenized ? "PENDING" : "TOKENIZE";
+                    ids.forEach(id => updateRegionAction(id, newAction));
+                    batchRegionAction(activeDocId, ids, newAction).catch(() => {});
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: "5px 0",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 4,
+                    borderRadius: 4,
+                    cursor: "pointer",
+                    border: allTokenized ? "1px solid #9c27b0" : "1px solid transparent",
+                    background: allTokenized ? "rgba(156,39,176,0.15)" : "transparent",
+                    color: "#9c27b0",
+                    boxShadow: allTokenized ? "0 0 8px rgba(156,39,176,0.3)" : "none",
+                    textShadow: "none",
+                    transition: "all 0.15s ease",
+                  }}
+                  title={allTokenized ? "Undo tokenize all" : "Tokenize all regions on this page"}
+                >
+                  <Key size={13} />
+                  Tokenize all
+                </button>
+                <button
+                  onClick={() => {
+                    if (!activeDocId) return;
+                    pushUndo();
+                    const ids = activeRegions.map(r => r.id);
+                    const newAction = allRemoved ? "PENDING" : "REMOVE";
+                    ids.forEach(id => updateRegionAction(id, newAction));
+                    batchRegionAction(activeDocId, ids, newAction).catch(() => {});
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: "5px 0",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 4,
+                    borderRadius: 4,
+                    cursor: "pointer",
+                    border: allRemoved ? "1px solid #f44336" : "1px solid transparent",
+                    background: allRemoved ? "rgba(244,67,54,0.15)" : "transparent",
+                    color: "#f44336",
+                    boxShadow: allRemoved ? "0 0 8px rgba(244,67,54,0.3)" : "none",
+                    textShadow: "none",
+                    transition: "all 0.15s ease",
+                  }}
+                  title={allRemoved ? "Undo remove all" : "Remove all regions on this page"}
+                >
+                  <Trash2 size={13} />
+                  Remove all
+                </button>
+                <button
+                  onClick={() => {
+                    if (!activeDocId) return;
+                    pushUndo();
+                    const ids = activeRegions.map(r => r.id);
+                    ids.forEach(id => removeRegion(id));
+                    batchDeleteRegions(activeDocId, ids).catch(() => {});
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: "5px 0",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 4,
+                    borderRadius: 4,
+                    cursor: "pointer",
+                    border: "1px solid transparent",
+                    background: "transparent",
+                    color: "var(--text-secondary)",
+                    transition: "all 0.15s ease",
+                  }}
+                  title="Clear all regions from this page"
+                >
+                  <X size={13} />
+                  Clear all
+                </button>
+                </div>
+              </div>
+              );
+            })()}
             <div style={styles.regionList}>
           {pageRegions.map((r) => (
             <div
@@ -2214,8 +2697,11 @@ export default function DocumentViewer() {
                   title={r.action === "TOKENIZE" ? "Undo tokenize" : "Tokenize"}
                   style={{
                     ...styles.sidebarBtn,
-                    border: r.action === "TOKENIZE" ? "1px solid #fff" : "1px solid transparent",
-                    color: r.action === "TOKENIZE" ? "#fff" : "var(--tokenize)",
+                    border: r.action === "TOKENIZE" ? "1px solid #9c27b0" : "1px solid transparent",
+                    background: r.action === "TOKENIZE" ? "rgba(156,39,176,0.15)" : "transparent",
+                    color: "#9c27b0",
+                    boxShadow: r.action === "TOKENIZE" ? "0 0 6px rgba(156,39,176,0.3)" : "none",
+                    transition: "all 0.15s ease",
                   }}
                 >
                   <Key size={13} />
@@ -2230,8 +2716,11 @@ export default function DocumentViewer() {
                   title={r.action === "REMOVE" ? "Undo remove" : "Remove"}
                   style={{
                     ...styles.sidebarBtn,
-                    border: r.action === "REMOVE" ? "1px solid #fff" : "1px solid transparent",
-                    color: r.action === "REMOVE" ? "#fff" : "var(--danger)",
+                    border: r.action === "REMOVE" ? "1px solid #f44336" : "1px solid transparent",
+                    background: r.action === "REMOVE" ? "rgba(244,67,54,0.15)" : "transparent",
+                    color: "#f44336",
+                    boxShadow: r.action === "REMOVE" ? "0 0 6px rgba(244,67,54,0.3)" : "none",
+                    transition: "all 0.15s ease",
                   }}
                 >
                   <Trash2 size={13} />
@@ -2260,6 +2749,25 @@ export default function DocumentViewer() {
             </p>
           )}
             </div>
+            {/* Sidebar footer — stats */}
+            <div style={{
+              padding: "8px 12px",
+              borderTop: "1px solid var(--border-color)",
+              display: "flex",
+              justifyContent: "space-evenly",
+              flexShrink: 0,
+              background: "rgba(0,0,0,0.15)",
+            }}>
+              <span style={{ ...styles.statBadge, fontSize: 11, background: "transparent" }}>
+                {pendingCount} pending
+              </span>
+              <span style={{ ...styles.statBadge, fontSize: 11, color: "#f44336", background: "transparent" }}>
+                {removeCount} remove
+              </span>
+              <span style={{ ...styles.statBadge, fontSize: 11, color: "#9c27b0", background: "transparent" }}>
+                {tokenizeCount} tokenize
+              </span>
+            </div>
           </>
         )}
       </div>
@@ -2285,7 +2793,8 @@ const styles: Record<string, React.CSSProperties> = {
     background: "var(--bg-secondary)",
     borderBottom: "1px solid var(--border-color)",
     flexWrap: "wrap",
-    zIndex: 20,
+    position: "relative" as const,
+    zIndex: 40,
   },
   contentArea: {
     flex: 1,

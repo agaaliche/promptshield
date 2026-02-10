@@ -157,7 +157,7 @@ export default function RegionOverlay({
   useEffect(() => {
     if (!isDraggingToolbar) return;
     const GAP = 2;
-    const PAD = 4;
+    const PAD = 8;
     const handleMouseMove = (e: MouseEvent) => {
       const tb = toolbarRef.current;
       if (!tb) return;
@@ -663,12 +663,14 @@ export default function RegionOverlay({
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
-                background: "transparent",
-                border: region.action === "TOKENIZE" ? "1px solid #fff" : "1px solid transparent",
+                background: region.action === "TOKENIZE" ? "rgba(156,39,176,0.15)" : "transparent",
+                border: region.action === "TOKENIZE" ? "1px solid #9c27b0" : "1px solid transparent",
                 borderRadius: 4,
                 cursor: "pointer",
-                color: region.action === "TOKENIZE" ? "#fff" : "var(--tokenize)",
+                color: "#9c27b0",
                 whiteSpace: "nowrap",
+                boxShadow: region.action === "TOKENIZE" ? "0 0 6px rgba(156,39,176,0.3)" : "none",
+                transition: "all 0.15s ease",
               }}
               title={region.action === "TOKENIZE" ? "Undo tokenize" : "Tokenize"}
               className="btn-tokenize btn-sm"
@@ -690,12 +692,14 @@ export default function RegionOverlay({
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
-                background: "transparent",
-                border: region.action === "REMOVE" ? "1px solid #fff" : "1px solid transparent",
+                background: region.action === "REMOVE" ? "rgba(244,67,54,0.15)" : "transparent",
+                border: region.action === "REMOVE" ? "1px solid #f44336" : "1px solid transparent",
                 borderRadius: 4,
                 cursor: "pointer",
-                color: region.action === "REMOVE" ? "#fff" : "var(--danger)",
+                color: "#f44336",
                 whiteSpace: "nowrap",
+                boxShadow: region.action === "REMOVE" ? "0 0 6px rgba(244,67,54,0.3)" : "none",
+                transition: "all 0.15s ease",
               }}
               title={region.action === "REMOVE" ? "Undo remove" : "Remove"}
               className="btn-danger btn-sm"

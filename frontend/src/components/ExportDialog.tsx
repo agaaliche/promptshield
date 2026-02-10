@@ -1,0 +1,358 @@
+/**
+ * Export dialog — lets users select documents (up to 50) with checkboxes
+ * and export them as anonymized PDFs. Multiple files → zip archive.
+ */
+
+import { useState, useMemo, useCallback } from "react";
+import { Shield, X, Search, FileText, Download, Package, Lock } from "lucide-react";
+import { useAppStore } from "../store";
+import { batchAnonymize, syncRegions, unlockVault } from "../api";
+import type { DocumentInfo } from "../types";
+
+interface Props {
+  open: boolean;
+  onClose: () => void;
+}
+
+export default function ExportDialog({ open, onClose }: Props) {
+  const documents = useAppStore((s) => s.documents);
+  const regions = useAppStore((s) => s.regions);
+  const activeDocId = useAppStore((s) => s.activeDocId);
+  const setStatusMessage = useAppStore((s) => s.setStatusMessage);
+  const vaultUnlocked = useAppStore((s) => s.vaultUnlocked);
+  const setVaultUnlocked = useAppStore((s) => s.setVaultUnlocked);
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
+    // Pre-select the active document
+    return new Set(activeDocId ? [activeDocId] : []);
+  });
+  const [search, setSearch] = useState("");
+  const [isExporting, setIsExporting] = useState(false);
+  const [needsVault, setNeedsVault] = useState(false);
+  const [vaultPass, setVaultPass] = useState("");
+  const [vaultError, setVaultError] = useState("");
+
+  // Filter & sort docs
+  const filteredDocs = useMemo(() => {
+    let filtered = documents.filter((d) =>
+      d.original_filename.toLowerCase().includes(search.toLowerCase())
+    );
+    // Protected docs first, then alphabetically
+    filtered.sort((a, b) => {
+      const ap = a.is_protected ? 0 : 1;
+      const bp = b.is_protected ? 0 : 1;
+      if (ap !== bp) return ap - bp;
+      return a.original_filename.localeCompare(b.original_filename);
+    });
+    return filtered;
+  }, [documents, search]);
+
+  const toggleDoc = useCallback((docId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) {
+        next.delete(docId);
+      } else {
+        if (next.size >= 50) return prev; // max 50
+        next.add(docId);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    const ids = filteredDocs.slice(0, 50).map((d) => d.doc_id);
+    setSelectedIds(new Set(ids));
+  }, [filteredDocs]);
+
+  const selectNone = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  // Check if any selected doc has TOKENIZE regions needing vault
+  const selectedNeedsVault = useMemo(() => {
+    return documents.some((d) => {
+      if (!selectedIds.has(d.doc_id)) return false;
+      // For active doc, check store regions; for others, check doc.regions
+      const docRegions = d.doc_id === activeDocId ? regions : (d.regions || []);
+      return docRegions.some((r) => r.action === "TOKENIZE");
+    });
+  }, [selectedIds, documents, activeDocId, regions]);
+
+  const doExport = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    setIsExporting(true);
+    try {
+      // Sync current document's regions before export
+      if (activeDocId && selectedIds.has(activeDocId) && regions.length > 0) {
+        await syncRegions(
+          activeDocId,
+          regions.map((r) => ({ id: r.id, action: r.action, bbox: r.bbox })),
+        );
+      }
+
+      const docIds = Array.from(selectedIds);
+      const blobUrl = await batchAnonymize(docIds);
+
+      // Trigger download
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = docIds.length > 1 ? "promptshield_export.zip" : "export.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+
+      setStatusMessage(`Exported ${docIds.length} file${docIds.length > 1 ? "s" : ""} successfully`);
+      onClose();
+    } catch (e: any) {
+      setStatusMessage(`Export failed: ${e.message}`);
+    } finally {
+      setIsExporting(false);
+    }
+  }, [selectedIds, activeDocId, regions, setStatusMessage, onClose]);
+
+  const handleExport = useCallback(async () => {
+    if (selectedNeedsVault && !vaultUnlocked) {
+      setNeedsVault(true);
+      return;
+    }
+    await doExport();
+  }, [selectedNeedsVault, vaultUnlocked, doExport]);
+
+  const handleVaultUnlockAndExport = useCallback(async () => {
+    try {
+      setVaultError("");
+      await unlockVault(vaultPass);
+      setVaultUnlocked(true);
+      setNeedsVault(false);
+      setVaultPass("");
+      await doExport();
+    } catch (e: any) {
+      if (e.message?.includes("403") || e.message?.includes("passphrase")) {
+        setVaultError("Invalid passphrase");
+      } else {
+        setVaultError(e.message);
+      }
+    }
+  }, [vaultPass, setVaultUnlocked, doExport]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.6)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 10000,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: "var(--bg-secondary)",
+          border: "1px solid var(--border-color)",
+          borderRadius: 10,
+          width: 520,
+          maxWidth: "90vw",
+          minHeight: 350,
+          maxHeight: "80vh",
+          display: "flex",
+          flexDirection: "column",
+          boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid var(--border-color)", gap: 10 }}>
+          <Shield size={18} style={{ color: "#4caf50" }} />
+          <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+            Export Secure Files
+          </span>
+          <button className="btn-ghost btn-sm" onClick={onClose} style={{ padding: 4 }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Search bar */}
+        <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border-color)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--bg-primary)", borderRadius: 6, padding: "6px 10px", border: "1px solid var(--border-color)" }}>
+            <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+            <input
+              type="text"
+              placeholder="Search files..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                flex: 1,
+                background: "transparent",
+                border: "none",
+                outline: "none",
+                fontSize: 13,
+                color: "var(--text-primary)",
+              }}
+              autoFocus
+            />
+          </div>
+          {/* Select all / none */}
+          <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 11, color: "var(--text-muted)" }}>
+            <span
+              onClick={selectAll}
+              style={{ cursor: "pointer", textDecoration: "underline" }}
+            >
+              Select all
+            </span>
+            <span
+              onClick={selectNone}
+              style={{ cursor: "pointer", textDecoration: "underline" }}
+            >
+              Select none
+            </span>
+            <span style={{ marginLeft: "auto" }}>
+              {selectedIds.size} / {documents.length} selected
+              {selectedIds.size >= 50 && <span style={{ color: "#ff9800" }}> (max 50)</span>}
+            </span>
+          </div>
+        </div>
+
+        {/* File list */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+          {filteredDocs.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+              No documents found
+            </div>
+          ) : (
+            filteredDocs.map((doc) => (
+              <label
+                key={doc.doc_id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "7px 16px",
+                  cursor: "pointer",
+                  background: selectedIds.has(doc.doc_id) ? "rgba(74, 158, 255, 0.08)" : "transparent",
+                  borderLeft: selectedIds.has(doc.doc_id) ? "2px solid var(--accent-primary)" : "2px solid transparent",
+                  transition: "background 0.1s",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(doc.doc_id)}
+                  onChange={() => toggleDoc(doc.doc_id)}
+                  style={{ accentColor: "var(--accent-primary)", flexShrink: 0 }}
+                />
+                {doc.is_protected ? (
+                  <Shield size={14} style={{ color: "#4caf50", flexShrink: 0 }} fill="#4caf50" />
+                ) : (
+                  <FileText size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                )}
+                <span style={{
+                  flex: 1,
+                  fontSize: 13,
+                  color: "var(--text-primary)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}>
+                  {doc.original_filename}
+                </span>
+                <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>
+                  {doc.page_count}p
+                </span>
+              </label>
+            ))
+          )}
+        </div>
+
+        {/* Vault unlock prompt */}
+        {needsVault && (
+          <div style={{
+            padding: "12px 16px",
+            borderTop: "1px solid var(--border-color)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            background: "rgba(0,0,0,0.1)",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)" }}>
+              <Lock size={12} />
+              Vault passphrase required for tokenized regions
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="password"
+                placeholder="Enter vault passphrase..."
+                value={vaultPass}
+                onChange={(e) => setVaultPass(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleVaultUnlockAndExport()}
+                style={{
+                  flex: 1,
+                  padding: "6px 10px",
+                  fontSize: 13,
+                  background: "var(--bg-primary)",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: 6,
+                  color: "var(--text-primary)",
+                  outline: "none",
+                }}
+                autoFocus
+              />
+              <button
+                className="btn-primary btn-sm"
+                onClick={handleVaultUnlockAndExport}
+                disabled={!vaultPass}
+              >
+                Unlock & Export
+              </button>
+            </div>
+            {vaultError && (
+              <div style={{ fontSize: 11, color: "#f44336" }}>{vaultError}</div>
+            )}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div style={{
+          padding: "12px 16px",
+          borderTop: "1px solid var(--border-color)",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          background: "rgba(0,0,0,0.15)",
+          borderRadius: "0 0 10px 10px",
+        }}>
+          {selectedIds.size > 1 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)" }}>
+              <Package size={12} />
+              Exports as ZIP
+            </div>
+          )}
+          <div style={{ flex: 1 }} />
+          <button
+            className="btn-ghost btn-sm"
+            onClick={onClose}
+            style={{ marginRight: 4 }}
+          >
+            Cancel
+          </button>
+          <button
+            className="btn-success"
+            onClick={handleExport}
+            disabled={selectedIds.size === 0 || isExporting}
+            style={{ display: "flex", alignItems: "center", gap: 6 }}
+          >
+            <Download size={14} />
+            {isExporting
+              ? "Exporting…"
+              : `Export ${selectedIds.size} file${selectedIds.size !== 1 ? "s" : ""}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

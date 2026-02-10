@@ -26,7 +26,7 @@ import {
   Search,
   MousePointer,
   BoxSelect,
-  Pencil,
+  Loader2,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import {
@@ -47,9 +47,12 @@ import {
   deleteRegion,
   batchDeleteRegions,
 } from "../api";
-import { PII_COLORS, type BBox, type PIIRegion, type PIIType, type RegionAction } from "../types";
+import { PII_COLORS, getPIIColor, loadLabelConfig, cacheLabelConfig, ensureBuiltinLabels, type PIILabelEntry, type BBox, type PIIRegion, type PIIType, type RegionAction } from "../types";
 import { CURSOR_CROSSHAIR, CURSOR_GRAB, CURSOR_GRABBING } from "../cursors";
+import { resolveAllOverlaps } from "../regionUtils";
 import RegionOverlay, { type ResizeHandle } from "./RegionOverlay";
+import ExportDialog from "./ExportDialog";
+import DetectionProgressDialog from "./DetectionProgressDialog";
 
 export default function DocumentViewer() {
   const {
@@ -81,6 +84,9 @@ export default function DocumentViewer() {
     redo,
     canUndo,
     canRedo,
+    docLoading,
+    docLoadingMessage,
+    docDetecting,
   } = useAppStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -93,6 +99,7 @@ export default function DocumentViewer() {
   const [showVaultPrompt, setShowVaultPrompt] = useState(false);
   const [vaultPass, setVaultPass] = useState("");
   const [vaultError, setVaultError] = useState("");
+  const [showExportDialog, setShowExportDialog] = useState(false);
 
   // ── Manual drawing state ──
   const [isDrawing, setIsDrawing] = useState(false);
@@ -137,6 +144,7 @@ export default function DocumentViewer() {
   // ── Cursor tool mode ──
   type CursorTool = "pointer" | "lasso" | "draw";
   const [cursorTool, setCursorToolRaw] = useState<CursorTool>("pointer");
+  const prevCursorToolRef = useRef<CursorTool>("draw");
   const [cursorToolbarExpanded, setCursorToolbarExpanded] = useState(() => {
     try {
       const saved = localStorage.getItem('cursorToolbarExpanded');
@@ -410,7 +418,7 @@ export default function DocumentViewer() {
         const resp = await highlightAllRegions(activeDocId, regionId);
         // Merge new regions into store
         if (resp.new_regions.length > 0) {
-          setRegions([...regions, ...resp.new_regions]);
+          setRegions(resolveAllOverlaps([...regions, ...resp.new_regions]));
         }
         // Select all matching (existing + newly created)
         setSelectedRegionIds(resp.all_ids);
@@ -498,7 +506,7 @@ export default function DocumentViewer() {
         }
 
         // Add to local state
-        setRegions([...regions, ...newRegions]);
+        setRegions(resolveAllOverlaps([...regions, ...newRegions]));
         setSelectedRegionIds(newIds);
         setStatusMessage(`Pasted ${newRegions.length} region(s) on page ${activePage}`);
       } catch (e: any) {
@@ -641,6 +649,16 @@ export default function DocumentViewer() {
           if (cursorTool !== "pointer") setCursorTool("pointer");
           if (showTypePicker) cancelTypePicker();
           break;
+        case " ": {
+          e.preventDefault();
+          if (cursorTool !== "pointer") {
+            prevCursorToolRef.current = cursorTool;
+            setCursorTool("pointer");
+          } else {
+            setCursorTool(prevCursorToolRef.current);
+          }
+          break;
+        }
         case "d":
           if (selectedRegionIds.length > 0) {
             e.preventDefault();
@@ -734,7 +752,7 @@ export default function DocumentViewer() {
         ner_enabled: autodetectNer,
         llm_detection_enabled: autodetectLlm,
       });
-      setRegions(result.regions);
+      setRegions(resolveAllOverlaps(result.regions));
       setStatusMessage(
         `Autodetect: ${result.added} added, ${result.updated} updated (${result.total_regions} total)`
       );
@@ -853,12 +871,42 @@ export default function DocumentViewer() {
   const pageData = doc?.pages?.[activePage - 1];
 
   // ── Manual draw handlers ──
-  const PII_TYPE_OPTIONS: PIIType[] = [
-    "PERSON", "ORG", "EMAIL", "PHONE", "SSN",
-    "CREDIT_CARD", "DATE", "ADDRESS", "LOCATION",
-    "IP_ADDRESS", "IBAN", "PASSPORT", "DRIVER_LICENSE",
-    "CUSTOM", "UNKNOWN",
-  ];
+  const [labelConfig, setLabelConfig] = useState<PIILabelEntry[]>(() => loadLabelConfig());
+  const [typePickerEditMode, setTypePickerEditMode] = useState(false);
+  const [typePickerNewLabel, setTypePickerNewLabel] = useState("");
+
+  // Load label config from backend on mount (overrides localStorage cache)
+  useEffect(() => {
+    import("../api").then(({ fetchLabelConfig }) =>
+      fetchLabelConfig().then((remote) => {
+        const merged = ensureBuiltinLabels(remote);
+        setLabelConfig(merged);
+        cacheLabelConfig(merged);
+      })
+    ).catch(() => {}); // fall back to localStorage cache on error
+  }, []);
+
+  // Derived lists from label config
+  const visibleLabels = useMemo(() => labelConfig.filter((e) => !e.hidden), [labelConfig]);
+  const frequentLabels = useMemo(() => visibleLabels.filter((e) => e.frequent), [visibleLabels]);
+  const otherLabels = useMemo(() => visibleLabels.filter((e) => !e.frequent), [visibleLabels]);
+
+  // Labels currently used in the document (cannot be deleted, only hidden)
+  const usedLabels = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of regions) s.add(r.pii_type);
+    return s;
+  }, [regions]);
+
+  const updateLabelConfig = useCallback((updater: (prev: PIILabelEntry[]) => PIILabelEntry[]) => {
+    setLabelConfig((prev) => {
+      const next = updater(prev);
+      cacheLabelConfig(next);
+      // Persist to backend (fire-and-forget)
+      import("../api").then(({ saveLabelConfigAPI }) => saveLabelConfigAPI(next)).catch(() => {});
+      return next;
+    });
+  }, []);
 
   const getPointerPosOnImage = useCallback(
     (e: React.MouseEvent) => {
@@ -1345,10 +1393,59 @@ export default function DocumentViewer() {
   );
 
   if (!doc) return <div style={styles.empty}>No document loaded</div>;
-  if (!doc.pages) return <div style={styles.empty}>Loading document...</div>;
+
+  // Block the viewer while loading OR detecting
+  const isDocLoading = docLoading || docDetecting || !doc.pages;
+
+  if (isDocLoading) {
+    // During detection, show the real progress dialog
+    if (docDetecting) {
+      return (
+        <div style={styles.wrapper}>
+          <DetectionProgressDialog
+            docId={doc.doc_id}
+            docName={doc.original_filename}
+            visible
+          />
+        </div>
+      );
+    }
+
+    // Otherwise show the simple loading spinner
+    return (
+      <div style={styles.wrapper}>
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100%",
+          width: "100%",
+        }}>
+          <div style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 16,
+          }}>
+            <Loader2 size={36} color="var(--accent-primary)" style={{ animation: "spin 1s linear infinite" }} />
+            <div style={{ fontSize: 14, color: "var(--text-secondary)" }}>
+              {docLoadingMessage || "Loading document\u2026"}
+            </div>
+          </div>
+        </div>
+        <style>{`
+          @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
+  }
 
   return (
     <div style={styles.wrapper}>
+
       {/* Toolbar */}
       <div ref={topToolbarRef} style={styles.toolbar}>
         <div style={{ position: "relative" }}>
@@ -1389,9 +1486,6 @@ export default function DocumentViewer() {
               }}
               onMouseDown={(e) => e.stopPropagation()}
             >
-              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
-                PII Autodetection
-              </div>
 
               {/* Fuzziness slider */}
               <div>
@@ -1441,22 +1535,17 @@ export default function DocumentViewer() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-primary)", cursor: "pointer" }}>
                     <input type="checkbox" checked={autodetectRegex} onChange={(e) => setAutodetectRegex(e.target.checked)} style={{ accentColor: "var(--accent-primary)" }} />
-                    Regex (SSN, email, phone, etc.)
+                    SSN, email, phone, etc.
                   </label>
                   <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-primary)", cursor: "pointer" }}>
                     <input type="checkbox" checked={autodetectNer} onChange={(e) => setAutodetectNer(e.target.checked)} style={{ accentColor: "var(--accent-primary)" }} />
-                    AI / NER (names, orgs, locations)
+                    Names, orgs, locations
                   </label>
                   <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-primary)", cursor: "pointer" }}>
                     <input type="checkbox" checked={autodetectLlm} onChange={(e) => setAutodetectLlm(e.target.checked)} style={{ accentColor: "var(--accent-primary)" }} />
-                    LLM (contextual, slowest)
+                    Contextual (slowest)
                   </label>
                 </div>
-              </div>
-
-              {/* Info text */}
-              <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.4 }}>
-                New regions are added. Existing overlapping regions are updated in place. Nothing is deleted.
               </div>
 
               {/* Run button */}
@@ -1474,7 +1563,7 @@ export default function DocumentViewer() {
         </div>
         <button
           className="btn-success"
-          onClick={handleAnonymize}
+          onClick={() => setShowExportDialog(true)}
           disabled={
             isProcessing ||
             (removeCount === 0 && tokenizeCount === 0)
@@ -1758,7 +1847,7 @@ export default function DocumentViewer() {
             }}
             title="Draw — create new anonymization region"
           >
-            <Pencil size={16} />
+            <PenTool size={16} />
             {cursorToolbarExpanded && "Draw"}
           </button>
 
@@ -2117,21 +2206,9 @@ export default function DocumentViewer() {
               marginBottom: 8,
             }}
           >
-            <option value="PERSON">PERSON</option>
-            <option value="ORG">ORG</option>
-            <option value="EMAIL">EMAIL</option>
-            <option value="PHONE">PHONE</option>
-            <option value="SSN">SSN</option>
-            <option value="CREDIT_CARD">CREDIT_CARD</option>
-            <option value="DATE">DATE</option>
-            <option value="ADDRESS">ADDRESS</option>
-            <option value="LOCATION">LOCATION</option>
-            <option value="IP_ADDRESS">IP_ADDRESS</option>
-            <option value="IBAN">IBAN</option>
-            <option value="PASSPORT">PASSPORT</option>
-            <option value="DRIVER_LICENSE">DRIVER_LICENSE</option>
-            <option value="CUSTOM">CUSTOM</option>
-            <option value="UNKNOWN">UNKNOWN</option>
+            {visibleLabels.map((entry) => (
+              <option key={entry.label} value={entry.label}>{entry.label}</option>
+            ))}
           </select>
           <div style={{ display: "flex", gap: 8 }}>
             <button
@@ -2159,6 +2236,9 @@ export default function DocumentViewer() {
           </div>
         </div>
       )}
+
+      {/* Export dialog */}
+      <ExportDialog open={showExportDialog} onClose={() => setShowExportDialog(false)} />
 
       {/* Vault unlock prompt overlay */}
       {showVaultPrompt && (
@@ -2365,7 +2445,7 @@ export default function DocumentViewer() {
       {/* PII Type Picker dialog — shown after drawing a region */}
       {showTypePicker && (
         <div style={styles.overlay}>
-          <div style={{ ...styles.dialog, maxWidth: 480 }}>
+          <div style={{ ...styles.dialog, maxWidth: 520, maxHeight: '90vh', overflow: 'auto' }}>
             <PenTool size={24} style={{ color: "var(--accent-primary)", marginBottom: 8 }} />
             <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
               Select PII Type
@@ -2373,50 +2453,203 @@ export default function DocumentViewer() {
             <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
               What type of sensitive data does this region contain?
             </p>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, 1fr)",
-                gap: 6,
-                width: "100%",
-                marginBottom: 12,
-              }}
-            >
-              {PII_TYPE_OPTIONS.map((t) => (
-                <button
-                  key={t}
-                  className="btn-ghost"
-                  style={{
-                    padding: "6px 8px",
-                    fontSize: 12,
-                    fontWeight: 500,
-                    borderRadius: 6,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    justifyContent: "flex-start",
-                  }}
-                  onClick={() => handleTypePickerSelect(t)}
-                >
-                  <span
+
+            {/* ── Frequent labels (big buttons) ── */}
+            {!typePickerEditMode && frequentLabels.length > 0 && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Frequent</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, width: "100%", marginBottom: 12 }}>
+                  {frequentLabels.map((entry) => (
+                    <button
+                      key={entry.label}
+                      className="btn-ghost"
+                      style={{
+                        padding: "10px 12px",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        borderRadius: 8,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        justifyContent: "flex-start",
+                        border: `1.5px solid ${entry.color}22`,
+                        background: `${entry.color}0a`,
+                      }}
+                      onClick={() => handleTypePickerSelect(entry.label)}
+                    >
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: entry.color, flexShrink: 0 }} />
+                      {entry.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* ── Other labels (smaller buttons) ── */}
+            {!typePickerEditMode && otherLabels.length > 0 && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Other</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4, width: "100%", marginBottom: 12 }}>
+                  {otherLabels.map((entry) => (
+                    <button
+                      key={entry.label}
+                      className="btn-ghost"
+                      style={{
+                        padding: "5px 8px",
+                        fontSize: 11,
+                        fontWeight: 500,
+                        borderRadius: 6,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        justifyContent: "flex-start",
+                      }}
+                      onClick={() => handleTypePickerSelect(entry.label)}
+                    >
+                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: entry.color, flexShrink: 0 }} />
+                      {entry.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* ── Edit mode ── */}
+            {typePickerEditMode && (
+              <div style={{ width: "100%", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Manage Labels</div>
+
+                {/* Add new label */}
+                <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                  <input
+                    type="text"
+                    placeholder="New label name..."
+                    value={typePickerNewLabel}
+                    onChange={(e) => setTypePickerNewLabel(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && typePickerNewLabel.length > 0) {
+                        const name = typePickerNewLabel;
+                        if (labelConfig.some((x) => x.label === name)) return;
+                        updateLabelConfig((prev) => [...prev, {
+                          label: name,
+                          frequent: false,
+                          hidden: false,
+                          userAdded: true,
+                          color: `hsl(${Math.floor(Math.random() * 360)}, 55%, 50%)`,
+                        }]);
+                        setTypePickerNewLabel("");
+                      }
+                    }}
                     style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background: PII_COLORS[t] || "#888",
-                      flexShrink: 0,
+                      flex: 1,
+                      padding: "6px 10px",
+                      fontSize: 12,
+                      background: "var(--bg-primary)",
+                      border: "1px solid var(--border-color)",
+                      borderRadius: 6,
+                      color: "var(--text-primary)",
                     }}
                   />
-                  {t}
-                </button>
-              ))}
+                  <button
+                    className="btn-primary"
+                    disabled={typePickerNewLabel.length === 0 || labelConfig.some((x) => x.label === typePickerNewLabel)}
+                    onClick={() => {
+                      const name = typePickerNewLabel;
+                      if (!name || labelConfig.some((x) => x.label === name)) return;
+                      updateLabelConfig((prev) => [...prev, {
+                        label: name,
+                        frequent: false,
+                        hidden: false,
+                        userAdded: true,
+                        color: `hsl(${Math.floor(Math.random() * 360)}, 55%, 50%)`,
+                      }]);
+                      setTypePickerNewLabel("");
+                    }}
+                    style={{ padding: "6px 12px", fontSize: 12 }}
+                  >
+                    Add
+                  </button>
+                </div>
+
+                {/* Label list */}
+                <div style={{ maxHeight: 320, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
+                  {labelConfig.map((entry) => {
+                    const inUse = usedLabels.has(entry.label);
+                    return (
+                      <div
+                        key={entry.label}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: "5px 8px",
+                          borderRadius: 6,
+                          background: entry.hidden ? "var(--bg-primary)" : "transparent",
+                          opacity: entry.hidden ? 0.5 : 1,
+                        }}
+                      >
+                        {/* Color dot */}
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: entry.color, flexShrink: 0 }} />
+
+                        {/* Label name */}
+                        <span style={{ flex: 1, fontSize: 12, fontWeight: 500, color: "var(--text-primary)" }}>
+                          {entry.label}
+                          {inUse && <span style={{ fontSize: 10, color: "var(--text-secondary)", marginLeft: 4 }}>(in use)</span>}
+                        </span>
+
+                        {/* Frequent star toggle */}
+                        <button
+                          title={entry.frequent ? "Remove from frequent" : "Add to frequent"}
+                          onClick={() => updateLabelConfig((prev) => prev.map((e) => e.label === entry.label ? { ...e, frequent: !e.frequent } : e))}
+                          style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: 14, color: entry.frequent ? "#f59e0b" : "var(--text-secondary)" }}
+                        >
+                          {entry.frequent ? "★" : "☆"}
+                        </button>
+
+                        {/* Hide/show toggle */}
+                        <button
+                          title={entry.hidden ? "Show label" : "Hide label"}
+                          onClick={() => updateLabelConfig((prev) => prev.map((e) => e.label === entry.label ? { ...e, hidden: !e.hidden } : e))}
+                          style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: 12, color: "var(--text-secondary)" }}
+                        >
+                          {entry.hidden ? "👁" : "🙈"}
+                        </button>
+
+                        {/* Delete (only user-added AND not in use) */}
+                        {entry.userAdded && !inUse && (
+                          <button
+                            title="Delete label"
+                            onClick={() => updateLabelConfig((prev) => prev.filter((e) => e.label !== entry.label))}
+                            style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: 12, color: "#ef4444" }}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Bottom actions */}
+            <div style={{ display: "flex", gap: 8, width: "100%" }}>
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() => { setTypePickerEditMode(!typePickerEditMode); setTypePickerNewLabel(""); }}
+                style={{ display: "flex", alignItems: "center", gap: 4 }}
+              >
+                <Edit3 size={12} />
+                {typePickerEditMode ? "Done" : "Edit"}
+              </button>
+              <div style={{ flex: 1 }} />
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() => { cancelTypePicker(); setTypePickerEditMode(false); }}
+              >
+                Cancel
+              </button>
             </div>
-            <button
-              className="btn-ghost btn-sm"
-              onClick={cancelTypePicker}
-            >
-              Cancel
-            </button>
           </div>
         </div>
       )}

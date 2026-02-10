@@ -1,9 +1,11 @@
 """Hugging Face BERT-based NER detector — alternative Layer 2 for the hybrid pipeline.
 
-Supports three pre-trained models selectable via config:
+Supports five pre-trained models selectable via config:
   - dslim/bert-base-NER          — general NER (PER, ORG, LOC, MISC)
   - StanfordAIMI/stanford-deidentifier-base — clinical / medical de-identification
   - lakshyakh93/deberta_finetuned_pii       — PII-specific (names, emails, phones, etc.)
+  - iiiorg/piiranha-v1-detect-personal-information — multilingual PII (93% F1, 6 languages)
+  - Isotonic/distilbert_finetuned_ai4privacy_v2    — fast PII (95% F1, 54 entity types)
 
 Texts are processed in overlapping chunks so accuracy stays high for long
 documents.  The public API mirrors ``ner_detector`` so the pipeline can
@@ -71,6 +73,91 @@ AVAILABLE_MODELS: dict[str, dict] = {
             "PHONE_NUM": PIIType.PHONE,
             "URL_PERSONAL": PIIType.CUSTOM,
             "STREET_ADDRESS": PIIType.ADDRESS,
+        },
+    },
+    # -- Multilingual PII (mDeBERTa-v3-base, 0.3B params) -----------------
+    # 93% F1 · 98% PII recall · EN/ES/FR/DE/IT/NL
+    "iiiorg/piiranha-v1-detect-personal-information": {
+        "description": "Piiranha — multilingual PII (93% F1, EN/ES/FR/DE/IT/NL)",
+        "label_map": {
+            "GIVENNAME": PIIType.PERSON,
+            "SURNAME": PIIType.PERSON,
+            "EMAIL": PIIType.EMAIL,
+            "TELEPHONENUM": PIIType.PHONE,
+            "CREDITCARDNUMBER": PIIType.CREDIT_CARD,
+            "SOCIALNUM": PIIType.SSN,
+            "DATEOFBIRTH": PIIType.DATE,
+            "DRIVERLICENSENUM": PIIType.DRIVER_LICENSE,
+            "STREET": PIIType.ADDRESS,
+            "CITY": PIIType.LOCATION,
+            "ZIPCODE": PIIType.ADDRESS,
+            "BUILDINGNUM": PIIType.ADDRESS,
+            "ACCOUNTNUM": PIIType.CUSTOM,
+            "IDCARDNUM": PIIType.PASSPORT,
+            "TAXNUM": PIIType.CUSTOM,
+            "PASSWORD": PIIType.CUSTOM,
+            "USERNAME": PIIType.PERSON,
+        },
+    },
+    # -- Fast PII (DistilBERT, 66M params) ---------------------------------
+    # 95% F1 · 54 entity types · English-focused
+    "Isotonic/distilbert_finetuned_ai4privacy_v2": {
+        "description": "DistilBERT AI4Privacy — fast PII (95% F1, 54 entity types)",
+        "label_map": {
+            # Names
+            "Firstname": PIIType.PERSON,
+            "Lastname": PIIType.PERSON,
+            "Middlename": PIIType.PERSON,
+            "Prefix": PIIType.PERSON,
+            "Username": PIIType.PERSON,
+            # Contact
+            "Email": PIIType.EMAIL,
+            "Phonenumber": PIIType.PHONE,
+            "Phoneimei": PIIType.PHONE,
+            "Url": PIIType.CUSTOM,
+            # Financial
+            "Creditcardnumber": PIIType.CREDIT_CARD,
+            "Creditcardcvv": PIIType.CREDIT_CARD,
+            "Creditcardissuer": PIIType.CREDIT_CARD,
+            "Iban": PIIType.IBAN,
+            "Bic": PIIType.CUSTOM,
+            "Accountname": PIIType.CUSTOM,
+            "Accountnumber": PIIType.CUSTOM,
+            "Pin": PIIType.CUSTOM,
+            "Maskednumber": PIIType.CUSTOM,
+            # Identity
+            "Ssn": PIIType.SSN,
+            "Date": PIIType.DATE,
+            "Dob": PIIType.DATE,
+            "Password": PIIType.CUSTOM,
+            # Address / Location
+            "Street": PIIType.ADDRESS,
+            "Buildingnumber": PIIType.ADDRESS,
+            "Secondaryaddress": PIIType.ADDRESS,
+            "Zipcode": PIIType.ADDRESS,
+            "City": PIIType.LOCATION,
+            "State": PIIType.LOCATION,
+            "County": PIIType.LOCATION,
+            "Nearbygpscoordinate": PIIType.LOCATION,
+            # Organization
+            "Companyname": PIIType.ORG,
+            # Network / Tech
+            "Ip": PIIType.IP_ADDRESS,
+            "Ipv4": PIIType.IP_ADDRESS,
+            "Ipv6": PIIType.IP_ADDRESS,
+            "Mac": PIIType.CUSTOM,
+            "Useragent": PIIType.CUSTOM,
+            # Crypto
+            "Bitcoinaddress": PIIType.CUSTOM,
+            "Ethereumaddress": PIIType.CUSTOM,
+            "Litecoinaddress": PIIType.CUSTOM,
+            # Vehicle
+            "Vehiclevin": PIIType.CUSTOM,
+            "Vehiclevrm": PIIType.CUSTOM,
+            # Jobs (low PII value but model detects them)
+            "Jobtitle": PIIType.CUSTOM,
+            "Jobarea": PIIType.CUSTOM,
+            "Jobtype": PIIType.CUSTOM,
         },
     },
 }

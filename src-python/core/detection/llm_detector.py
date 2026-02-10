@@ -35,67 +35,49 @@ class LLMMatch(NamedTuple):
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
-You are a multilingual privacy expert assistant. Your task is to identify \
-personally identifiable information (PII) in the given text, regardless of \
-the language it is written in (English, French, German, Spanish, etc.).
+Extract all personally identifiable information (PII) from the given text. \
+The text may be in any language.
 
-Analyze the text carefully and identify ALL instances of PII, including but \
-not limited to:
-- Person names (PERSON)
-- Organization / company names (ORG)
-- Email addresses (EMAIL)
-- Phone numbers (PHONE)
-- Social Security Numbers or national IDs (SSN)
-- Credit card numbers (CREDIT_CARD)
-- Physical addresses (ADDRESS)
-- Locations that could identify someone (LOCATION)
-- Dates tied to a person or event (DATE)
-- IP addresses (IP_ADDRESS)
-- Any other identifying information (CUSTOM)
+Entity types: PERSON (full names), ORG (companies, institutions), EMAIL, \
+PHONE, SSN (social security / national ID numbers), CREDIT_CARD, \
+ADDRESS (street addresses), LOCATION (places tied to a person), \
+DATE (personal dates only, NOT fiscal periods), IP_ADDRESS, PASSPORT, \
+DRIVER_LICENSE, CUSTOM (badge/employee IDs, case references).
 
-Pay special attention to CONTEXTUAL PII that simple pattern matching would miss:
-- Project codenames that identify a team or person
-- Room numbers / office locations tied to individuals
-- Employee IDs, badge numbers
-- Medical record references
-- Case/file reference numbers
-- Indirect identifiers ("the patient in room 302", "le directeur financier")
+Rules:
+- "text" MUST be the EXACT substring from the source. Do not paraphrase.
+- SKIP headers, boilerplate, currency amounts, percentages, page numbers.
+- When in doubt, include it.
 
-IMPORTANT RULES:
-- The text may be in ANY language. Detect PII in whatever language it appears.
-- Return the "text" field exactly as it appears in the source text.
-- Do NOT flag generic business terms, section headers, accounting labels, \
-or common words as PII.
-- Only flag text that genuinely identifies a person, company, or sensitive datum.
-
-Return your findings as a JSON array. Each element must have:
-- "text": the exact PII text as it appears
-- "type": one of PERSON, ORG, EMAIL, PHONE, SSN, CREDIT_CARD, ADDRESS, LOCATION, DATE, IP_ADDRESS, CUSTOM
-- "reason": brief explanation of why this is PII
-
-Return ONLY the JSON array, no other text. If no PII is found, return [].
+Return ONLY a JSON array:
+[{"text": "exact text", "type": "PERSON", "reason": "brief reason"}]
+No PII found: []
 """
 
 USER_PROMPT_TEMPLATE = """\
-Analyze the following text for PII:
+Find all PII in this text:
 
----
 {text}
----
 
-Return a JSON array of PII findings."""
+JSON:"""
 
 # ---------------------------------------------------------------------------
 # Chunking constants
 # ---------------------------------------------------------------------------
 
-_CHUNK_SIZE = 2500             # Characters per chunk sent to LLM
-_CHUNK_OVERLAP = 300           # Overlap between consecutive chunks
+_CHUNK_SIZE = 1000             # Characters per chunk sent to LLM
+_CHUNK_OVERLAP = 100           # Overlap between consecutive chunks
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+# Minimum text length to bother sending to the LLM.  Very short
+# texts (cover pages, headers) produce degenerate token sequences
+# that can trigger NaN/zero-scale assertion failures in ggml.
+_MIN_TEXT_LENGTH = 50
+
 
 def detect_llm(text: str, llm_engine) -> list[LLMMatch]:
     """
@@ -104,7 +86,15 @@ def detect_llm(text: str, llm_engine) -> list[LLMMatch]:
     Long texts are split into overlapping chunks so no context is lost
     at chunk boundaries.
     """
-    if not text.strip():
+    stripped = text.strip()
+    if not stripped:
+        return []
+
+    if len(stripped) < _MIN_TEXT_LENGTH:
+        logger.info(
+            "LLM skipped — text too short (%d chars < %d minimum)",
+            len(stripped), _MIN_TEXT_LENGTH,
+        )
         return []
 
     if llm_engine is None or not llm_engine.is_loaded():
@@ -156,10 +146,17 @@ def _detect_chunk(
         response = llm_engine.generate(
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
-            max_tokens=2048,
+            max_tokens=256,
             temperature=0.1,
+            stop=["\n\n\n", "```", "---"],
         )
-        return _parse_llm_response(response, chunk_text, global_offset)
+        logger.info(
+            "LLM raw response (chunk offset=%d, %d chars): %s",
+            global_offset, len(response), response[:500],
+        )
+        matches = _parse_llm_response(response, chunk_text, global_offset)
+        logger.info("LLM parsed %d matches from chunk at offset %d", len(matches), global_offset)
+        return matches
     except Exception as e:
         logger.error(f"LLM detection failed on chunk at offset {global_offset}: {e}")
         return []

@@ -33,11 +33,17 @@ class AppConfig(BaseModel):
     temp_dir: Path = Field(default_factory=lambda: Path(tempfile.gettempdir()) / "doc-anonymizer")
     vault_path: Path = Field(default=None)           # type: ignore[assignment]
 
-    # LLM
+    # LLM — local
     llm_model_path: str = ""
-    llm_context_size: int = 4096
-    llm_gpu_layers: int = -1                          # -1 = auto (all if GPU available)
-    llm_threads: int = 0                              # 0 = auto (cpu_count)
+    llm_context_size: int = 2048
+    llm_gpu_layers: int = 0                           # 0 = CPU only (avoids NaN assertions with mixed GPU/CPU)
+    llm_threads: int = 0                              # 0 = auto (use all physical cores)
+
+    # LLM — remote API (OpenAI-compatible)
+    llm_provider: str = "local"                       # "local" | "remote"
+    llm_api_url: str = ""                              # e.g. https://api.openai.com/v1
+    llm_api_key: str = ""                              # Bearer token
+    llm_api_model: str = ""                            # e.g. gpt-4o-mini, claude-sonnet-4-20250514
 
     # PII Detection thresholds
     regex_enabled: bool = True
@@ -100,6 +106,8 @@ class AppConfig(BaseModel):
         "confidence_threshold", "ocr_language", "ocr_dpi",
         "render_dpi", "tesseract_cmd",
         "ner_backend", "ner_model_preference",
+        "llm_model_path",
+        "llm_provider", "llm_api_url", "llm_api_key", "llm_api_model",
     }
 
     @property

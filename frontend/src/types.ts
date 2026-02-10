@@ -4,7 +4,8 @@ export type PIIType =
   | "PERSON" | "ORG" | "EMAIL" | "PHONE" | "SSN"
   | "CREDIT_CARD" | "DATE" | "ADDRESS" | "LOCATION"
   | "IP_ADDRESS" | "IBAN" | "PASSPORT" | "DRIVER_LICENSE"
-  | "CUSTOM" | "UNKNOWN";
+  | "CUSTOM" | "UNKNOWN"
+  | (string & {});  // allow arbitrary user-defined labels
 
 export type DetectionSource = "REGEX" | "NER" | "GLINER" | "LLM" | "MANUAL";
 export type RegionAction = "PENDING" | "CANCEL" | "REMOVE" | "TOKENIZE";
@@ -77,6 +78,24 @@ export interface DetectionResult {
   regions: PIIRegion[];
 }
 
+export interface DetectionProgressPageStatus {
+  page: number;
+  status: "pending" | "running" | "done";
+  regions: number;
+}
+
+export interface DetectionProgressData {
+  doc_id: string;
+  status: "idle" | "running" | "complete" | "error";
+  current_page: number;
+  total_pages: number;
+  pages_done: number;
+  regions_found: number;
+  elapsed_seconds: number;
+  page_statuses: DetectionProgressPageStatus[];
+  error?: string;
+}
+
 export interface RedetectResult {
   doc_id: string;
   added: number;
@@ -105,6 +124,9 @@ export interface LLMStatus {
   model_path: string;
   gpu_enabled: boolean;
   context_size: number;
+  provider: "local" | "remote";
+  remote_api_url: string;
+  remote_model: string;
 }
 
 export interface VaultStats {
@@ -124,7 +146,7 @@ export interface TokenMapping {
 }
 
 /** Color map for PII type badges */
-export const PII_COLORS: Record<PIIType, string> = {
+export const PII_COLORS: Record<string, string> = {
   PERSON: "#e91e63",
   ORG: "#ff5722",
   EMAIL: "#2196f3",
@@ -141,6 +163,67 @@ export const PII_COLORS: Record<PIIType, string> = {
   CUSTOM: "#9c27b0",
   UNKNOWN: "#757575",
 };
+
+/** Get color for a PII type, with fallback for user-defined labels */
+export function getPIIColor(type: string): string {
+  return PII_COLORS[type] || "#888";
+}
+
+/** Built-in PII type labels */
+export const BUILTIN_PII_TYPES: PIIType[] = [
+  "PERSON", "ORG", "EMAIL", "PHONE", "SSN",
+  "CREDIT_CARD", "DATE", "ADDRESS", "LOCATION",
+  "IP_ADDRESS", "IBAN", "PASSPORT", "DRIVER_LICENSE",
+  "CUSTOM", "UNKNOWN",
+];
+
+/** Configuration for a PII label in the type picker */
+export interface PIILabelEntry {
+  label: PIIType;
+  frequent: boolean;
+  hidden: boolean;
+  userAdded: boolean;
+  color: string;
+}
+
+const LABEL_CONFIG_KEY = "piiLabelConfig";
+
+/** Ensure all built-in types are present in a label config array */
+export function ensureBuiltinLabels(entries: PIILabelEntry[]): PIILabelEntry[] {
+  const existing = new Set(entries.map((e) => e.label));
+  for (const t of BUILTIN_PII_TYPES) {
+    if (!existing.has(t)) {
+      entries.push({
+        label: t,
+        frequent: ["PERSON", "ORG", "EMAIL", "PHONE", "DATE", "ADDRESS"].includes(t),
+        hidden: false,
+        userAdded: false,
+        color: PII_COLORS[t] || "#888",
+      });
+    }
+  }
+  return entries;
+}
+
+/** Load label config from localStorage cache (sync, for initial render) */
+export function loadLabelConfig(): PIILabelEntry[] {
+  let saved: PIILabelEntry[] = [];
+  try {
+    const raw = localStorage.getItem(LABEL_CONFIG_KEY);
+    if (raw) saved = JSON.parse(raw);
+  } catch { /* ignore */ }
+  return ensureBuiltinLabels(saved);
+}
+
+/** Save label config to localStorage cache */
+export function cacheLabelConfig(config: PIILabelEntry[]): void {
+  try {
+    localStorage.setItem(LABEL_CONFIG_KEY, JSON.stringify(config));
+  } catch { /* ignore */ }
+}
+
+/** @deprecated Use cacheLabelConfig + saveLabelConfigAPI instead */
+export const saveLabelConfig = cacheLabelConfig;
 
 export interface UploadItem {
   id: string;

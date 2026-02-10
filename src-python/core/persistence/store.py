@@ -33,6 +33,9 @@ class DocumentStore:
         self.files_dir.mkdir(parents=True, exist_ok=True)
         self.bitmaps_dir.mkdir(parents=True, exist_ok=True)
         
+        # Settings file for label config etc.
+        self._labels_file = self.storage_dir / "pii_labels.json"
+        
         logger.info(f"Document store initialized at {self.storage_dir}")
 
     def save_document(self, doc: DocumentInfo) -> None:
@@ -231,3 +234,34 @@ class DocumentStore:
         
         logger.info(f"Loaded {len(documents)} documents from storage")
         return documents
+
+    # ── PII Label config persistence ──
+
+    def load_label_config(self) -> list[dict]:
+        """Load PII label config from disk.
+        
+        Returns:
+            List of label entry dicts, or empty list if none saved.
+        """
+        try:
+            if self._labels_file.exists():
+                with open(self._labels_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception as e:
+            logger.error(f"Failed to load label config: {e}")
+        return []
+
+    def save_label_config(self, labels: list[dict]) -> None:
+        """Save PII label config to disk.
+        
+        Args:
+            labels: List of label entry dicts.
+        """
+        try:
+            with open(self._labels_file, "w", encoding="utf-8") as f:
+                json.dump(labels, f, indent=2, ensure_ascii=False)
+            logger.debug(f"Saved {len(labels)} PII label entries")
+        except Exception as e:
+            logger.error(f"Failed to save label config: {e}")

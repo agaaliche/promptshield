@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { deleteDocument, uploadDocument, getDocument, detectPII } from "../api";
+import { resolveAllOverlaps } from "../regionUtils";
 import type { UploadItem } from "../types";
 
 type View = "upload" | "viewer" | "detokenize" | "settings";
@@ -55,6 +56,8 @@ export default function Sidebar() {
     addToUploadQueue,
     updateUploadItem,
     clearCompletedUploads,
+    setDocDetecting,
+    setDocLoadingMessage,
   } = useAppStore();
 
   const isDragging = useRef(false);
@@ -140,7 +143,11 @@ export default function Sidebar() {
           setActiveDocId(null);
           setRegions([]);
           setCurrentView("upload");
+          setShowFilesDialog(false);
         }
+      }
+      if (updated.length === 0) {
+        setShowFilesDialog(false);
       }
     } catch (err) {
       console.error("Failed to delete document:", err);
@@ -182,29 +189,36 @@ export default function Sidebar() {
       for (const { file, item } of items) {
         try {
           updateUploadItem(item.id, { status: "uploading", progress: 30 });
+          setDocLoadingMessage("Uploading document\u2026");
           const uploadRes = await uploadDocument(file);
 
           updateUploadItem(item.id, { progress: 50 });
+          setDocLoadingMessage("Processing pages\u2026");
           const doc = await getDocument(uploadRes.doc_id);
           addDocument(doc);
+          // Set detecting BEFORE activeDocId so the progress dialog shows immediately
+          setDocDetecting(true);
+          setDocLoadingMessage("Analyzing document for PII entities\u2026");
           setActiveDocId(doc.doc_id);
-
           updateUploadItem(item.id, { status: "detecting", progress: 70 });
           const detection = await detectPII(doc.doc_id);
-          setRegions(detection.regions);
-          updateDocument(doc.doc_id, { regions: detection.regions });
+          const resolved = resolveAllOverlaps(detection.regions);
+          setRegions(resolved);
+          updateDocument(doc.doc_id, { regions: resolved });
 
+          setDocDetecting(false);
+          setDocLoadingMessage("");
           updateUploadItem(item.id, { status: "done", progress: 100 });
         } catch (e: any) {
+          setDocDetecting(false);
+          setDocLoadingMessage("");
           updateUploadItem(item.id, { status: "error", error: e.message || "Failed" });
         }
       }
 
-      setTimeout(() => {
-        clearCompletedUploads();
-      }, 2000);
+      clearCompletedUploads();
     },
-    [setActiveDocId, setRegions, setCurrentView, addDocument, updateDocument, setShowAddDialog, setProtectExpanded, addToUploadQueue, updateUploadItem, clearCompletedUploads]
+    [setActiveDocId, setRegions, setCurrentView, addDocument, updateDocument, setShowAddDialog, setProtectExpanded, addToUploadQueue, updateUploadItem, clearCompletedUploads, setDocDetecting, setDocLoadingMessage]
   );
 
   // Sorted + filtered documents for dialog
@@ -222,7 +236,11 @@ export default function Sidebar() {
     return filtered;
   }, [documents, filesSearch, sortField, sortDir]);
 
-  const recentDocs = documents.slice(-50).reverse();
+  const recentDocs = documents.slice(-50).reverse().filter((doc) => {
+    // Hide docs that are still in the upload queue (shown with progress bar instead)
+    const activeUploads = uploadQueue.filter((u) => u.status !== "done");
+    return !activeUploads.some((u) => u.name === doc.original_filename);
+  });
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -289,8 +307,8 @@ export default function Sidebar() {
                 borderRadius: 6,
                 paddingBottom: 12,
               }}>
-                {/* Upload queue — progress items */}
-                {uploadQueue.map((item) => (
+                {/* Upload queue — progress items (hide done items immediately) */}
+                {uploadQueue.filter((item) => item.status !== "done").map((item) => (
                   <div key={item.id} style={{ padding: "4px 6px", fontSize: 11 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
                       <FileText size={10} style={{ flexShrink: 0, color: "var(--text-muted)" }} />
@@ -443,7 +461,7 @@ export default function Sidebar() {
       <div style={sidebarStyles.statusArea}>
         <div style={sidebarStyles.statusDot(backendReady)} />
         <span style={sidebarStyles.statusText}>
-          {backendReady ? "Backend connected" : "Connecting..."}
+          {backendReady ? "Local database connected" : "Connecting..."}
         </span>
       </div>
 

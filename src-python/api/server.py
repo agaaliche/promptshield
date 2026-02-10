@@ -61,6 +61,10 @@ app.add_middleware(
 _documents: dict[str, DocumentInfo] = {}
 _store: Optional[DocumentStore] = None
 
+# In-memory detection progress tracker (doc_id → progress dict)
+import time as _time
+_detection_progress: dict[str, dict] = {}
+
 
 def _get_store() -> DocumentStore:
     """Get the document store instance."""
@@ -123,15 +127,42 @@ async def startup():
     )
     logger.info(f"Serving bitmaps from {config.temp_dir} (temp) and {_store.bitmaps_dir} (persistent)")
 
-    # Auto-load first available GGUF model if enabled
+    # Auto-load LLM model if enabled
     if config.auto_load_llm:
+        # Configure remote LLM engine if settings exist
+        if config.llm_api_url and config.llm_api_key and config.llm_api_model:
+            try:
+                from core.llm.remote_engine import remote_llm_engine
+                remote_llm_engine.configure(config.llm_api_url, config.llm_api_key, config.llm_api_model)
+                logger.info(f"Remote LLM configured: {config.llm_api_model} at {config.llm_api_url}")
+            except Exception as e:
+                logger.warning(f"Failed to configure remote LLM (non-fatal): {e}")
+
+        # Also load local model (available as fallback or when provider=local)
         try:
             from core.llm.engine import llm_engine
 
-            gguf_files = sorted(config.models_dir.glob("*.gguf"))
-            if gguf_files:
-                model_path = str(gguf_files[0])
-                logger.info(f"Auto-loading LLM model: {gguf_files[0].name}")
+            model_path: str | None = None
+
+            # 1. Use user's saved preference if the file still exists
+            if config.llm_model_path and Path(config.llm_model_path).exists():
+                model_path = config.llm_model_path
+                logger.info(f"Auto-loading user-preferred LLM: {Path(model_path).name}")
+
+            # 2. Otherwise prefer smallest Qwen model (fastest), then fall back to first available
+            if not model_path:
+                gguf_files = sorted(config.models_dir.glob("*.gguf"))
+                qwen = sorted(
+                    [f for f in gguf_files if "qwen" in f.stem.lower()],
+                    key=lambda f: f.stat().st_size,  # smallest first = fastest
+                )
+                if qwen:
+                    model_path = str(qwen[0])
+                elif gguf_files:
+                    model_path = str(gguf_files[0])
+
+            if model_path:
+                logger.info(f"Auto-loading LLM model: {Path(model_path).name}")
                 llm_engine.load_model(model_path)
                 logger.info("LLM model loaded successfully")
             else:
@@ -292,6 +323,27 @@ async def delete_document(doc_id: str):
 # PII Detection
 # ---------------------------------------------------------------------------
 
+@app.get("/api/documents/{doc_id}/detection-progress")
+async def get_detection_progress(doc_id: str):
+    """Return real-time detection progress for a document."""
+    progress = _detection_progress.get(doc_id)
+    if progress is None:
+        return {
+            "doc_id": doc_id,
+            "status": "idle",
+            "current_page": 0,
+            "total_pages": 0,
+            "pages_done": 0,
+            "regions_found": 0,
+            "elapsed_seconds": 0.0,
+            "page_statuses": [],
+        }
+    # Update elapsed time
+    progress["elapsed_seconds"] = _time.time() - progress.get("_started_at", _time.time())
+    # Return a clean copy (exclude internal keys)
+    return {k: v for k, v in progress.items() if not k.startswith("_")}
+
+
 @app.post("/api/documents/{doc_id}/detect")
 async def detect_pii(doc_id: str):
     """
@@ -299,26 +351,65 @@ async def detect_pii(doc_id: str):
 
     Returns the list of detected PII regions.
     """
+    import asyncio
     import traceback
 
     try:
         from core.detection.pipeline import detect_pii_on_page
-        from core.llm.engine import llm_engine
 
         doc = _get_doc(doc_id)
         doc.status = DocumentStatus.DETECTING
         doc.regions = []
 
-        engine = llm_engine if llm_engine.is_loaded() else None
+        engine = _get_active_llm_engine()
+        total_pages = len(doc.pages)
 
-        for page in doc.pages:
-            regions = detect_pii_on_page(page, llm_engine=engine)
-            doc.regions.extend(regions)
+        # Initialize progress tracker
+        _detection_progress[doc_id] = {
+            "doc_id": doc_id,
+            "status": "running",
+            "current_page": 0,
+            "total_pages": total_pages,
+            "pages_done": 0,
+            "regions_found": 0,
+            "elapsed_seconds": 0.0,
+            "page_statuses": [
+                {"page": i + 1, "status": "pending", "regions": 0}
+                for i in range(total_pages)
+            ],
+            "_started_at": _time.time(),
+        }
+
+        def _run_detection():
+            all_regions = []
+            progress = _detection_progress[doc_id]
+            for idx, page in enumerate(doc.pages):
+                progress["current_page"] = idx + 1
+                progress["page_statuses"][idx]["status"] = "running"
+                progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
+
+                regions = detect_pii_on_page(page, llm_engine=engine)
+                all_regions.extend(regions)
+
+                progress["page_statuses"][idx]["status"] = "done"
+                progress["page_statuses"][idx]["regions"] = len(regions)
+                progress["pages_done"] = idx + 1
+                progress["regions_found"] = len(all_regions)
+                progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
+            return all_regions
+
+        # Run CPU-bound detection in a thread pool so we don't block the event loop
+        doc.regions = await asyncio.get_event_loop().run_in_executor(None, _run_detection)
 
         doc.status = DocumentStatus.REVIEWING
         logger.info(f"Detection complete for '{doc.original_filename}': {len(doc.regions)} regions")
 
         _save_doc(doc)
+
+        # Mark progress as complete
+        if doc_id in _detection_progress:
+            _detection_progress[doc_id]["status"] = "complete"
+            _detection_progress[doc_id]["elapsed_seconds"] = _time.time() - _detection_progress[doc_id].get("_started_at", _time.time())
 
         return {
             "doc_id": doc_id,
@@ -328,6 +419,10 @@ async def detect_pii(doc_id: str):
     except Exception as e:
         tb = traceback.format_exc()
         logger.error(f"Detection failed: {e}\n{tb}")
+        # Mark progress as error
+        if doc_id in _detection_progress:
+            _detection_progress[doc_id]["status"] = "error"
+            _detection_progress[doc_id]["error"] = str(e)
         raise HTTPException(500, detail=f"Detection error: {e}\n{tb}")
 
 
@@ -351,11 +446,11 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
       (text, pii_type, confidence, source refreshed) but action preserved.
     - Existing regions with no new match → kept untouched (never deleted).
     """
+    import asyncio
     import traceback
 
     try:
         from core.detection.pipeline import detect_pii_on_page, _bbox_overlap_area, _bbox_area
-        from core.llm.engine import llm_engine
 
         doc = _get_doc(doc_id)
 
@@ -370,7 +465,7 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
             config.ner_enabled = body.ner_enabled
             config.llm_detection_enabled = body.llm_detection_enabled
 
-            engine = llm_engine if llm_engine.is_loaded() else None
+            engine = _get_active_llm_engine()
 
             # Determine which pages to scan
             pages_to_scan = doc.pages
@@ -379,11 +474,15 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
                 if not pages_to_scan:
                     raise HTTPException(404, detail=f"Page {body.page_number} not found")
 
-            # Run detection on target pages
-            new_regions: list[PIIRegion] = []
-            for page in pages_to_scan:
-                detected = detect_pii_on_page(page, llm_engine=engine)
-                new_regions.extend(detected)
+            # Run CPU-bound detection in a thread pool so we don't block the event loop
+            def _run_redetection():
+                results: list[PIIRegion] = []
+                for page in pages_to_scan:
+                    detected = detect_pii_on_page(page, llm_engine=engine)
+                    results.extend(detected)
+                return results
+
+            new_regions = await asyncio.get_event_loop().run_in_executor(None, _run_redetection)
 
         finally:
             # Restore original config
@@ -721,30 +820,10 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest):
         if not full_text:
             continue
 
-        # Rebuild the char-offset mapping by replicating the same logic
-        # used in _build_full_text (sorted by y0, x0; newline if vertical
-        # gap > 0.6 * line_height, else space).
-        sorted_blocks = sorted(page.text_blocks, key=lambda b: (b.bbox.y0, b.bbox.x0))
-        block_spans: list[tuple[int, int, int]] = []  # (char_start, char_end, original_index)
-        offset = 0
-        prev_y: float | None = None
-        line_height = 0.0
-        block_index_map = {id(b): i for i, b in enumerate(page.text_blocks)}
-
-        for blk in sorted_blocks:
-            if prev_y is not None:
-                gap = blk.bbox.y0 - prev_y
-                if line_height > 0 and gap > line_height * 0.6:
-                    offset += 1  # newline char
-                else:
-                    offset += 1  # space char
-
-            blen = len(blk.text)
-            orig_idx = block_index_map[id(blk)]
-            block_spans.append((offset, offset + blen, orig_idx))
-            offset += blen
-            line_height = max(line_height, blk.bbox.y1 - blk.bbox.y0)
-            prev_y = blk.bbox.y0
+        # Use the shared deterministic block-offset computation
+        from core.detection.pipeline import _compute_block_offsets
+        block_offsets = _compute_block_offsets(page.text_blocks, full_text)
+        # Convert to (char_start, char_end, TextBlock) — same format
 
         # ---- Fuzzy sliding-window search for needle in full_text ----
         needle_len = len(needle_norm)
@@ -845,12 +924,12 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest):
 
             # Find all text_blocks that overlap with [idx, match_end)
             hit_blocks = []
-            for cs, ce, bi in block_spans:
+            for cs, ce, blk in block_offsets:
                 if ce <= idx:
                     continue
                 if cs >= match_end:
                     break
-                hit_blocks.append(page.text_blocks[bi])
+                hit_blocks.append(blk)
 
             if not hit_blocks:
                 continue
@@ -988,6 +1067,80 @@ async def download_output(doc_id: str, file_type: str):
     return FileResponse(str(latest), media_type=media_type, filename=latest.name)
 
 
+class BatchAnonymizeRequest(_PydanticBaseModel):
+    doc_ids: list[str]
+
+
+class BatchAnonymizeResult(_PydanticBaseModel):
+    doc_id: str
+    success: bool
+    error: Optional[str] = None
+    tokens_created: int = 0
+    regions_removed: int = 0
+
+
+@app.post("/api/documents/batch-anonymize")
+async def batch_anonymize(req: BatchAnonymizeRequest):
+    """Anonymize multiple documents. If >1 doc, returns a zip archive."""
+    import zipfile
+    import tempfile
+    from core.anonymizer.engine import anonymize_document
+
+    if not req.doc_ids:
+        raise HTTPException(400, "No documents selected")
+    if len(req.doc_ids) > 50:
+        raise HTTPException(400, "Maximum 50 documents per export")
+
+    results: list[BatchAnonymizeResult] = []
+    output_files: list[tuple[str, Path]] = []  # (filename, path)
+
+    for doc_id in req.doc_ids:
+        try:
+            doc = _get_doc(doc_id)
+            doc.status = DocumentStatus.ANONYMIZING
+            result = await anonymize_document(doc)
+            doc.status = DocumentStatus.COMPLETED
+            _save_doc(doc)
+            results.append(BatchAnonymizeResult(
+                doc_id=doc_id, success=True,
+                tokens_created=result.tokens_created,
+                regions_removed=result.regions_removed,
+            ))
+            # Collect output PDF for zip
+            output_dir = config.temp_dir / doc_id / "output"
+            pdfs = list(output_dir.glob("*_anonymized_*.pdf"))
+            if pdfs:
+                latest = max(pdfs, key=lambda f: f.stat().st_mtime)
+                output_files.append((latest.name, latest))
+        except Exception as e:
+            logger.error(f"Batch anonymize failed for {doc_id}: {e}")
+            results.append(BatchAnonymizeResult(
+                doc_id=doc_id, success=False, error=str(e),
+            ))
+
+    successful = [r for r in results if r.success]
+
+    # Single file — return PDF directly
+    if len(req.doc_ids) == 1 and len(output_files) == 1:
+        _, path = output_files[0]
+        return FileResponse(str(path), media_type="application/pdf", filename=path.name)
+
+    # Multiple files — return zip
+    if not output_files:
+        raise HTTPException(500, "No files were successfully anonymized")
+
+    zip_path = Path(tempfile.mktemp(suffix=".zip", prefix="promptshield_export_"))
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname, fpath in output_files:
+            zf.write(fpath, fname)
+
+    return FileResponse(
+        str(zip_path),
+        media_type="application/zip",
+        filename="promptshield_export.zip",
+    )
+
+
 # ---------------------------------------------------------------------------
 # De-tokenization
 # ---------------------------------------------------------------------------
@@ -1119,25 +1272,57 @@ async def list_vault_tokens(source_document: Optional[str] = None):
 # LLM management
 # ---------------------------------------------------------------------------
 
+def _get_active_llm_engine():
+    """Return the currently active LLM engine (local or remote) or None."""
+    from core.llm.engine import llm_engine
+    from core.llm.remote_engine import remote_llm_engine
+
+    if config.llm_provider == "remote":
+        if remote_llm_engine.is_loaded():
+            return remote_llm_engine
+        return None
+    # default: local
+    if llm_engine.is_loaded():
+        return llm_engine
+    return None
+
+
 @app.get("/api/llm/status", response_model=LLMStatusResponse)
 async def llm_status():
     """Get LLM engine status."""
     from core.llm.engine import llm_engine
+    from core.llm.remote_engine import remote_llm_engine
+
     return LLMStatusResponse(
-        loaded=llm_engine.is_loaded(),
-        model_name=llm_engine.model_name,
-        model_path=llm_engine.model_path,
+        loaded=llm_engine.is_loaded() or remote_llm_engine.is_loaded(),
+        model_name=(
+            remote_llm_engine.model_name
+            if config.llm_provider == "remote" and remote_llm_engine.is_loaded()
+            else llm_engine.model_name
+        ),
+        model_path=(
+            remote_llm_engine.model_path
+            if config.llm_provider == "remote" and remote_llm_engine.is_loaded()
+            else llm_engine.model_path
+        ),
         gpu_enabled=llm_engine.gpu_enabled,
         context_size=config.llm_context_size,
+        provider=config.llm_provider,
+        remote_api_url=config.llm_api_url,
+        remote_model=config.llm_api_model,
     )
 
 
 @app.post("/api/llm/load")
 async def load_llm(model_path: str, force_cpu: bool = False):
-    """Load a GGUF model."""
+    """Load a GGUF model and save the choice for future auto-load."""
     from core.llm.engine import llm_engine
     try:
         llm_engine.load_model(model_path, force_cpu=force_cpu)
+        # Persist user's model choice for next startup
+        config.llm_model_path = model_path
+        config.llm_provider = "local"
+        config.save_user_settings()
         return {"status": "ok", "model": llm_engine.model_name}
     except Exception as e:
         raise HTTPException(500, f"Failed to load model: {e}")
@@ -1158,6 +1343,50 @@ async def list_models():
     return llm_engine.list_available_models()
 
 
+class _RemoteLLMConfig(_PydanticBaseModel):
+    api_url: str
+    api_key: str
+    model: str
+
+
+@app.post("/api/llm/remote/configure")
+async def configure_remote_llm(body: _RemoteLLMConfig):
+    """Configure a remote OpenAI-compatible LLM endpoint."""
+    from core.llm.remote_engine import remote_llm_engine
+
+    remote_llm_engine.configure(body.api_url, body.api_key, body.model)
+    config.llm_provider = "remote"
+    config.llm_api_url = body.api_url
+    config.llm_api_key = body.api_key
+    config.llm_api_model = body.model
+    config.save_user_settings()
+    return {"status": "ok", "model": body.model, "provider": "remote"}
+
+
+@app.post("/api/llm/remote/test")
+async def test_remote_llm():
+    """Test the remote LLM connection with a minimal ping."""
+    import asyncio
+    from core.llm.remote_engine import remote_llm_engine
+
+    if not remote_llm_engine.is_loaded():
+        raise HTTPException(400, "Remote LLM not configured")
+    result = await asyncio.get_event_loop().run_in_executor(
+        None, remote_llm_engine.test_connection
+    )
+    return result
+
+
+@app.post("/api/llm/provider")
+async def set_llm_provider(provider: str):
+    """Switch between 'local' and 'remote' LLM provider."""
+    if provider not in ("local", "remote"):
+        raise HTTPException(400, "provider must be 'local' or 'remote'")
+    config.llm_provider = provider
+    config.save_user_settings()
+    return {"status": "ok", "provider": provider}
+
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
@@ -1176,6 +1405,7 @@ async def update_settings(updates: dict):
         "confidence_threshold", "ocr_language", "ocr_dpi",
         "render_dpi", "tesseract_cmd",
         "ner_backend", "ner_model_preference",
+        "llm_provider", "llm_api_url", "llm_api_key", "llm_api_model",
     }
     applied = {}
     for key, value in updates.items():
@@ -1203,6 +1433,58 @@ async def update_settings(updates: dict):
 
 
 # ---------------------------------------------------------------------------
+# PII Label configuration
+# ---------------------------------------------------------------------------
+
+_DEFAULT_FREQUENT = {"PERSON", "ORG", "EMAIL", "PHONE", "DATE", "ADDRESS"}
+_BUILTIN_LABELS = [
+    "PERSON", "ORG", "EMAIL", "PHONE", "SSN",
+    "CREDIT_CARD", "DATE", "ADDRESS", "LOCATION",
+    "IP_ADDRESS", "IBAN", "PASSPORT", "DRIVER_LICENSE",
+    "CUSTOM", "UNKNOWN",
+]
+_BUILTIN_COLORS = {
+    "PERSON": "#e91e63", "ORG": "#ff5722", "EMAIL": "#2196f3",
+    "PHONE": "#00bcd4", "SSN": "#f44336", "CREDIT_CARD": "#ff9800",
+    "DATE": "#8bc34a", "ADDRESS": "#795548", "LOCATION": "#607d8b",
+    "IP_ADDRESS": "#9e9e9e", "IBAN": "#ff5722", "PASSPORT": "#673ab7",
+    "DRIVER_LICENSE": "#3f51b5", "CUSTOM": "#9c27b0", "UNKNOWN": "#757575",
+}
+
+
+def _ensure_builtin_labels(entries: list[dict]) -> list[dict]:
+    """Ensure all built-in labels exist in the list."""
+    existing = {e["label"] for e in entries}
+    for t in _BUILTIN_LABELS:
+        if t not in existing:
+            entries.append({
+                "label": t,
+                "frequent": t in _DEFAULT_FREQUENT,
+                "hidden": False,
+                "user_added": False,
+                "color": _BUILTIN_COLORS.get(t, "#888"),
+            })
+    return entries
+
+
+@app.get("/api/settings/labels")
+async def get_label_config():
+    """Get PII label configuration."""
+    store = _get_store()
+    entries = store.load_label_config()
+    entries = _ensure_builtin_labels(entries)
+    return entries
+
+
+@app.put("/api/settings/labels")
+async def save_label_config(labels: list[dict]):
+    """Save PII label configuration."""
+    store = _get_store()
+    store.save_label_config(labels)
+    return {"status": "ok", "count": len(labels)}
+
+
+# ---------------------------------------------------------------------------
 # Vault export
 # ---------------------------------------------------------------------------
 
@@ -1217,6 +1499,26 @@ async def export_vault(passphrase: str):
         return JSONResponse(content={"export": data})
     except Exception as e:
         raise HTTPException(500, f"Export failed: {e}")
+
+
+class _VaultImportBody(_PydanticBaseModel):
+    export_data: str
+    passphrase: str
+
+
+@app.post("/api/vault/import")
+async def import_vault(body: _VaultImportBody):
+    """Import tokens from an encrypted vault backup."""
+    from core.vault.store import vault
+    if not vault.is_unlocked:
+        raise HTTPException(403, "Vault is locked")
+    try:
+        result = vault.import_vault(body.export_data, body.passphrase)
+        return JSONResponse(content=result)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Import failed: {e}")
 
 
 # ---------------------------------------------------------------------------

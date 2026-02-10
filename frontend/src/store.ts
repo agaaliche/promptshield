@@ -77,6 +77,14 @@ interface AppState {
   drawMode: boolean;
   setDrawMode: (v: boolean) => void;
 
+  // ── Document loading ──
+  docLoading: boolean;
+  setDocLoading: (v: boolean) => void;
+  docLoadingMessage: string;
+  setDocLoadingMessage: (msg: string) => void;
+  docDetecting: boolean;
+  setDocDetecting: (v: boolean) => void;
+
   // ── UI ──
   currentView: "upload" | "viewer" | "detokenize" | "settings";
   setCurrentView: (v: "upload" | "viewer" | "detokenize" | "settings") => void;
@@ -247,6 +255,14 @@ export const useAppStore = create<AppState>((set) => ({
   // Draw mode
   drawMode: false,
   setDrawMode: (v) => set({ drawMode: v }),
+
+  // Document loading
+  docLoading: false,
+  setDocLoading: (v) => set({ docLoading: v }),
+  docLoadingMessage: "",
+  setDocLoadingMessage: (msg) => set({ docLoadingMessage: msg }),
+  docDetecting: false,
+  setDocDetecting: (v) => set({ docDetecting: v }),
 
   // UI
   currentView: "upload",

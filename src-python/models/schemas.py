@@ -220,9 +220,21 @@ class LLMStatusResponse(BaseModel):
     model_path: str = ""
     gpu_enabled: bool = False
     context_size: int = 0
+    provider: str = "local"                  # "local" | "remote"
+    remote_api_url: str = ""
+    remote_model: str = ""
 
 
 class VaultStatsResponse(BaseModel):
     total_tokens: int
     total_documents: int
     vault_size_bytes: int
+
+
+class PIILabelEntry(BaseModel):
+    """Configuration for a single PII label in the type picker."""
+    label: str
+    frequent: bool = False
+    hidden: bool = False
+    user_added: bool = False
+    color: str = "#888"

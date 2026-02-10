@@ -401,6 +401,56 @@ class TokenVault:
         }
         return json.dumps(export_data)
 
+    def import_vault(self, export_json: str, passphrase: str) -> dict:
+        """
+        Import tokens from an encrypted export JSON string.
+
+        Returns dict with 'imported', 'skipped', 'errors' counts.
+        """
+        self._ensure_unlocked()
+
+        # Parse the outer envelope
+        envelope = json.loads(export_json)
+        salt = base64.b64decode(envelope["salt"])
+        encrypted = base64.b64decode(envelope["data"])
+
+        # Derive key from export passphrase
+        fernet = self._derive_key(passphrase, salt)
+        try:
+            decrypted = fernet.decrypt(encrypted)
+        except Exception:
+            raise ValueError("Incorrect export passphrase — cannot decrypt backup")
+
+        data = json.loads(decrypted)
+        tokens_list = data.get("tokens", [])
+
+        imported = 0
+        skipped = 0
+        errors = 0
+
+        for t in tokens_list:
+            try:
+                mapping = TokenMapping(
+                    token_id=t["token_id"],
+                    token_string=t["token_string"],
+                    original_text=t["original_text"],
+                    pii_type=PIIType(t["pii_type"]),
+                    source_document=t.get("source_document", ""),
+                    context_snippet=t.get("context_snippet", ""),
+                    created_at=datetime.fromisoformat(t["created_at"]),
+                )
+                # Skip if token_string already exists
+                if self._token_string_exists(mapping.token_string):
+                    skipped += 1
+                    continue
+                self.store_token(mapping)
+                imported += 1
+            except Exception as exc:
+                logger.warning("Failed to import token %s: %s", t.get("token_id", "?"), exc)
+                errors += 1
+
+        return {"imported": imported, "skipped": skipped, "errors": errors}
+
     def close(self) -> None:
         """Close the vault connection."""
         if self._conn:

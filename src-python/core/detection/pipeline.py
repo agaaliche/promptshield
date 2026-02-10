@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import Optional
 
@@ -120,38 +121,144 @@ def _resolve_bbox_overlaps(regions: list[PIIRegion]) -> list[PIIRegion]:
     return final
 
 
+def _compute_block_offsets_legacy(
+    text_blocks: list[TextBlock],
+) -> list[tuple[int, int, TextBlock]]:
+    """Legacy offset computation using simple ``(y0, x0)`` sort.
+
+    Matches the original ``_build_full_text`` that was used for
+    documents ingested before the line-clustering improvement.
+    """
+    sorted_blocks = sorted(
+        text_blocks, key=lambda b: (b.bbox.y0, b.bbox.x0)
+    )
+    offsets: list[tuple[int, int, TextBlock]] = []
+    pos = 0
+    prev_y: float | None = None
+    line_height = 0.0
+
+    for block in sorted_blocks:
+        if prev_y is not None:
+            gap = block.bbox.y0 - prev_y
+            if line_height > 0 and gap > line_height * 0.6:
+                pos += 1
+            else:
+                pos += 1
+        bstart = pos
+        pos += len(block.text)
+        offsets.append((bstart, pos, block))
+        line_height = max(line_height, block.bbox.y1 - block.bbox.y0)
+        prev_y = block.bbox.y0
+    return offsets
+
+
+def _compute_block_offsets_clustered(
+    text_blocks: list[TextBlock],
+) -> list[tuple[int, int, TextBlock]]:
+    """Offset computation using line-clustering (matches the improved
+    ``_build_full_text`` used for newly ingested documents).
+    """
+    from core.ingestion.loader import _cluster_into_lines
+
+    lines = _cluster_into_lines(text_blocks)
+    offsets: list[tuple[int, int, TextBlock]] = []
+    pos = 0
+    prev_y: float | None = None
+    line_height = 0.0
+
+    for line_blocks in lines:
+        line_top = min(b.bbox.y0 for b in line_blocks)
+        lh = max(b.bbox.y1 for b in line_blocks) - line_top
+
+        for i, block in enumerate(line_blocks):
+            if prev_y is not None or i > 0:
+                if i == 0:
+                    gap = line_top - prev_y if prev_y is not None else 0
+                    if line_height > 0 and gap > line_height * 0.6:
+                        pos += 1  # "\n"
+                    else:
+                        pos += 1  # " "
+                else:
+                    pos += 1  # " "
+            bstart = pos
+            pos += len(block.text)
+            offsets.append((bstart, pos, block))
+
+        prev_y = line_top
+        line_height = lh
+    return offsets
+
+
+def _verify_offsets(
+    offsets: list[tuple[int, int, TextBlock]],
+    full_text: str,
+    sample_count: int = 5,
+) -> bool:
+    """Verify that the first *sample_count* block offsets align with
+    the given *full_text*.  Returns ``True`` if all checked blocks
+    match, ``False`` otherwise.
+    """
+    for start, end, block in offsets[:sample_count]:
+        if start < 0 or end > len(full_text):
+            return False
+        if full_text[start:end] != block.text:
+            return False
+    return True
+
+
+def _compute_block_offsets(
+    text_blocks: list[TextBlock],
+    full_text: str,
+) -> list[tuple[int, int, TextBlock]]:
+    """
+    Build a deterministic char-offset → TextBlock mapping that matches
+    how ``_build_full_text`` constructs ``full_text``.
+
+    Tries the current line-clustering algorithm first.  If the offsets
+    don't align with the stored *full_text* (e.g. because the document
+    was ingested with the older simple-sort algorithm), falls back to
+    the legacy computation.
+
+    Returns a list of ``(char_start, char_end, TextBlock)`` tuples.
+    """
+    if not text_blocks or not full_text:
+        return []
+
+    # Try current (line-clustered) algorithm first
+    offsets = _compute_block_offsets_clustered(text_blocks)
+    if _verify_offsets(offsets, full_text):
+        return offsets
+
+    # Fallback: legacy (y0, x0) sort
+    offsets = _compute_block_offsets_legacy(text_blocks)
+    if _verify_offsets(offsets, full_text):
+        return offsets
+
+    # Last resort: shift offsets to align with full_text if possible
+    if offsets:
+        first_start, _, first_block = offsets[0]
+        idx = full_text.find(first_block.text)
+        if idx >= 0 and idx != first_start:
+            shift = first_start - idx
+            offsets = [(s - shift, e - shift, blk) for s, e, blk in offsets]
+            if _verify_offsets(offsets, full_text):
+                return offsets
+
+    # Give up — return legacy offsets un-shifted (better than nothing)
+    return _compute_block_offsets_legacy(text_blocks)
+
+
 def _char_offset_to_bbox(
     char_start: int,
     char_end: int,
-    text_blocks: list[TextBlock],
-    full_text: str,
+    block_offsets: list[tuple[int, int, TextBlock]],
 ) -> Optional[BBox]:
     """
-    Map character offsets in the full page text to a bounding box.
-
-    Strategy: reconstruct character positions from text blocks and find
-    which blocks overlap with the given character range.
+    Map character offsets in the full page text to a bounding box
+    using a pre-computed block offset map.
     """
-    if not text_blocks:
+    if not block_offsets:
         return None
-
-    # Build a map of char-offset → text block
-    current_offset = 0
-    block_offsets: list[tuple[int, int, TextBlock]] = []
-
-    for block in text_blocks:
-        # Find this block's text in the full text starting from current_offset
-        idx = full_text.find(block.text, current_offset)
-        if idx == -1:
-            # Try from beginning (in case of text reordering)
-            idx = full_text.find(block.text)
-        if idx == -1:
-            continue
-
-        block_start = idx
-        block_end = idx + len(block.text)
-        block_offsets.append((block_start, block_end, block))
-        current_offset = block_end
 
     # Find all blocks that overlap with [char_start, char_end)
     overlapping: list[TextBlock] = []
@@ -160,15 +267,12 @@ def _char_offset_to_bbox(
             overlapping.append(block)
 
     if not overlapping:
-        # Fallback: find the closest block
-        if block_offsets:
-            closest = min(
-                block_offsets,
-                key=lambda x: abs(x[0] - char_start),
-            )
-            overlapping = [closest[2]]
-        else:
-            return None
+        # Fallback: find the closest block by distance to char range
+        closest = min(
+            block_offsets,
+            key=lambda x: min(abs(x[0] - char_start), abs(x[1] - char_end)),
+        )
+        overlapping = [closest[2]]
 
     # Merge bounding boxes of all overlapping blocks
     x0 = min(b.bbox.x0 for b in overlapping)
@@ -297,6 +401,11 @@ def _merge_detections(
         else:
             merged.append(cand)
 
+    # Pre-compute deterministic block-offset map once for this page
+    block_offsets = _compute_block_offsets(
+        page_data.text_blocks, page_data.full_text,
+    )
+
     # Convert to PIIRegion with bounding boxes
     regions: list[PIIRegion] = []
     for item in merged:
@@ -306,7 +415,7 @@ def _merge_detections(
 
         bbox = _char_offset_to_bbox(
             item["start"], item["end"],
-            page_data.text_blocks, page_data.full_text,
+            block_offsets,
         )
         if bbox is None:
             continue
@@ -344,13 +453,31 @@ def detect_pii_on_page(
         List of PIIRegion instances ready for UI display.
     """
     text = page_data.full_text
-    if not text.strip():
+    stripped = text.strip()
+    if not stripped:
         return []
+
+    # Skip pages with very little content (cover pages, separator pages,
+    # boilerplate headers).  These contain no meaningful PII and sending
+    # them through NER / GLiNER / LLM wastes time and can trigger LLM
+    # assertion failures on degenerate short prompts.
+    _MIN_PAGE_CHARS = 30
+    if len(stripped) < _MIN_PAGE_CHARS:
+        logger.info(
+            "Page %d: only %d chars — skipping detection",
+            page_data.page_number, len(stripped),
+        )
+        return []
+
+    page_t0 = time.perf_counter()
+    timings: dict[str, float] = {}
 
     # Layer 1: Regex (always fast)
     regex_matches: list[RegexMatch] = []
     if config.regex_enabled:
+        t0 = time.perf_counter()
         regex_matches = detect_regex(text)
+        timings["regex"] = (time.perf_counter() - t0) * 1000
         logger.info(
             f"Page {page_data.page_number}: Regex found {len(regex_matches)} matches"
         )
@@ -359,6 +486,7 @@ def detect_pii_on_page(
     # Always supplements with heuristic name detection for coverage.
     ner_matches: list[NERMatch] = []
     if config.ner_enabled:
+        t0 = time.perf_counter()
         # Try BERT first if configured — but only on English text
         # (BERT models are English-only; non-English text produces garbage)
         if config.ner_backend != "spacy" and is_bert_ner_available() and _is_english_text(text):
@@ -378,9 +506,11 @@ def detect_pii_on_page(
             logger.info(
                 f"Page {page_data.page_number}: spaCy NER found {len(ner_matches)} matches"
             )
+        timings["ner"] = (time.perf_counter() - t0) * 1000
 
         # Always run lightweight heuristic as a supplement —
         # catches names that NER models miss (especially small models).
+        t0 = time.perf_counter()
         heuristic_matches = detect_names_heuristic(text)
         if heuristic_matches:
             # Only add heuristic matches that don't overlap with existing NER
@@ -396,9 +526,11 @@ def detect_pii_on_page(
                 f"Page {page_data.page_number}: Heuristic added "
                 f"{len(heuristic_matches)} name candidates"
             )
+        timings["heuristic"] = (time.perf_counter() - t0) * 1000
 
         # French NER — runs alongside GLiNER to provide cross-layer boost
         if not _is_english_text(text) and _is_french_text(text) and is_french_ner_available():
+            t0 = time.perf_counter()
             try:
                 fr_matches = detect_ner_french(text)
                 if fr_matches:
@@ -420,10 +552,12 @@ def detect_pii_on_page(
                     )
             except Exception as e:
                 logger.error(f"French NER detection failed: {e}")
+            timings["french_ner"] = (time.perf_counter() - t0) * 1000
 
     # Layer 2b: GLiNER (multilingual NER — runs on ALL languages)
     gliner_matches: list[GLiNERMatch] = []
     if config.ner_enabled and is_gliner_available():
+        t0 = time.perf_counter()
         try:
             gliner_matches = detect_gliner(text)
             logger.info(
@@ -431,24 +565,31 @@ def detect_pii_on_page(
             )
         except Exception as e:
             logger.error(f"GLiNER detection failed: {e}")
+        timings["gliner"] = (time.perf_counter() - t0) * 1000
 
     # Layer 3: LLM (slowest — runs last)
     llm_matches: list[LLMMatch] = []
     if config.llm_detection_enabled and llm_engine is not None:
+        t0 = time.perf_counter()
         llm_matches = detect_llm(text, llm_engine)
+        timings["llm"] = (time.perf_counter() - t0) * 1000
         logger.info(
             f"Page {page_data.page_number}: LLM found {len(llm_matches)} matches"
         )
 
     # Merge all layers
+    t0 = time.perf_counter()
     regions = _merge_detections(
         regex_matches, ner_matches, llm_matches, page_data,
         gliner_matches=gliner_matches,
     )
+    timings["merge"] = (time.perf_counter() - t0) * 1000
+
+    page_total = (time.perf_counter() - page_t0) * 1000
+    timing_parts = " | ".join(f"{k}={v:.0f}ms" for k, v in timings.items())
     logger.info(
         f"Page {page_data.page_number}: {len(regions)} merged PII regions "
-        f"(regex={len(regex_matches)}, ner={len(ner_matches)}, "
-        f"gliner={len(gliner_matches)}, llm={len(llm_matches)})"
+        f"({len(stripped)} chars) — {timing_parts} — total={page_total:.0f}ms"
     )
 
     return regions

@@ -20,9 +20,59 @@ from models.schemas import BBox, DocumentInfo, DocumentStatus, PageData, TextBlo
 logger = logging.getLogger(__name__)
 
 
+def _cluster_into_lines(text_blocks: list[TextBlock]) -> list[list[TextBlock]]:
+    """Group text blocks into visual lines by y-proximity, then sort
+    left-to-right within each line.
+
+    Plain ``sorted(blocks, key=(y0, x0))`` can mis-order words on the
+    same visual line when their y0 values differ slightly (common with
+    ascenders/descenders in PDF extraction and OCR noise).  Clustering
+    by y-center avoids this.
+    """
+    if not text_blocks:
+        return []
+
+    by_y = sorted(text_blocks, key=lambda b: (b.bbox.y0 + b.bbox.y1) / 2)
+
+    lines: list[list[TextBlock]] = []
+    cur_line: list[TextBlock] = []
+    line_yc: float = 0.0
+    line_h: float = 0.0
+
+    for block in by_y:
+        bh = block.bbox.y1 - block.bbox.y0
+        byc = (block.bbox.y0 + block.bbox.y1) / 2
+
+        if not cur_line:
+            cur_line.append(block)
+            line_yc = byc
+            line_h = bh
+        else:
+            tolerance = max(line_h, bh) * 0.5
+            if abs(byc - line_yc) <= tolerance:
+                cur_line.append(block)
+                line_h = max(line_h, bh)
+                n = len(cur_line)
+                line_yc = (line_yc * (n - 1) + byc) / n
+            else:
+                lines.append(sorted(cur_line, key=lambda b: b.bbox.x0))
+                cur_line = [block]
+                line_yc = byc
+                line_h = bh
+
+    if cur_line:
+        lines.append(sorted(cur_line, key=lambda b: b.bbox.x0))
+
+    return lines
+
+
 def _build_full_text(text_blocks: list[TextBlock]) -> str:
     """Build full_text from text blocks, inserting newlines between
     lines that are spatially separated (different vertical position).
+
+    Blocks are clustered into visual lines (tolerant of minor y-position
+    differences from ascenders, descenders, or OCR noise) and sorted
+    left-to-right within each line, producing correct reading order.
 
     This gives NER/regex much better input than a flat space-joined
     string because sentence boundaries are preserved.
@@ -30,24 +80,30 @@ def _build_full_text(text_blocks: list[TextBlock]) -> str:
     if not text_blocks:
         return ""
 
-    # Sort blocks top-to-bottom, left-to-right
-    sorted_blocks = sorted(text_blocks, key=lambda b: (b.bbox.y0, b.bbox.x0))
+    lines = _cluster_into_lines(text_blocks)
 
     parts: list[str] = []
     prev_y: float | None = None
     line_height = 0.0
 
-    for block in sorted_blocks:
-        if prev_y is not None:
-            # If vertical gap is significant (> half line height), insert newline
-            gap = block.bbox.y0 - prev_y
-            if line_height > 0 and gap > line_height * 0.6:
-                parts.append("\n")
-            else:
-                parts.append(" ")
-        parts.append(block.text)
-        line_height = max(line_height, block.bbox.y1 - block.bbox.y0)
-        prev_y = block.bbox.y0
+    for line_blocks in lines:
+        line_top = min(b.bbox.y0 for b in line_blocks)
+        lh = max(b.bbox.y1 for b in line_blocks) - line_top
+
+        for i, block in enumerate(line_blocks):
+            if prev_y is not None or i > 0:
+                if i == 0:
+                    gap = line_top - prev_y if prev_y is not None else 0
+                    if line_height > 0 and gap > line_height * 0.6:
+                        parts.append("\n")
+                    else:
+                        parts.append(" ")
+                else:
+                    parts.append(" ")
+            parts.append(block.text)
+
+        prev_y = line_top
+        line_height = lh
 
     return "".join(parts).strip()
 

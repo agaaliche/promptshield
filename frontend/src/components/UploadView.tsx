@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { Upload, AlertCircle, FolderUp } from "lucide-react";
 import { uploadDocument, getDocument, detectPII } from "../api";
+import { resolveAllOverlaps } from "../regionUtils";
 import { useAppStore } from "../store";
 import type { UploadItem } from "../types";
 
@@ -24,6 +25,8 @@ export default function UploadView() {
     addToUploadQueue,
     updateUploadItem,
     clearCompletedUploads,
+    setDocDetecting,
+    setDocLoadingMessage,
   } = useAppStore();
 
   const handleFiles = useCallback(
@@ -59,25 +62,31 @@ export default function UploadView() {
           updateUploadItem(item.id, { progress: 50 });
           const doc = await getDocument(uploadRes.doc_id);
           addDocument(doc);
+          // Set detecting BEFORE activeDocId so the progress dialog shows immediately
+          setDocDetecting(true);
+          setDocLoadingMessage("Analyzing document for PII entities\u2026");
           setActiveDocId(doc.doc_id);
 
           updateUploadItem(item.id, { status: "detecting", progress: 70 });
           const detection = await detectPII(doc.doc_id);
-          setRegions(detection.regions);
-          updateDocument(doc.doc_id, { regions: detection.regions });
+          const resolved = resolveAllOverlaps(detection.regions);
+          setRegions(resolved);
+          updateDocument(doc.doc_id, { regions: resolved });
 
+          setDocDetecting(false);
+          setDocLoadingMessage("");
           updateUploadItem(item.id, { status: "done", progress: 100 });
         } catch (e: any) {
+          setDocDetecting(false);
+          setDocLoadingMessage("");
           updateUploadItem(item.id, { status: "error", error: e.message || "Failed" });
           setError(e.message || "Upload failed");
         }
       }
 
-      setTimeout(() => {
-        clearCompletedUploads();
-      }, 2000);
+      clearCompletedUploads();
     },
-    [setActiveDocId, setRegions, setCurrentView, addDocument, updateDocument, addToUploadQueue, updateUploadItem, clearCompletedUploads]
+    [setActiveDocId, setRegions, setCurrentView, addDocument, updateDocument, addToUploadQueue, updateUploadItem, clearCompletedUploads, setDocDetecting, setDocLoadingMessage]
   );
 
   const onDrop = useCallback(

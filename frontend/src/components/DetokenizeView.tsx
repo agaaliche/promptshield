@@ -138,7 +138,7 @@ export default function DetokenizeView() {
   // ── Render ────────────────────────────────────────────────────────
   return (
     <div style={S.container}>
-      <h2 style={S.title}>De-tokenize</h2>
+      <h2 style={S.title}>Token Swap</h2>
       <p style={S.subtitle}>
         Replace anonymization tokens with original values from your vault.
       </p>
@@ -180,10 +180,24 @@ export default function DetokenizeView() {
               className="btn-primary"
               onClick={handleDetokenizeText}
               disabled={isProcessing || !input.trim()}
-              style={{ padding: "10px 20px" }}
+              title="Swap tokens"
+              style={{
+                width: 52,
+                height: 52,
+                borderRadius: "50%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+                flexShrink: 0,
+                zIndex: 2,
+                boxShadow: "0 2px 12px rgba(0,0,0,0.4)",
+                marginLeft: -28,
+                marginRight: -28,
+                opacity: 1,
+              }}
             >
-              <ArrowRightLeft size={16} />
-              {isProcessing ? "Processing..." : "De-tokenize"}
+              <ArrowRightLeft size={22} />
             </button>
           </div>
 
@@ -200,7 +214,7 @@ export default function DetokenizeView() {
               style={S.textarea}
               value={output}
               readOnly
-              placeholder="De-tokenized text will appear here..."
+              placeholder="Swapped text will appear here..."
               rows={18}
             />
           </div>
@@ -284,7 +298,7 @@ export default function DetokenizeView() {
                   style={{ padding: "10px 20px" }}
                 >
                   <ArrowRightLeft size={16} />
-                  {isProcessing ? "Processing..." : "De-tokenize File"}
+                  {isProcessing ? "Processing..." : "Swap Tokens in File"}
                 </button>
 
                 {fileResult && (
@@ -363,13 +377,14 @@ const S: Record<string, React.CSSProperties> = {
     gap: 6,
     padding: "6px 16px",
   },
-  columns: { display: "flex", gap: 16, flex: 1, minHeight: 0 },
+  columns: { display: "flex", gap: 4, flex: 1, minHeight: 0, alignItems: "stretch" },
   column: { flex: 1, display: "flex", flexDirection: "column", gap: 8 },
   center: {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
+    zIndex: 2,
   },
   label: {
     fontSize: 12,

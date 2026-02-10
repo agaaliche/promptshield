@@ -5,7 +5,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { PII_COLORS, type PIIRegion, type RegionAction, type PIIType } from "../types";
+import { PII_COLORS, getPIIColor, loadLabelConfig, type PIIRegion, type RegionAction, type PIIType } from "../types";
 import { CURSOR_GRAB, CURSOR_GRABBING } from "../cursors";
 import { X, Trash2, Key, Edit3, Tag, ChevronRight, ChevronLeft, Type, Search } from "lucide-react";
 
@@ -13,6 +13,7 @@ export type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
 const HANDLE_SIZE = 8;
 const HALF = HANDLE_SIZE / 2;
+const MIN_REGION_PX = 10; // minimum rendered height/width in pixels
 
 const HANDLE_CURSORS: Record<ResizeHandle, string> = {
   nw: "nwse-resize",
@@ -123,8 +124,8 @@ export default function RegionOverlay({
 
   const left = region.bbox.x0 * sx;
   const top = region.bbox.y0 * sy;
-  const width = (region.bbox.x1 - region.bbox.x0) * sx;
-  const height = (region.bbox.y1 - region.bbox.y0) * sy;
+  const width = Math.max((region.bbox.x1 - region.bbox.x0) * sx, MIN_REGION_PX);
+  const height = Math.max((region.bbox.y1 - region.bbox.y0) * sy, MIN_REGION_PX);
 
   // Background color based on action
   let bgColor: string;
@@ -143,7 +144,7 @@ export default function RegionOverlay({
   }
 
   // Use shield-blue for selected border, PII color otherwise
-  const baseBorderColor = PII_COLORS[region.pii_type] || "#ffd740";
+  const baseBorderColor = getPIIColor(region.pii_type);
   const borderColor = (isSelected || showEditPanel) ? "var(--accent-primary)" : baseBorderColor;
   const [hovered, setHovered] = useState(false);
   // In multi-select mode: only show frame and border, no label/buttons
@@ -862,21 +863,13 @@ export default function RegionOverlay({
                         color: "var(--text-primary)",
                       }}
                     >
-                      <option value="PERSON">PERSON</option>
-                      <option value="ORG">ORG</option>
-                      <option value="EMAIL">EMAIL</option>
-                      <option value="PHONE">PHONE</option>
-                      <option value="SSN">SSN</option>
-                      <option value="CREDIT_CARD">CREDIT_CARD</option>
-                      <option value="DATE">DATE</option>
-                      <option value="ADDRESS">ADDRESS</option>
-                      <option value="LOCATION">LOCATION</option>
-                      <option value="IP_ADDRESS">IP_ADDRESS</option>
-                      <option value="IBAN">IBAN</option>
-                      <option value="PASSPORT">PASSPORT</option>
-                      <option value="DRIVER_LICENSE">DRIVER_LICENSE</option>
-                      <option value="CUSTOM">CUSTOM</option>
-                      <option value="UNKNOWN">UNKNOWN</option>
+                      {loadLabelConfig().filter((e) => !e.hidden).map((entry) => (
+                        <option key={entry.label} value={entry.label}>{entry.label}</option>
+                      ))}
+                      {/* Ensure current value is always present even if hidden */}
+                      {!loadLabelConfig().some((e) => !e.hidden && e.label === region.pii_type) && (
+                        <option value={region.pii_type}>{region.pii_type}</option>
+                      )}
                     </select>
                   </div>
                 )}

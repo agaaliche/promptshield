@@ -3,10 +3,12 @@
 import type {
   AnonymizeResponse,
   BBox,
+  DetectionProgressData,
   DetectionResult,
   DetokenizeResponse,
   DocumentInfo,
   LLMStatus,
+  PIILabelEntry,
   PIIRegion,
   RedetectResult,
   RegionAction,
@@ -86,6 +88,10 @@ export async function detectPII(docId: string): Promise<DetectionResult> {
   return request<DetectionResult>(`/api/documents/${docId}/detect`, {
     method: "POST",
   });
+}
+
+export async function getDetectionProgress(docId: string): Promise<DetectionProgressData> {
+  return request<DetectionProgressData>(`/api/documents/${docId}/detection-progress`);
 }
 
 export async function redetectPII(
@@ -241,6 +247,24 @@ export function getDownloadUrl(docId: string, fileType: "pdf" | "text"): string 
   return `${BASE_URL}/api/documents/${docId}/download/${fileType}`;
 }
 
+/**
+ * Batch-anonymize multiple documents.
+ * Returns a download URL (blob) — single PDF if 1 doc, zip if multiple.
+ */
+export async function batchAnonymize(docIds: string[]): Promise<string> {
+  const resp = await fetch(`${BASE_URL}/api/documents/batch-anonymize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ doc_ids: docIds }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(text || `Batch anonymize failed (${resp.status})`);
+  }
+  const blob = await resp.blob();
+  return URL.createObjectURL(blob);
+}
+
 // ──────────────────────────────────────────────
 // De-tokenization
 // ──────────────────────────────────────────────
@@ -333,6 +357,33 @@ export async function unloadLLM(): Promise<void> {
   await request("/api/llm/unload", { method: "POST" });
 }
 
+export async function configureRemoteLLM(
+  apiUrl: string,
+  apiKey: string,
+  model: string
+): Promise<void> {
+  await request("/api/llm/remote/configure", {
+    method: "POST",
+    body: JSON.stringify({ api_url: apiUrl, api_key: apiKey, model }),
+  });
+}
+
+export async function testRemoteLLM(): Promise<{
+  ok: boolean;
+  latency_ms?: number;
+  model?: string;
+  response?: string;
+  error?: string;
+}> {
+  return request("/api/llm/remote/test", { method: "POST" });
+}
+
+export async function setLLMProvider(
+  provider: "local" | "remote"
+): Promise<void> {
+  await request(`/api/llm/provider?provider=${provider}`, { method: "POST" });
+}
+
 export async function listModels(): Promise<
   Array<{ name: string; path: string; size_gb: number }>
 > {
@@ -379,4 +430,30 @@ export async function exportVault(passphrase: string): Promise<string> {
     { method: "POST" }
   );
   return res.export;
+}
+
+export async function importVault(
+  exportData: string,
+  passphrase: string
+): Promise<{ imported: number; skipped: number; errors: number }> {
+  return request(`/api/vault/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ export_data: exportData, passphrase }),
+  });
+}
+
+// ──────────────────────────────────────────────
+// PII Label configuration
+// ──────────────────────────────────────────────
+
+export async function fetchLabelConfig(): Promise<PIILabelEntry[]> {
+  return request<PIILabelEntry[]>("/api/settings/labels");
+}
+
+export async function saveLabelConfigAPI(labels: PIILabelEntry[]): Promise<void> {
+  await request("/api/settings/labels", {
+    method: "PUT",
+    body: JSON.stringify(labels),
+  });
 }

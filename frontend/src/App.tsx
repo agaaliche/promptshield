@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useAppStore } from "./store";
 import { checkHealth, getVaultStatus, getLLMStatus, listDocuments, getRegions, getDocument } from "./api";
+import { resolveAllOverlaps } from "./regionUtils";
 import Sidebar from "./components/Sidebar";
 import Snackbar from "./components/Snackbar";
 import UploadView from "./components/UploadView";
@@ -23,6 +24,8 @@ function App() {
     updateDocument,
     activeDocId,
     setActiveDocId,
+    setDocLoading,
+    setDocLoadingMessage,
   } = useAppStore();
 
   // Poll for backend readiness on startup
@@ -73,6 +76,10 @@ function App() {
 
     let cancelled = false;
 
+    // Signal loading start
+    setDocLoading(true);
+    setDocLoadingMessage("Fetching document data…");
+
     // Fetch full document (with pages array) and regions in parallel
     Promise.all([
       getDocument(activeDocId),
@@ -80,14 +87,25 @@ function App() {
     ])
       .then(([fullDoc, regions]) => {
         if (cancelled || useAppStore.getState().activeDocId !== activeDocId) return;
+        setDocLoadingMessage("Processing pages…");
         // Merge full document data (pages, mime_type, etc.) into the store entry
         updateDocument(activeDocId, fullDoc);
-        setRegions(regions);
+        setDocLoadingMessage("Loading regions…");
+        setRegions(resolveAllOverlaps(regions));
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) {
+          setDocLoading(false);
+          // Don't clear message if detection is in progress — Sidebar manages it
+          if (!useAppStore.getState().docDetecting) {
+            setDocLoadingMessage("");
+          }
+        }
+      });
 
     return () => { cancelled = true; };
-  }, [activeDocId, setRegions, updateDocument]);
+  }, [activeDocId, setRegions, updateDocument, setDocLoading, setDocLoadingMessage]);
 
   const renderView = () => {
     switch (currentView) {
@@ -110,7 +128,7 @@ function App() {
         {!backendReady ? (
           <div style={styles.connecting}>
             <div style={styles.spinner} />
-            <p>Connecting to backend...</p>
+            <p>Connecting to local database...</p>
             <p style={styles.hint}>
               Make sure the Python sidecar is running on port 8910
             </p>

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +28,7 @@ class LLMEngine:
         self._model_path: str = ""
         self._model_name: str = ""
         self._gpu_enabled: bool = False
+        self._lock = threading.Lock()  # serialize all inference calls
 
     def is_loaded(self) -> bool:
         return self._llm is not None
@@ -74,13 +76,17 @@ class LLMEngine:
         )
 
         try:
-            self._llm = Llama(
+            kwargs: dict = dict(
                 model_path=str(path),
                 n_ctx=config.llm_context_size,
                 n_threads=n_threads,
                 n_gpu_layers=n_gpu_layers,
+                n_batch=2048,
+                flash_attn=True,
                 verbose=False,
             )
+
+            self._llm = Llama(**kwargs)
             self._model_path = str(path)
             self._model_name = path.stem
             self._gpu_enabled = n_gpu_layers != 0
@@ -132,6 +138,26 @@ class LLMEngine:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": user_prompt})
 
+        logger.debug("LLM request: %d messages, model=%s", len(messages), self._model_name)
+
+        # Serialize access — llama.cpp is NOT thread-safe; concurrent
+        # calls corrupt internal KV-cache state and trigger assertion
+        # failures ("scale > 0.0f") in ggml-cpu.dll.
+        with self._lock:
+            return self._generate_locked(messages, max_tokens, temperature, top_p, stop)
+
+    def _generate_locked(
+        self,
+        messages: list[dict],
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        stop: Optional[list[str]],
+    ) -> str:
+        """Internal generate — called under self._lock."""
+        system_prompt = next((m["content"] for m in messages if m["role"] == "system"), "")
+        user_prompt = next((m["content"] for m in messages if m["role"] == "user"), "")
+
         try:
             result = self._llm.create_chat_completion(
                 messages=messages,
@@ -140,12 +166,49 @@ class LLMEngine:
                 top_p=top_p,
                 stop=stop,
             )
+        except Exception as first_err:
+            err_str = str(first_err)
+            logger.warning("LLM chat completion error: %s", err_str)
+            # Some models reject the system role or have no chat template.
+            # Fallback: fold system prompt into the user message.
+            if ("roles must alternate" in err_str or "chat template" in err_str.lower()) and system_prompt:
+                logger.info("Model rejected system role — merging into user prompt")
+                merged = f"{system_prompt}\n\n{user_prompt}"
+                messages = [{"role": "user", "content": merged}]
+                try:
+                    result = self._llm.create_chat_completion(
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        stop=stop,
+                    )
+                except Exception as e2:
+                    logger.warning("Fallback chat also failed: %s — trying plain completion", e2)
+                    # Last resort: plain text completion (no chat template)
+                    try:
+                        merged = f"{system_prompt}\n\n{user_prompt}\n\nJSON:"
+                        result_plain = self._llm(
+                            merged,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            top_p=top_p,
+                            stop=stop or ["```"],
+                        )
+                        text = result_plain["choices"][0]["text"].strip()
+                        return text
+                    except Exception as e3:
+                        logger.error(f"LLM generation failed (all attempts): {e3}")
+                        raise
+            else:
+                logger.error(f"LLM generation failed: {first_err}")
+                raise
 
+        try:
             response_text = result["choices"][0]["message"]["content"]
             return response_text.strip()
-
-        except Exception as e:
-            logger.error(f"LLM generation failed: {e}")
+        except (KeyError, IndexError) as e:
+            logger.error(f"Unexpected LLM response format: {e}")
             raise
 
     def list_available_models(self) -> list[dict]:

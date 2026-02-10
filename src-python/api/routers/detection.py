@@ -122,7 +122,7 @@ async def detect_pii(doc_id: str):
         if doc_id in detection_progress:
             detection_progress[doc_id]["status"] = "error"
             detection_progress[doc_id]["error"] = str(e)
-        raise HTTPException(500, detail=f"Detection error: {e}\n{tb}")
+        raise HTTPException(500, detail="Detection failed. Check server logs for details.")
 
 
 class RedetectRequest(_PydanticBaseModel):
@@ -258,7 +258,7 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
     except Exception as e:
         tb = traceback.format_exc()
         logger.error(f"Redetect failed: {e}\n{tb}")
-        raise HTTPException(500, detail=f"Redetect error: {e}\n{tb}")
+        raise HTTPException(500, detail="Redetect failed. Check server logs for details.")
 
 
 @router.get("/documents/{doc_id}/regions")

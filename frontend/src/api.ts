@@ -426,8 +426,12 @@ export async function updateSettings(
 
 export async function exportVault(passphrase: string): Promise<string> {
   const res = await request<{ export: string }>(
-    `/api/vault/export?passphrase=${encodeURIComponent(passphrase)}`,
-    { method: "POST" }
+    `/api/vault/export`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passphrase }),
+    }
   );
   return res.export;
 }

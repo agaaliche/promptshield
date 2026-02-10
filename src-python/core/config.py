@@ -49,7 +49,7 @@ class AppConfig(BaseModel):
     regex_enabled: bool = True
     ner_enabled: bool = True
     llm_detection_enabled: bool = True
-    confidence_threshold: float = 0.55                  # Minimum confidence to show highlight
+    confidence_threshold: float = Field(default=0.55, ge=0.0, le=1.0)
 
     # NER backend: "spacy" uses spaCy models, or set to a HuggingFace model id
     # like "dslim/bert-base-NER" for BERT-based detection.
@@ -69,14 +69,14 @@ class AppConfig(BaseModel):
     # OCR
     tesseract_cmd: str = ""                            # Empty = auto-detect
     ocr_language: str = "eng"
-    ocr_dpi: int = 300
+    ocr_dpi: int = Field(default=300, ge=72, le=1200)
 
     # Rendering
-    render_dpi: int = 200
+    render_dpi: int = Field(default=200, ge=72, le=1200)
 
     # Server
     host: str = "127.0.0.1"
-    port: int = 8910                                   # Default dev port; 0 = random
+    port: int = Field(default=8910, ge=0, le=65535)   # 0 = random
 
     # Token format
     token_prefix: str = "ANON"

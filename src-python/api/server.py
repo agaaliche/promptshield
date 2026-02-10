@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -27,41 +28,14 @@ from api.routers import (
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="promptShield",
-    version="0.1.0",
-    description="Offline document anonymizer with local LLM — promptShield",
-)
-
-# CORS — allow Tauri webview and local dev server
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # ---------------------------------------------------------------------------
-# Register routers
-# ---------------------------------------------------------------------------
-app.include_router(documents.router)
-app.include_router(detection.router)
-app.include_router(regions.router)
-app.include_router(anonymize.router)
-app.include_router(detokenize.router)
-app.include_router(vault.router)
-app.include_router(llm.router)
-app.include_router(settings.router)
-
-
-# ---------------------------------------------------------------------------
-# Lifecycle
+# Lifecycle — replaces deprecated on_event("startup") / on_event("shutdown")
 # ---------------------------------------------------------------------------
 
-@app.on_event("startup")
-async def startup():
-    """Initialize services on startup."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application startup → yield → shutdown."""
     logger.info("Starting promptShield sidecar...")
 
     # Initialize document store
@@ -132,6 +106,47 @@ async def startup():
                 logger.info("No GGUF models found — skipping auto-load")
         except Exception as e:
             logger.warning(f"Auto-load LLM failed (non-fatal): {e}")
+
+    yield  # ── app runs here ──
+
+    # Shutdown cleanup
+    logger.info("Shutting down promptShield sidecar...")
+
+
+app = FastAPI(
+    title="promptShield",
+    version="0.1.0",
+    description="Offline document anonymizer with local LLM — promptShield",
+    lifespan=lifespan,
+)
+
+# CORS — allow Tauri webview and local dev server
+_ALLOWED_ORIGINS = [
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "tauri://localhost",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------------------------------------------------------------------
+# Register routers
+# ---------------------------------------------------------------------------
+app.include_router(documents.router)
+app.include_router(detection.router)
+app.include_router(regions.router)
+app.include_router(anonymize.router)
+app.include_router(detokenize.router)
+app.include_router(vault.router)
+app.include_router(llm.router)
+app.include_router(settings.router)
 
 
 @app.get("/health")

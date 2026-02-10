@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel as _PydanticBaseModel
+from starlette.background import BackgroundTask
 
 from core.config import config
 from models.schemas import (
@@ -59,7 +61,7 @@ async def anonymize(doc_id: str):
         logger.error(f"Anonymization failed:\n{traceback.format_exc()}")
         doc.status = DocumentStatus.ERROR
         save_doc(doc)
-        raise HTTPException(500, f"Anonymization failed: {e}")
+        raise HTTPException(500, "Anonymization failed. Check server logs for details.")
 
 
 @router.get("/documents/{doc_id}/download/{file_type}")
@@ -142,13 +144,19 @@ async def batch_anonymize(req: BatchAnonymizeRequest):
     if not output_files:
         raise HTTPException(500, "No files were successfully anonymized")
 
-    zip_path = Path(tempfile.mktemp(suffix=".zip", prefix="promptshield_export_"))
+    zip_fd, zip_str = tempfile.mkstemp(suffix=".zip", prefix="promptshield_export_")
+    zip_path = Path(zip_str)
+    os.close(zip_fd)
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for fname, fpath in output_files:
             zf.write(fpath, fname)
+
+    async def _cleanup() -> None:
+        zip_path.unlink(missing_ok=True)
 
     return FileResponse(
         str(zip_path),
         media_type="application/zip",
         filename="promptshield_export.zip",
+        background=BackgroundTask(_cleanup),
     )

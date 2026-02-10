@@ -63,16 +63,17 @@ async def list_vault_tokens(source_document: str | None = None):
 
 
 @router.post("/vault/export")
-async def export_vault(passphrase: str):
+async def export_vault(body: _PassphraseBody):
     """Export all vault tokens as encrypted JSON."""
     from core.vault.store import vault
     if not vault.is_unlocked:
         raise HTTPException(403, "Vault is locked")
     try:
-        data = vault.export_vault(passphrase)
+        data = vault.export_vault(body.passphrase)
         return JSONResponse(content={"export": data})
     except Exception as e:
-        raise HTTPException(500, f"Export failed: {e}")
+        logger.error(f"Vault export failed: {e}")
+        raise HTTPException(500, "Export failed. Check server logs for details.")
 
 
 class _VaultImportBody(_PydanticBaseModel):

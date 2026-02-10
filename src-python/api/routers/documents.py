@@ -41,13 +41,21 @@ async def upload_document(file: UploadFile = File(...)):
     upload_id = uuid.uuid4().hex[:8]
     upload_dir = config.temp_dir / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
-    upload_path = upload_dir / f"{upload_id}_{file.filename}"
+    safe_name = Path(file.filename).name  # strip directory components (path-traversal)
+    upload_path = upload_dir / f"{upload_id}_{safe_name}"
 
+    MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200 MB
     with open(upload_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
+        total = 0
+        while chunk := await file.read(256 * 1024):
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES:
+                f.close()
+                upload_path.unlink(missing_ok=True)
+                raise HTTPException(413, f"File too large (max {MAX_UPLOAD_BYTES // (1024*1024)} MB)")
+            f.write(chunk)
 
-    logger.info(f"Saved upload: {upload_path} ({len(content)} bytes)")
+    logger.info(f"Saved upload: {upload_path} ({total} bytes)")
 
     # Ingest the document
     from core.ingestion.loader import ingest_document
@@ -55,7 +63,8 @@ async def upload_document(file: UploadFile = File(...)):
     try:
         doc = await ingest_document(upload_path, file.filename)
     except Exception as e:
-        raise HTTPException(500, f"Failed to process document: {e}")
+        logger.error(f"Failed to process document: {e}")
+        raise HTTPException(500, "Failed to process document. Check server logs for details.")
 
     # Store file in persistent storage
     store = get_store()

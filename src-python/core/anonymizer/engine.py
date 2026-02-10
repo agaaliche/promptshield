@@ -155,7 +155,7 @@ async def _anonymize_pdf(doc: DocumentInfo, original_path: Path) -> AnonymizeRes
 
         return AnonymizeResponse(
             doc_id=doc.doc_id,
-            output_pdf_path=str(pdf_path),
+            output_path=str(pdf_path),
             output_text_path="",
             tokens_created=tokens_created,
             regions_removed=regions_removed,
@@ -163,6 +163,37 @@ async def _anonymize_pdf(doc: DocumentInfo, original_path: Path) -> AnonymizeRes
 
     finally:
         pdf_doc.close()
+
+
+def _replace_in_paragraphs(paragraphs, replacements: dict[str, str]) -> None:
+    """Replace text in DOCX paragraphs, handling cross-run PII spans.
+
+    For each paragraph:
+    1. Join all run texts into a single string.
+    2. Apply all replacements on the joined text.
+    3. If the text changed, rewrite the paragraph into a single run
+       (preserving the formatting of the first run).
+
+    This handles PII that is split across multiple XML runs
+    (e.g., "Joh" | "n S" | "mith") — per-run replacement would miss those.
+    """
+    for paragraph in paragraphs:
+        runs = paragraph.runs
+        if not runs:
+            continue
+        full = "".join(r.text for r in runs)
+        if not full:
+            continue
+        replaced = full
+        for original, replacement in replacements.items():
+            replaced = replaced.replace(original, replacement)
+        if replaced == full:
+            continue
+        # Rewrite: keep first run (preserves font/style), clear the rest
+        fmt = runs[0].font  # noqa: F841 — we keep the run object alive
+        runs[0].text = replaced
+        for r in runs[1:]:
+            r.text = ""
 
 
 async def _anonymize_docx(doc: DocumentInfo, original_path: Path) -> AnonymizeResponse:
@@ -218,21 +249,17 @@ async def _anonymize_docx(doc: DocumentInfo, original_path: Path) -> AnonymizeRe
             })
 
     # Apply replacements to all text in document
-    for paragraph in docx.paragraphs:
-        for run in paragraph.runs:
-            if run.text:
-                for original, replacement in replacements.items():
-                    run.text = run.text.replace(original, replacement)
+    # DOCX paragraphs may split a PII span across multiple runs.
+    # Per-run string replace fails in that case.  Instead, do
+    # paragraph-level replacement: join all runs, replace, then
+    # rewrite into a single run (preserving the first run's format).
+    _replace_in_paragraphs(docx.paragraphs, replacements)
 
     # Apply to tables
     for table in docx.tables:
         for row in table.rows:
             for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    for run in paragraph.runs:
-                        if run.text:
-                            for original, replacement in replacements.items():
-                                run.text = run.text.replace(original, replacement)
+                _replace_in_paragraphs(cell.paragraphs, replacements)
 
     # Save anonymized DOCX
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -269,7 +296,7 @@ async def _anonymize_docx(doc: DocumentInfo, original_path: Path) -> AnonymizeRe
 
     return AnonymizeResponse(
         doc_id=doc.doc_id,
-        output_pdf_path=str(docx_path),
+        output_path=str(docx_path),
         output_text_path="",
         tokens_created=tokens_created,
         regions_removed=regions_removed,
@@ -371,7 +398,7 @@ async def _anonymize_xlsx(doc: DocumentInfo, original_path: Path) -> AnonymizeRe
 
     return AnonymizeResponse(
         doc_id=doc.doc_id,
-        output_pdf_path=str(xlsx_path),
+        output_path=str(xlsx_path),
         output_text_path="",
         tokens_created=tokens_created,
         regions_removed=regions_removed,
@@ -481,7 +508,7 @@ async def _anonymize_image(doc: DocumentInfo, original_path: Path) -> AnonymizeR
 
     return AnonymizeResponse(
         doc_id=doc.doc_id,
-        output_pdf_path=str(img_path),
+        output_path=str(img_path),
         output_text_path="",
         tokens_created=tokens_created,
         regions_removed=regions_removed,

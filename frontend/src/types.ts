@@ -106,7 +106,7 @@ export interface RedetectResult {
 
 export interface AnonymizeResponse {
   doc_id: string;
-  output_pdf_path: string | null;
+  output_path: string | null;
   output_text_path: string | null;
   tokens_created: number;
   regions_removed: number;

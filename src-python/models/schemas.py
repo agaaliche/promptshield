@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -135,7 +135,7 @@ class TokenMapping(BaseModel):
     pii_type: PIIType
     source_document: str = ""
     context_snippet: str = ""          # Surrounding text for disambiguation
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +152,7 @@ class DocumentInfo(BaseModel):
     status: DocumentStatus = DocumentStatus.UPLOADING
     pages: list[PageData] = []
     regions: list[PIIRegion] = []
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ class AnonymizeRequest(BaseModel):
 
 class AnonymizeResponse(BaseModel):
     doc_id: str
-    output_pdf_path: Optional[str] = None
+    output_path: Optional[str] = None
     output_text_path: Optional[str] = None
     tokens_created: int = 0
     regions_removed: int = 0

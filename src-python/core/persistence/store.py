@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -49,7 +49,7 @@ class DocumentStore:
             
             # Serialize document to JSON
             doc_data = doc.model_dump(mode="json")
-            doc_data["saved_at"] = datetime.utcnow().isoformat()
+            doc_data["saved_at"] = datetime.now(timezone.utc).isoformat()
             
             # Write to file
             with open(doc_file, "w", encoding="utf-8") as f:

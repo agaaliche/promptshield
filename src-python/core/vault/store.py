@@ -7,7 +7,7 @@ import logging
 import os
 import secrets
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -144,16 +144,19 @@ class TokenVault:
 
     def _encrypt(self, plaintext: str) -> bytes:
         """Encrypt a string value."""
-        assert self._fernet is not None
+        if self._fernet is None:
+            raise RuntimeError("Vault encryption key not initialized")
         return self._fernet.encrypt(plaintext.encode())
 
     def _decrypt(self, ciphertext: bytes) -> str:
         """Decrypt a bytes value to string."""
-        assert self._fernet is not None
+        if self._fernet is None:
+            raise RuntimeError("Vault encryption key not initialized")
         return self._fernet.decrypt(ciphertext).decode()
 
     def _store_meta(self, key: str, value: str) -> None:
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Vault database connection not open")
         self._conn.execute(
             "INSERT OR REPLACE INTO vault_meta (key, value) VALUES (?, ?)",
             (key, value),
@@ -161,7 +164,8 @@ class TokenVault:
         self._conn.commit()
 
     def _get_meta(self, key: str) -> Optional[str]:
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Vault database connection not open")
         row = self._conn.execute(
             "SELECT value FROM vault_meta WHERE key = ?", (key,)
         ).fetchone()
@@ -197,7 +201,8 @@ class TokenVault:
         return token
 
     def _token_string_exists(self, token_string: str) -> bool:
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Vault database connection not open")
         row = self._conn.execute(
             "SELECT 1 FROM tokens WHERE token_string = ?", (token_string,)
         ).fetchone()
@@ -206,7 +211,8 @@ class TokenVault:
     def store_token(self, mapping: TokenMapping) -> None:
         """Store a token mapping in the vault."""
         self._ensure_unlocked()
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Vault database connection not open")
 
         self._conn.execute(
             """INSERT INTO tokens
@@ -228,7 +234,8 @@ class TokenVault:
     def resolve_token(self, token_string: str) -> Optional[TokenMapping]:
         """Look up a token and return the decrypted mapping."""
         self._ensure_unlocked()
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Vault database connection not open")
 
         row = self._conn.execute(
             """SELECT token_id, token_string, original_text_enc, pii_type,
@@ -293,7 +300,8 @@ class TokenVault:
     ) -> list[TokenMapping]:
         """List tokens, optionally filtered."""
         self._ensure_unlocked()
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Vault database connection not open")
 
         query = "SELECT * FROM tokens WHERE 1=1"
         params: list = []
@@ -324,7 +332,8 @@ class TokenVault:
     def delete_token(self, token_id: str) -> bool:
         """Delete a token from the vault."""
         self._ensure_unlocked()
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Vault database connection not open")
 
         cursor = self._conn.execute(
             "DELETE FROM tokens WHERE token_id = ?", (token_id,)
@@ -345,14 +354,15 @@ class TokenVault:
     ) -> None:
         """Register a processed document in the vault."""
         self._ensure_unlocked()
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Vault database connection not open")
 
         self._conn.execute(
             """INSERT OR REPLACE INTO documents
                (doc_id, original_filename, anonymized_filename, processed_at, page_count)
                VALUES (?, ?, ?, ?, ?)""",
             (doc_id, original_filename, anonymized_filename,
-             datetime.utcnow().isoformat(), page_count),
+             datetime.now(timezone.utc).isoformat(), page_count),
         )
         self._conn.commit()
 
@@ -363,7 +373,8 @@ class TokenVault:
     def get_stats(self) -> dict:
         """Return vault statistics."""
         self._ensure_unlocked()
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Vault database connection not open")
 
         token_count = self._conn.execute("SELECT COUNT(*) FROM tokens").fetchone()[0]
         doc_count = self._conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
@@ -385,7 +396,7 @@ class TokenVault:
         tokens = self.list_tokens()
         data = {
             "version": 1,
-            "exported_at": datetime.utcnow().isoformat(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
             "tokens": [t.model_dump(mode="json") for t in tokens],
         }
 

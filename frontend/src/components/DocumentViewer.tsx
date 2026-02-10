@@ -788,7 +788,7 @@ export default function DocumentViewer() {
         `Done! ${result.regions_removed} removed, ${result.tokens_created} tokenized`
       );
       // Open download links
-      if (result.output_pdf_path) {
+      if (result.output_path) {
         window.open(getDownloadUrl(activeDocId, "pdf"), "_blank");
       }
     } catch (e: any) {
@@ -816,7 +816,7 @@ export default function DocumentViewer() {
       setStatusMessage(
         `Done! ${result.regions_removed} removed, ${result.tokens_created} tokenized`
       );
-      if (result.output_pdf_path) {
+      if (result.output_path) {
         window.open(getDownloadUrl(activeDocId!, "pdf"), "_blank");
       }
     } catch (e: any) {

@@ -112,50 +112,75 @@ def _detokenize_xlsx(data: bytes, vault) -> tuple[bytes, int, list[str]]:
 
 
 def _detokenize_pdf(data: bytes, vault) -> tuple[bytes, int, list[str]]:
-    """PDF — extract text, replace tokens, create new PDF."""
-    # Open the PDF
+    """PDF — in-place token replacement preserving original layout.
+
+    Strategy: search for each token string on each page using PyMuPDF's
+    ``search_for`` (which returns exact pixel rects), add a redaction
+    annotation with the original text as replacement, then apply
+    redactions.  This preserves all non-token content, images, and
+    formatting.
+    """
+    import re
+
     pdf_doc = fitz.open(stream=data, filetype="pdf")
-    
+
     total_replaced = 0
     all_unresolved: list[str] = []
-    
-    # Create a new PDF for output
-    output_pdf = fitz.open()
-    
+
     try:
-        # Process each page
-        for page_num in range(len(pdf_doc)):
-            page = pdf_doc[page_num]
-            
-            # Extract text
-            text = page.get_text()
-            
-            # Replace tokens
-            detokenized_text, count, unresolved = vault.resolve_all_tokens(text)
-            total_replaced += count
-            all_unresolved.extend(unresolved)
-            
-            # Create new page with detokenized text
-            # Use same dimensions as original
-            rect = page.rect
-            new_page = output_pdf.new_page(width=rect.width, height=rect.height)
-            
-            # Insert text (simple layout)
-            new_page.insert_text(
-                (50, 50),  # Start position
-                detokenized_text,
-                fontsize=11,
-                fontname="helv",
-            )
-        
-        # Save to bytes
-        output_bytes = output_pdf.tobytes(deflate=True, clean=True)
-        
+        # First pass: collect all unique token strings from the document
+        full_text = ""
+        for page in pdf_doc:
+            full_text += page.get_text() + "\n"
+
+        # Find token-shaped strings  [PREFIX_TYPE_HEX]
+        token_pattern = re.compile(r"\[[A-Z][A-Z0-9_]{4,40}\]")
+        found_tokens = set(token_pattern.findall(full_text))
+
+        if not found_tokens:
+            # No tokens found — return as-is
+            return data, 0, []
+
+        # Resolve each token via the vault
+        token_map: dict[str, str] = {}  # token_string → original_text
+        for token_str in found_tokens:
+            mapping = vault.resolve_token(token_str)
+            if mapping:
+                token_map[token_str] = mapping.original_text
+            else:
+                all_unresolved.append(token_str)
+
+        if not token_map:
+            return data, 0, list(set(all_unresolved))
+
+        # Second pass: search-and-replace on each page
+        for page in pdf_doc:
+            for token_str, original_text in token_map.items():
+                rects = page.search_for(token_str)
+                if not rects:
+                    continue
+
+                for rect in rects:
+                    # Estimate font size from rect height (rough but effective)
+                    fontsize = max(6.0, min(rect.height * 0.85, 14.0))
+
+                    page.add_redact_annot(
+                        rect,
+                        text=original_text,
+                        fill=(1, 1, 1),       # white background
+                        text_color=(0, 0, 0),  # black text
+                        fontsize=fontsize,
+                        fontname="helv",
+                    )
+                    total_replaced += 1
+
+            page.apply_redactions()
+
+        output_bytes = pdf_doc.tobytes(deflate=True, clean=True)
         return output_bytes, total_replaced, list(set(all_unresolved))
-        
+
     finally:
         pdf_doc.close()
-        output_pdf.close()
 
 
 # ---------------------------------------------------------------------------

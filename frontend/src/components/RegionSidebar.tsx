@@ -18,6 +18,8 @@ interface RegionSidebarProps {
   sidebarRef: React.RefObject<HTMLDivElement | null>;
   collapsed: boolean;
   setCollapsed: (v: boolean) => void;
+  width: number;
+  onWidthChange: (w: number) => void;
   pageRegions: PIIRegion[];
   selectedRegionIds: string[];
   activeDocId: string | null;
@@ -37,10 +39,15 @@ interface RegionSidebarProps {
   batchDeleteRegions: (docId: string, ids: string[]) => Promise<any>;
 }
 
+const RIGHT_MIN_WIDTH = 200;
+const RIGHT_MAX_WIDTH = 600;
+
 export default function RegionSidebar({
   sidebarRef,
   collapsed,
   setCollapsed,
+  width,
+  onWidthChange,
   pageRegions,
   selectedRegionIds,
   activeDocId,
@@ -59,12 +66,65 @@ export default function RegionSidebar({
   batchRegionAction,
   batchDeleteRegions,
 }: RegionSidebarProps) {
+  const isDragging = React.useRef(false);
+  const startX = React.useRef(0);
+  const startWidth = React.useRef(width);
+
+  const onResizeMouseDown = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    startX.current = e.clientX;
+    startWidth.current = width;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [width]);
+
+  React.useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      // Dragging left increases width (sidebar is on the right)
+      const delta = startX.current - e.clientX;
+      const newWidth = Math.min(RIGHT_MAX_WIDTH, Math.max(RIGHT_MIN_WIDTH, startWidth.current + delta));
+      onWidthChange(newWidth);
+    };
+    const onMouseUp = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [onWidthChange]);
+
   return (
     <div ref={sidebarRef} style={{
       ...styles.sidebar,
-      width: collapsed ? 60 : 320,
-      transition: 'width 0.2s ease',
+      width: collapsed ? 60 : width,
+      transition: isDragging.current ? 'none' : 'width 0.2s ease',
     }}>
+      {/* Resize handle */}
+      {!collapsed && (
+        <div
+          onMouseDown={onResizeMouseDown}
+          style={{
+            position: 'absolute',
+            left: -3,
+            top: 0,
+            bottom: 0,
+            width: 6,
+            cursor: 'col-resize',
+            zIndex: 20,
+            background: 'transparent',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent-primary)')}
+          onMouseLeave={(e) => { if (!isDragging.current) e.currentTarget.style.background = 'transparent'; }}
+        />
+      )}
       {collapsed ? (
         <div style={{
           display: 'flex',
@@ -478,7 +538,7 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    maxWidth: 260,
+    maxWidth: 'calc(100% - 60px)',
   },
   regionActions: {
     display: "flex",

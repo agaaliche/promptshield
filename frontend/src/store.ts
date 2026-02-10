@@ -102,6 +102,10 @@ interface AppState {
   leftSidebarWidth: number;
   setLeftSidebarWidth: (w: number) => void;
 
+  // ── Right sidebar ──
+  rightSidebarWidth: number;
+  setRightSidebarWidth: (w: number) => void;
+
   // ── Upload queue ──
   uploadQueue: UploadItem[];
   setUploadQueue: (items: UploadItem[]) => void;
@@ -120,6 +124,13 @@ export const useAppStore = create<AppState>((set) => ({
   setLeftSidebarWidth: (w) => {
     localStorage.setItem('leftSidebarWidth', String(w));
     set({ leftSidebarWidth: w });
+  },
+
+  // Right sidebar
+  rightSidebarWidth: parseInt(localStorage.getItem('rightSidebarWidth') || '320', 10),
+  setRightSidebarWidth: (w) => {
+    localStorage.setItem('rightSidebarWidth', String(w));
+    set({ rightSidebarWidth: w });
   },
 
   // Vault

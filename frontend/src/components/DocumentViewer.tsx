@@ -92,6 +92,8 @@ export default function DocumentViewer() {
     docLoading,
     docLoadingMessage,
     docDetecting,
+    rightSidebarWidth,
+    setRightSidebarWidth,
   } = useAppStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1999,7 +2001,7 @@ export default function DocumentViewer() {
       {/* Canvas area */}
       <div ref={containerRef} style={{
         ...styles.canvasArea,
-        paddingRight: sidebarCollapsed ? 60 : 320,
+        paddingRight: sidebarCollapsed ? 60 : rightSidebarWidth,
         transition: 'padding-right 0.2s ease',
       }}>
         <div
@@ -2178,6 +2180,8 @@ export default function DocumentViewer() {
         sidebarRef={sidebarRef}
         collapsed={sidebarCollapsed}
         setCollapsed={setSidebarCollapsed}
+        width={rightSidebarWidth}
+        onWidthChange={setRightSidebarWidth}
         pageRegions={pageRegions}
         selectedRegionIds={selectedRegionIds}
         activeDocId={activeDocId ?? null}

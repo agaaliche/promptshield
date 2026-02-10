@@ -5,6 +5,9 @@ map PII character spans to spatial bounding boxes on the page.
 """
 
 import pytest
+
+spacy = pytest.importorskip("spacy", reason="spaCy not installed")
+
 from models.schemas import BBox, TextBlock
 from core.detection.pipeline import (
     _compute_block_offsets,

@@ -45,9 +45,8 @@ async def sync_regions(doc_id: str, items: list[RegionSyncItem]):
 @router.post("/documents/{doc_id}/anonymize", response_model=AnonymizeResponse)
 async def anonymize(doc_id: str):
     """Apply anonymization to the document based on region actions."""
+    doc = get_doc(doc_id)  # 404 before heavy imports
     from core.anonymizer.engine import anonymize_document
-
-    doc = get_doc(doc_id)
     doc.status = DocumentStatus.ANONYMIZING
 
     try:
@@ -99,14 +98,14 @@ class BatchAnonymizeResult(_PydanticBaseModel):
 @router.post("/documents/batch-anonymize")
 async def batch_anonymize(req: BatchAnonymizeRequest):
     """Anonymize multiple documents. If >1 doc, returns a zip archive."""
-    import zipfile
-    import tempfile
-    from core.anonymizer.engine import anonymize_document
-
     if not req.doc_ids:
         raise HTTPException(400, "No documents selected")
     if len(req.doc_ids) > 50:
         raise HTTPException(400, "Maximum 50 documents per export")
+
+    import zipfile
+    import tempfile
+    from core.anonymizer.engine import anonymize_document
 
     results: list[BatchAnonymizeResult] = []
     output_files: list[tuple[str, Path]] = []

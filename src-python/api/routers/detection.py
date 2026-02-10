@@ -52,10 +52,10 @@ async def detect_pii(doc_id: str):
     import asyncio
     import traceback
 
+    doc = get_doc(doc_id)  # 404 before heavy imports
+
     try:
         from core.detection.pipeline import detect_pii_on_page
-
-        doc = get_doc(doc_id)
         doc.status = DocumentStatus.DETECTING
         doc.regions = []
 
@@ -147,10 +147,10 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
     import asyncio
     import traceback
 
+    doc = get_doc(doc_id)  # 404 before heavy imports
+
     try:
         from core.detection.pipeline import detect_pii_on_page, _bbox_overlap_area, _bbox_area
-
-        doc = get_doc(doc_id)
 
         # Temporarily override config thresholds for this detection run
         original_threshold = config.confidence_threshold

@@ -2,6 +2,8 @@
 
 import pytest
 
+spacy = pytest.importorskip("spacy", reason="spaCy not installed")
+
 from core.detection.ner_detector import detect_ner, _nlp
 from models.schemas import PIIType
 

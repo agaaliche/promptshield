@@ -44,11 +44,15 @@ async def lifespan(app: FastAPI):
 
     # Load existing documents from storage
     try:
-        deps.documents = deps.store.load_all_documents()
+        loaded = deps.store.load_all_documents()
+        # Mutate the existing dict in-place so that all routers (which
+        # imported `documents` by reference at module load) see the data.
+        deps.documents.clear()
+        deps.documents.update(loaded)
         logger.info(f"Loaded {len(deps.documents)} existing documents")
     except Exception as e:
         logger.error(f"Failed to load documents: {e}")
-        deps.documents = {}
+        deps.documents.clear()
 
     # Mount temp dir for serving page bitmaps (legacy support)
     config.temp_dir.mkdir(parents=True, exist_ok=True)

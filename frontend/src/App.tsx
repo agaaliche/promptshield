@@ -44,17 +44,31 @@ function App() {
             .catch(() => {});
           getLLMStatus().then(setLLMStatus).catch(() => {});
 
-          // Load persisted documents
+          // Load persisted documents and sync Zustand state with backend
           try {
             const docs = await listDocuments();
-            if (!cancelled && docs.length > 0) {
+            if (cancelled) return;
+
+            const backendDocIds = new Set(docs.map((d) => d.doc_id));
+            const state = useAppStore.getState();
+
+            if (docs.length > 0) {
               setDocuments(docs);
-              // Auto-select the first document
-              const state = useAppStore.getState();
-              if (!state.activeDocId) {
+              // If activeDocId is stale (not on backend), reset it
+              if (state.activeDocId && !backendDocIds.has(state.activeDocId)) {
                 setActiveDocId(docs[0].doc_id);
-                setCurrentView("viewer");
+              } else if (!state.activeDocId) {
+                setActiveDocId(docs[0].doc_id);
               }
+              setCurrentView("viewer");
+            } else {
+              // Backend has no documents — clear any stale HMR state
+              setDocuments([]);
+              if (state.activeDocId) {
+                setActiveDocId(null);
+                setRegions([]);
+              }
+              setCurrentView("upload");
             }
           } catch {
             // Storage may be empty — that's fine
@@ -68,7 +82,7 @@ function App() {
 
     poll();
     return () => { cancelled = true; };
-  }, [setBackendReady, setVaultUnlocked, setLLMStatus, setDocuments, setActiveDocId, setCurrentView]);
+  }, [setBackendReady, setVaultUnlocked, setLLMStatus, setDocuments, setActiveDocId, setCurrentView, setRegions]);
 
   // Load full document data + regions when the active document changes
   useEffect(() => {

@@ -118,6 +118,37 @@ async def _anonymize_pdf(doc: DocumentInfo, original_path: Path) -> AnonymizeRes
             # Apply all redactions on this page
             page.apply_redactions()
 
+        # ── Metadata scrubbing ─────────────────────────────────────────
+        # 1. Clear standard document metadata (Author, Title, Subject, …)
+        pdf_doc.set_metadata({})
+
+        # 2. Strip XMP (XML-based) metadata
+        pdf_doc.del_xml_metadata()
+
+        # 3. Remove table-of-contents / bookmarks (may contain PII names)
+        pdf_doc.set_toc([])
+
+        # 4. Remove all remaining annotations (comments, highlights,
+        #    sticky notes, etc.) — redaction annotations were already
+        #    consumed by apply_redactions(), but other kinds may survive.
+        for pg_idx in range(len(pdf_doc)):
+            pg = pdf_doc[pg_idx]
+            annot_list = list(pg.annots()) if pg.annots() else []
+            for annot in annot_list:
+                pg.delete_annot(annot)
+
+        # 5. Remove embedded file attachments (portfolio / attached docs)
+        try:
+            if pdf_doc.embfile_count() > 0:
+                names = [pdf_doc.embfile_info(i)["name"]
+                         for i in range(pdf_doc.embfile_count())]
+                for name in names:
+                    pdf_doc.embfile_del(name)
+        except Exception:
+            logger.debug("Could not enumerate/remove embedded files")
+
+        logger.info("Scrubbed PDF metadata, annotations, TOC, and attachments")
+
         # Save anonymized PDF
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         stem = Path(doc.original_filename).stem
@@ -196,6 +227,65 @@ def _replace_in_paragraphs(paragraphs, replacements: dict[str, str]) -> None:
             r.text = ""
 
 
+def _replace_in_docx_xml_parts(docx_doc, replacements: dict[str, str]) -> None:
+    """Replace PII in DOCX XML parts that python-docx doesn't expose natively.
+
+    Covers footnotes, endnotes, and any custom XML parts that might
+    contain PII text.  Works by directly manipulating the underlying
+    XML of each relevant part in the OPC package.
+    """
+    import re
+    from lxml import etree
+
+    W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+    # Part URIs that may contain user text with PII
+    text_part_uris = [
+        "/word/footnotes.xml",
+        "/word/endnotes.xml",
+        "/word/comments.xml",     # also nuke comments
+    ]
+
+    for part_uri in text_part_uris:
+        try:
+            part = docx_doc.part.package.part_related_by(part_uri)
+        except Exception:
+            # Part may not exist in this document
+            try:
+                # Fallback: iterate all parts and match by partname
+                part = None
+                for p in docx_doc.part.package.iter_parts():
+                    if str(p.partname) == part_uri:
+                        part = p
+                        break
+                if part is None:
+                    continue
+            except Exception:
+                continue
+
+        try:
+            xml_bytes = part.blob
+            root = etree.fromstring(xml_bytes)
+
+            # Replace text in all <w:t> elements
+            changed = False
+            for t_elem in root.iter(f"{{{W_NS}}}t"):
+                if t_elem.text:
+                    new_text = t_elem.text
+                    for original, replacement in replacements.items():
+                        new_text = new_text.replace(original, replacement)
+                    if new_text != t_elem.text:
+                        t_elem.text = new_text
+                        changed = True
+
+            if changed:
+                part._blob = etree.tostring(root, xml_declaration=True,
+                                             encoding="UTF-8", standalone=True)
+                logger.debug(f"Replaced PII in DOCX part: {part_uri}")
+        except Exception:
+            logger.debug(f"Could not process DOCX part: {part_uri}")
+
+
 async def _anonymize_docx(doc: DocumentInfo, original_path: Path) -> AnonymizeResponse:
     """Anonymize a DOCX file using text replacements."""
     from docx import Document
@@ -260,6 +350,35 @@ async def _anonymize_docx(doc: DocumentInfo, original_path: Path) -> AnonymizeRe
         for row in table.rows:
             for cell in row.cells:
                 _replace_in_paragraphs(cell.paragraphs, replacements)
+
+    # Apply to headers and footers (PII often appears here)
+    for section in docx.sections:
+        for hf in (section.header, section.footer,
+                    section.first_page_header, section.first_page_footer,
+                    section.even_page_header, section.even_page_footer):
+            if hf is None:
+                continue
+            _replace_in_paragraphs(hf.paragraphs, replacements)
+            # Tables inside headers / footers
+            for tbl in hf.tables:
+                for row in tbl.rows:
+                    for cell in row.cells:
+                        _replace_in_paragraphs(cell.paragraphs, replacements)
+
+    # Apply to footnotes and endnotes (via underlying XML — python-docx
+    # doesn't expose these as first-class objects).
+    _replace_in_docx_xml_parts(docx, replacements)
+
+    # ── Metadata scrubbing ─────────────────────────────────────────
+    props = docx.core_properties
+    props.author = ""
+    props.last_modified_by = ""
+    props.title = ""
+    props.subject = ""
+    props.keywords = ""
+    props.comments = ""
+    props.category = ""
+    logger.info("Scrubbed DOCX metadata, headers, footers, and footnotes")
 
     # Save anonymized DOCX
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -362,6 +481,26 @@ async def _anonymize_xlsx(doc: DocumentInfo, original_path: Path) -> AnonymizeRe
                 if isinstance(cell.value, str) and cell.value:
                     for original, replacement in replacements.items():
                         cell.value = cell.value.replace(original, replacement)
+
+    # Also check cell comments / notes for PII
+    for sheet in wb.worksheets:
+        for row in sheet.iter_rows():
+            for cell in row:
+                if cell.comment and cell.comment.text:
+                    for original, replacement in replacements.items():
+                        cell.comment.text = cell.comment.text.replace(
+                            original, replacement
+                        )
+
+    # ── Metadata scrubbing ─────────────────────────────────────────
+    wb.properties.creator = ""
+    wb.properties.lastModifiedBy = ""
+    wb.properties.title = ""
+    wb.properties.subject = ""
+    wb.properties.description = ""
+    wb.properties.keywords = ""
+    wb.properties.category = ""
+    logger.info("Scrubbed XLSX metadata and cell comments")
 
     # Save anonymized XLSX
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -472,16 +611,23 @@ async def _anonymize_image(doc: DocumentInfo, original_path: Path) -> AnonymizeR
     output_dir.mkdir(parents=True, exist_ok=True)
 
     img_path = output_dir / f"{stem}_anonymized_{timestamp}{ext}"
-    
+
+    # ── Metadata scrubbing ─────────────────────────────────────────
+    # Strip ALL metadata (EXIF, IPTC, XMP, ICC profiles, PNG text chunks)
+    # that may contain PII such as GPS coords, author, camera serial, etc.
+    # Create a clean pixel-only copy of the image.
+    clean_img = Image.new(img.mode, img.size)
+    clean_img.putdata(list(img.getdata()))
+
     # Save with appropriate format
     if ext in [".jpg", ".jpeg"]:
-        img.save(str(img_path), "JPEG", quality=95)
+        clean_img.save(str(img_path), "JPEG", quality=95)
     elif ext == ".png":
-        img.save(str(img_path), "PNG")
+        clean_img.save(str(img_path), "PNG")
     else:
-        img.save(str(img_path))
-    
-    logger.info(f"Saved anonymized image: {img_path}")
+        clean_img.save(str(img_path))
+
+    logger.info(f"Saved anonymized image (EXIF stripped): {img_path}")
 
     # Save token manifest
     manifest_path = output_dir / "token_manifest.json"

@@ -53,6 +53,11 @@ import { resolveAllOverlaps } from "../regionUtils";
 import RegionOverlay, { type ResizeHandle } from "./RegionOverlay";
 import ExportDialog from "./ExportDialog";
 import DetectionProgressDialog from "./DetectionProgressDialog";
+import PIITypePicker from "./PIITypePicker";
+import RegionSidebar from "./RegionSidebar";
+import useDraggableToolbar from "../hooks/useDraggableToolbar";
+import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
+import useLabelConfig from "../hooks/useLabelConfig";
 
 export default function DocumentViewer() {
   const {
@@ -154,17 +159,15 @@ export default function DocumentViewer() {
   const cursorToolbarRef = useRef<HTMLDivElement>(null);
   const contentAreaRef = useRef<HTMLDivElement>(null);
   
-  // Cursor toolbar drag state
-  const [cursorToolbarPos, setCursorToolbarPos] = useState(() => {
-    try {
-      const saved = localStorage.getItem('cursorToolbarPos');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return { x: 208, y: 60 };
+  const { pos: cursorToolbarPos, isDragging: isDraggingCursorToolbar, startDrag: startCursorToolbarDrag, constrainToArea: constrainCursorToolbar } = useDraggableToolbar({
+    storageKey: 'cursorToolbarPos',
+    defaultPos: { x: 208, y: 60 },
+    toolbarRef: cursorToolbarRef,
+    boundaryRef: contentAreaRef,
+    sidebarRef,
+    sidebarCollapsed,
   });
-  const [isDraggingCursorToolbar, setIsDraggingCursorToolbar] = useState(false);
-  const cursorToolbarDragStart = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
-  
+
   // Multi-select toolbar state
   const [multiSelectToolbarExpanded, setMultiSelectToolbarExpanded] = useState(() => {
     try {
@@ -173,16 +176,15 @@ export default function DocumentViewer() {
     } catch {}
     return false;
   });
-  const [multiSelectToolbarPos, setMultiSelectToolbarPos] = useState(() => {
-    try {
-      const saved = localStorage.getItem('multiSelectToolbarPos');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return { x: 300, y: 200 };
-  });
-  const [isDraggingMultiSelectToolbar, setIsDraggingMultiSelectToolbar] = useState(false);
-  const multiSelectToolbarDragStart = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
   const multiSelectToolbarRef = useRef<HTMLDivElement>(null);
+  const { pos: multiSelectToolbarPos, isDragging: isDraggingMultiSelectToolbar, startDrag: startMultiSelectToolbarDrag, constrainToArea: constrainMultiSelectToolbar } = useDraggableToolbar({
+    storageKey: 'multiSelectToolbarPos',
+    defaultPos: { x: 300, y: 200 },
+    toolbarRef: multiSelectToolbarRef,
+    boundaryRef: contentAreaRef,
+    sidebarRef,
+    sidebarCollapsed,
+  });
   const [showMultiSelectEdit, setShowMultiSelectEdit] = useState(false);
   const [multiSelectEditLabel, setMultiSelectEditLabel] = useState<PIIType>("PERSON");
   
@@ -191,127 +193,16 @@ export default function DocumentViewer() {
     setDrawMode(tool === "draw");
   }, [setDrawMode]);
   
-  // Cursor toolbar drag handlers
-  useEffect(() => {
-    if (!isDraggingCursorToolbar) return;
-    const PAD = 8;
-    const handleMouseMove = (e: MouseEvent) => {
-      const tb = cursorToolbarRef.current;
-      const area = contentAreaRef.current;
-      if (!tb || !area) return;
-      const dx = e.clientX - cursorToolbarDragStart.current.mouseX;
-      const dy = e.clientY - cursorToolbarDragStart.current.mouseY;
-      let newX = cursorToolbarDragStart.current.startX + dx;
-      let newY = cursorToolbarDragStart.current.startY + dy;
-      
-      // Boundaries: use actual content area rect, minus sidebar
-      const areaRect = area.getBoundingClientRect();
-      const sbWidth = sidebarRef.current?.offsetWidth ?? (sidebarCollapsed ? 60 : 320);
-      const minX = areaRect.left + PAD;
-      const minY = areaRect.top + PAD;
-      const maxX = areaRect.right - sbWidth - tb.offsetWidth - PAD;
-      const maxY = areaRect.bottom - tb.offsetHeight - PAD;
-      
-      newX = Math.max(minX, Math.min(maxX, newX));
-      newY = Math.max(minY, Math.min(maxY, newY));
-      
-      setCursorToolbarPos({ x: newX, y: newY });
-    };
-    const handleMouseUp = () => {
-      setIsDraggingCursorToolbar(false);
-    };
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDraggingCursorToolbar]);
-  
-  // Save cursor toolbar position
-  useEffect(() => {
-    try {
-      localStorage.setItem('cursorToolbarPos', JSON.stringify(cursorToolbarPos));
-    } catch {}
-  }, [cursorToolbarPos]);
-  
-  // Multi-select toolbar drag handlers
-  useEffect(() => {
-    if (!isDraggingMultiSelectToolbar) return;
-    const PAD = 8;
-    const handleMouseMove = (e: MouseEvent) => {
-      const tb = multiSelectToolbarRef.current;
-      const area = contentAreaRef.current;
-      if (!tb || !area) return;
-      const dx = e.clientX - multiSelectToolbarDragStart.current.mouseX;
-      const dy = e.clientY - multiSelectToolbarDragStart.current.mouseY;
-      let newX = multiSelectToolbarDragStart.current.startX + dx;
-      let newY = multiSelectToolbarDragStart.current.startY + dy;
-      
-      // Boundaries: use actual content area rect, minus sidebar
-      const areaRect = area.getBoundingClientRect();
-      const sbWidth = sidebarRef.current?.offsetWidth ?? (sidebarCollapsed ? 60 : 320);
-      const minX = areaRect.left + PAD;
-      const minY = areaRect.top + PAD;
-      const maxX = areaRect.right - sbWidth - tb.offsetWidth - PAD;
-      const maxY = areaRect.bottom - tb.offsetHeight - PAD;
-      
-      newX = Math.max(minX, Math.min(maxX, newX));
-      newY = Math.max(minY, Math.min(maxY, newY));
-      
-      setMultiSelectToolbarPos({ x: newX, y: newY });
-    };
-    const handleMouseUp = () => {
-      setIsDraggingMultiSelectToolbar(false);
-    };
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDraggingMultiSelectToolbar]);
-  
-  // Save multi-select toolbar state
-  useEffect(() => {
-    try {
-      localStorage.setItem('multiSelectToolbarPos', JSON.stringify(multiSelectToolbarPos));
-    } catch {}
-  }, [multiSelectToolbarPos]);
-  
   useEffect(() => {
     try {
       localStorage.setItem('multiSelectToolbarExpanded', String(multiSelectToolbarExpanded));
     } catch {}
   }, [multiSelectToolbarExpanded]);
 
-  // Push floating toolbars out of the sidebar when it expands
   useEffect(() => {
-    const area = contentAreaRef.current;
-    if (!area) return;
-    const PAD = 8;
-    // Use target width, not measured — sidebar is still transitioning
-    const sbWidth = sidebarCollapsed ? 60 : 320;
-    const areaRect = area.getBoundingClientRect();
-    const maxRight = areaRect.right - sbWidth - PAD;
-
-    // Cursor toolbar
-    const ctb = cursorToolbarRef.current;
-    if (ctb) {
-      const maxX = maxRight - ctb.offsetWidth;
-      if (cursorToolbarPos.x > maxX) {
-        setCursorToolbarPos((prev) => ({ ...prev, x: Math.max(areaRect.left + PAD, maxX) }));
-      }
-    }
-    // Multi-select toolbar
-    const mtb = multiSelectToolbarRef.current;
-    if (mtb) {
-      const maxX = maxRight - mtb.offsetWidth;
-      if (multiSelectToolbarPos.x > maxX) {
-        setMultiSelectToolbarPos((prev) => ({ ...prev, x: Math.max(areaRect.left + PAD, maxX) }));
-      }
-    }
-  }, [sidebarCollapsed]);
+    constrainCursorToolbar();
+    constrainMultiSelectToolbar();
+  }, [sidebarCollapsed, constrainCursorToolbar, constrainMultiSelectToolbar]);
 
   const autoRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Keep mutable refs so global event handlers see latest values
@@ -596,146 +487,14 @@ export default function DocumentViewer() {
     return () => el.removeEventListener("wheel", onWheel);
   }, [activePage, pageCount, setActivePage]);
 
-  // ── Keyboard shortcuts ──
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      // Don't capture when typing in inputs
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-
-      switch (e.key) {
-        case "z":
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault();
-            undo();
-          }
-          break;
-        case "y":
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault();
-            redo();
-          }
-          break;
-        case "a":
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault();
-            // Select all visible regions on current page
-            setSelectedRegionIds(pageRegions.filter((r) => r.action !== "CANCEL").map((r) => r.id));
-          }
-          break;
-        case "ArrowLeft":
-          e.preventDefault();
-          setActivePage(Math.max(1, activePage - 1));
-          break;
-        case "ArrowRight":
-          e.preventDefault();
-          setActivePage(Math.min(pageCount, activePage + 1));
-          break;
-        case "+":
-        case "=":
-          e.preventDefault();
-          setZoom(zoom + 0.1);
-          break;
-        case "-":
-          e.preventDefault();
-          setZoom(zoom - 0.1);
-          break;
-        case "0":
-          e.preventDefault();
-          setZoom(1);
-          break;
-        case "Escape":
-          clearSelection();
-          if (cursorTool !== "pointer") setCursorTool("pointer");
-          if (showTypePicker) cancelTypePicker();
-          break;
-        case " ": {
-          e.preventDefault();
-          if (cursorTool !== "pointer") {
-            prevCursorToolRef.current = cursorTool;
-            setCursorTool("pointer");
-          } else {
-            setCursorTool(prevCursorToolRef.current);
-          }
-          break;
-        }
-        case "d":
-          if (selectedRegionIds.length > 0) {
-            e.preventDefault();
-            selectedRegionIds.forEach((id) => {
-              const r = regions.find((reg) => reg.id === id);
-              handleRegionAction(id, r?.action === "REMOVE" ? "PENDING" : "REMOVE");
-            });
-          }
-          break;
-        case "Delete":
-          if (selectedRegionIds.length > 0) {
-            e.preventDefault();
-            pushUndo();
-            const delIds = [...selectedRegionIds];
-            delIds.forEach((id) => removeRegion(id));
-            batchDeleteRegions(activeDocId!, delIds).catch(() => {});
-          }
-          break;
-        case "Backspace":
-          if (selectedRegionIds.length > 0) {
-            e.preventDefault();
-            selectedRegionIds.forEach((id) => {
-              const r = regions.find((reg) => reg.id === id);
-              handleRegionAction(id, r?.action === "REMOVE" ? "PENDING" : "REMOVE");
-            });
-          }
-          break;
-        case "t":
-          if (selectedRegionIds.length > 0) {
-            e.preventDefault();
-            selectedRegionIds.forEach((id) => {
-              const r = regions.find((reg) => reg.id === id);
-              handleRegionAction(id, r?.action === "TOKENIZE" ? "PENDING" : "TOKENIZE");
-            });
-          }
-          break;
-        case "c":
-          if (e.ctrlKey || e.metaKey) {
-            // Ctrl+C: Copy selected regions
-            if (selectedRegionIds.length > 0) {
-              e.preventDefault();
-              const regionsToCopy = regions.filter((r) => selectedRegionIds.includes(r.id));
-              setCopiedRegions(regionsToCopy);
-              setStatusMessage(`Copied ${regionsToCopy.length} region(s)`);
-            }
-          } else if (selectedRegionIds.length > 0) {
-            e.preventDefault();
-            pushUndo();
-            const clearIds = [...selectedRegionIds];
-            clearIds.forEach((id) => removeRegion(id));
-            batchDeleteRegions(activeDocId!, clearIds).catch(() => {});
-          }
-          break;
-        case "v":
-          if ((e.ctrlKey || e.metaKey) && copiedRegions.length > 0) {
-            // Ctrl+V: Paste copied regions on current page
-            e.preventDefault();
-            handlePasteRegions();
-          }
-          break;
-        case "Tab": {
-          e.preventDefault();
-          const pending = pageRegions.filter((r) => r.action === "PENDING");
-          if (pending.length === 0) break;
-          const lastSelected = selectedRegionIds[selectedRegionIds.length - 1];
-          const currentIdx = pending.findIndex((r) => r.id === lastSelected);
-          const next = e.shiftKey
-            ? (currentIdx <= 0 ? pending.length - 1 : currentIdx - 1)
-            : (currentIdx + 1) % pending.length;
-          setSelectedRegionIds([pending[next].id]);
-          break;
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [activePage, pageCount, zoom, selectedRegionIds, pageRegions, setActivePage, setZoom, setSelectedRegionIds, clearSelection, handleRegionAction, handleClearRegion, undo, redo, cursorTool, setCursorTool, showTypePicker, cancelTypePicker, copiedRegions, handlePasteRegions]);
+  useKeyboardShortcuts({
+    activePage, pageCount, zoom, regions, pageRegions, selectedRegionIds,
+    copiedRegions, activeDocId: activeDocId ?? null, cursorTool, showTypePicker,
+    canUndo, canRedo, setActivePage, setZoom, setSelectedRegionIds, clearSelection,
+    setCursorTool, prevCursorToolRef, cancelTypePicker, handleRegionAction,
+    undo, redo, pushUndo, removeRegion, setCopiedRegions, setStatusMessage,
+    handlePasteRegions, batchDeleteRegions,
+  });
 
   // ── Autodetect (redetect) ──
   const handleAutodetect = useCallback(async () => {
@@ -871,42 +630,11 @@ export default function DocumentViewer() {
   const pageData = doc?.pages?.[activePage - 1];
 
   // ── Manual draw handlers ──
-  const [labelConfig, setLabelConfig] = useState<PIILabelEntry[]>(() => loadLabelConfig());
-  const [typePickerEditMode, setTypePickerEditMode] = useState(false);
-  const [typePickerNewLabel, setTypePickerNewLabel] = useState("");
-
-  // Load label config from backend on mount (overrides localStorage cache)
-  useEffect(() => {
-    import("../api").then(({ fetchLabelConfig }) =>
-      fetchLabelConfig().then((remote) => {
-        const merged = ensureBuiltinLabels(remote);
-        setLabelConfig(merged);
-        cacheLabelConfig(merged);
-      })
-    ).catch(() => {}); // fall back to localStorage cache on error
-  }, []);
-
-  // Derived lists from label config
-  const visibleLabels = useMemo(() => labelConfig.filter((e) => !e.hidden), [labelConfig]);
-  const frequentLabels = useMemo(() => visibleLabels.filter((e) => e.frequent), [visibleLabels]);
-  const otherLabels = useMemo(() => visibleLabels.filter((e) => !e.frequent), [visibleLabels]);
-
-  // Labels currently used in the document (cannot be deleted, only hidden)
-  const usedLabels = useMemo(() => {
-    const s = new Set<string>();
-    for (const r of regions) s.add(r.pii_type);
-    return s;
-  }, [regions]);
-
-  const updateLabelConfig = useCallback((updater: (prev: PIILabelEntry[]) => PIILabelEntry[]) => {
-    setLabelConfig((prev) => {
-      const next = updater(prev);
-      cacheLabelConfig(next);
-      // Persist to backend (fire-and-forget)
-      import("../api").then(({ saveLabelConfigAPI }) => saveLabelConfigAPI(next)).catch(() => {});
-      return next;
-    });
-  }, []);
+  const {
+    labelConfig, visibleLabels, frequentLabels, otherLabels, usedLabels,
+    updateLabelConfig, typePickerEditMode, setTypePickerEditMode,
+    typePickerNewLabel, setTypePickerNewLabel,
+  } = useLabelConfig(regions);
 
   const getPointerPosOnImage = useCallback(
     (e: React.MouseEvent) => {
@@ -1727,13 +1455,7 @@ export default function DocumentViewer() {
         <div
           onMouseDown={(e) => {
             e.stopPropagation();
-            setIsDraggingCursorToolbar(true);
-            cursorToolbarDragStart.current = {
-              mouseX: e.clientX,
-              mouseY: e.clientY,
-              startX: cursorToolbarPos.x,
-              startY: cursorToolbarPos.y,
-            };
+            startCursorToolbarDrag(e);
           }}
           style={{
             padding: "4px 6px",
@@ -1931,13 +1653,7 @@ export default function DocumentViewer() {
           <div
             onMouseDown={(e) => {
               e.stopPropagation();
-              setIsDraggingMultiSelectToolbar(true);
-              multiSelectToolbarDragStart.current = {
-                mouseX: e.clientX,
-                mouseY: e.clientY,
-                startX: multiSelectToolbarPos.x,
-                startY: multiSelectToolbarPos.y,
-              };
+              startMultiSelectToolbarDrag(e);
             }}
             style={{
               padding: "4px 6px",
@@ -2442,568 +2158,44 @@ export default function DocumentViewer() {
 
       </div>
 
-      {/* PII Type Picker dialog — shown after drawing a region */}
       {showTypePicker && (
-        <div style={styles.overlay}>
-          <div style={{ ...styles.dialog, maxWidth: 520, maxHeight: '90vh', overflow: 'auto' }}>
-            <PenTool size={24} style={{ color: "var(--accent-primary)", marginBottom: 8 }} />
-            <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
-              Select PII Type
-            </h3>
-            <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
-              What type of sensitive data does this region contain?
-            </p>
-
-            {/* ── Frequent labels (big buttons) ── */}
-            {!typePickerEditMode && frequentLabels.length > 0 && (
-              <>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Frequent</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, width: "100%", marginBottom: 12 }}>
-                  {frequentLabels.map((entry) => (
-                    <button
-                      key={entry.label}
-                      className="btn-ghost"
-                      style={{
-                        padding: "10px 12px",
-                        fontSize: 13,
-                        fontWeight: 600,
-                        borderRadius: 8,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        justifyContent: "flex-start",
-                        border: `1.5px solid ${entry.color}22`,
-                        background: `${entry.color}0a`,
-                      }}
-                      onClick={() => handleTypePickerSelect(entry.label)}
-                    >
-                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: entry.color, flexShrink: 0 }} />
-                      {entry.label}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {/* ── Other labels (smaller buttons) ── */}
-            {!typePickerEditMode && otherLabels.length > 0 && (
-              <>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Other</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4, width: "100%", marginBottom: 12 }}>
-                  {otherLabels.map((entry) => (
-                    <button
-                      key={entry.label}
-                      className="btn-ghost"
-                      style={{
-                        padding: "5px 8px",
-                        fontSize: 11,
-                        fontWeight: 500,
-                        borderRadius: 6,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        justifyContent: "flex-start",
-                      }}
-                      onClick={() => handleTypePickerSelect(entry.label)}
-                    >
-                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: entry.color, flexShrink: 0 }} />
-                      {entry.label}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {/* ── Edit mode ── */}
-            {typePickerEditMode && (
-              <div style={{ width: "100%", marginBottom: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Manage Labels</div>
-
-                {/* Add new label */}
-                <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-                  <input
-                    type="text"
-                    placeholder="New label name..."
-                    value={typePickerNewLabel}
-                    onChange={(e) => setTypePickerNewLabel(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && typePickerNewLabel.length > 0) {
-                        const name = typePickerNewLabel;
-                        if (labelConfig.some((x) => x.label === name)) return;
-                        updateLabelConfig((prev) => [...prev, {
-                          label: name,
-                          frequent: false,
-                          hidden: false,
-                          userAdded: true,
-                          color: `hsl(${Math.floor(Math.random() * 360)}, 55%, 50%)`,
-                        }]);
-                        setTypePickerNewLabel("");
-                      }
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: "6px 10px",
-                      fontSize: 12,
-                      background: "var(--bg-primary)",
-                      border: "1px solid var(--border-color)",
-                      borderRadius: 6,
-                      color: "var(--text-primary)",
-                    }}
-                  />
-                  <button
-                    className="btn-primary"
-                    disabled={typePickerNewLabel.length === 0 || labelConfig.some((x) => x.label === typePickerNewLabel)}
-                    onClick={() => {
-                      const name = typePickerNewLabel;
-                      if (!name || labelConfig.some((x) => x.label === name)) return;
-                      updateLabelConfig((prev) => [...prev, {
-                        label: name,
-                        frequent: false,
-                        hidden: false,
-                        userAdded: true,
-                        color: `hsl(${Math.floor(Math.random() * 360)}, 55%, 50%)`,
-                      }]);
-                      setTypePickerNewLabel("");
-                    }}
-                    style={{ padding: "6px 12px", fontSize: 12 }}
-                  >
-                    Add
-                  </button>
-                </div>
-
-                {/* Label list */}
-                <div style={{ maxHeight: 320, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
-                  {labelConfig.map((entry) => {
-                    const inUse = usedLabels.has(entry.label);
-                    return (
-                      <div
-                        key={entry.label}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          padding: "5px 8px",
-                          borderRadius: 6,
-                          background: entry.hidden ? "var(--bg-primary)" : "transparent",
-                          opacity: entry.hidden ? 0.5 : 1,
-                        }}
-                      >
-                        {/* Color dot */}
-                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: entry.color, flexShrink: 0 }} />
-
-                        {/* Label name */}
-                        <span style={{ flex: 1, fontSize: 12, fontWeight: 500, color: "var(--text-primary)" }}>
-                          {entry.label}
-                          {inUse && <span style={{ fontSize: 10, color: "var(--text-secondary)", marginLeft: 4 }}>(in use)</span>}
-                        </span>
-
-                        {/* Frequent star toggle */}
-                        <button
-                          title={entry.frequent ? "Remove from frequent" : "Add to frequent"}
-                          onClick={() => updateLabelConfig((prev) => prev.map((e) => e.label === entry.label ? { ...e, frequent: !e.frequent } : e))}
-                          style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: 14, color: entry.frequent ? "#f59e0b" : "var(--text-secondary)" }}
-                        >
-                          {entry.frequent ? "★" : "☆"}
-                        </button>
-
-                        {/* Hide/show toggle */}
-                        <button
-                          title={entry.hidden ? "Show label" : "Hide label"}
-                          onClick={() => updateLabelConfig((prev) => prev.map((e) => e.label === entry.label ? { ...e, hidden: !e.hidden } : e))}
-                          style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: 12, color: "var(--text-secondary)" }}
-                        >
-                          {entry.hidden ? "👁" : "🙈"}
-                        </button>
-
-                        {/* Delete (only user-added AND not in use) */}
-                        {entry.userAdded && !inUse && (
-                          <button
-                            title="Delete label"
-                            onClick={() => updateLabelConfig((prev) => prev.filter((e) => e.label !== entry.label))}
-                            style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: 12, color: "#ef4444" }}
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Bottom actions */}
-            <div style={{ display: "flex", gap: 8, width: "100%" }}>
-              <button
-                className="btn-ghost btn-sm"
-                onClick={() => { setTypePickerEditMode(!typePickerEditMode); setTypePickerNewLabel(""); }}
-                style={{ display: "flex", alignItems: "center", gap: 4 }}
-              >
-                <Edit3 size={12} />
-                {typePickerEditMode ? "Done" : "Edit"}
-              </button>
-              <div style={{ flex: 1 }} />
-              <button
-                className="btn-ghost btn-sm"
-                onClick={() => { cancelTypePicker(); setTypePickerEditMode(false); }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <PIITypePicker
+          frequentLabels={frequentLabels}
+          otherLabels={otherLabels}
+          labelConfig={labelConfig}
+          usedLabels={usedLabels}
+          typePickerEditMode={typePickerEditMode}
+          setTypePickerEditMode={setTypePickerEditMode}
+          typePickerNewLabel={typePickerNewLabel}
+          setTypePickerNewLabel={setTypePickerNewLabel}
+          onSelect={handleTypePickerSelect}
+          onCancel={() => { cancelTypePicker(); setTypePickerEditMode(false); }}
+          updateLabelConfig={updateLabelConfig}
+        />
       )}
 
-      {/* Region sidebar */}
-      <div ref={sidebarRef} style={{
-        ...styles.sidebar,
-        width: sidebarCollapsed ? 60 : 320,
-        transition: 'width 0.2s ease',
-      }}>
-        {sidebarCollapsed ? (
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            padding: '16px 8px',
-            gap: 16,
-          }}>
-            <Shield size={24} color="var(--text-secondary)" />
-            <div style={{
-              background: 'var(--accent-primary)',
-              color: 'white',
-              fontSize: 12,
-              fontWeight: 600,
-              padding: '4px 8px',
-              borderRadius: 12,
-              minWidth: 32,
-              textAlign: 'center',
-            }}>
-              {pageRegions.length}
-            </div>
-            <button
-              onClick={() => setSidebarCollapsed(false)}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text-secondary)',
-                cursor: 'pointer',
-                padding: 8,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-              title="Expand sidebar"
-            >
-              <ChevronLeft size={20} />
-            </button>
-          </div>
-        ) : (
-          <>
-            <div style={{
-              ...styles.sidebarTitle,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              background: 'rgba(0,0,0,0.15)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Shield size={18} color="var(--text-secondary)" />
-                <span>Detected ({pageRegions.length})</span>
-              </div>
-              <button
-                onClick={() => setSidebarCollapsed(true)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer',
-                  padding: 4,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-                title="Collapse sidebar"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
-            {/* Bulk actions toolbar */}
-            {pageRegions.length > 0 && (() => {
-              const activeRegions = pageRegions.filter(r => r.action !== "CANCEL");
-              const allTokenized = activeRegions.length > 0 && activeRegions.every(r => r.action === "TOKENIZE");
-              const allRemoved = activeRegions.length > 0 && activeRegions.every(r => r.action === "REMOVE");
-              return (
-              <div style={{
-                padding: "6px 12px",
-                borderBottom: "1px solid var(--border-color)",
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-              }}>
-                <div style={{ display: "flex", gap: 6 }}>
-                <button
-                  onClick={() => {
-                    if (!activeDocId) return;
-                    pushUndo();
-                    const ids = activeRegions.map(r => r.id);
-                    const newAction = allTokenized ? "PENDING" : "TOKENIZE";
-                    ids.forEach(id => updateRegionAction(id, newAction));
-                    batchRegionAction(activeDocId, ids, newAction).catch(() => {});
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: "5px 0",
-                    fontSize: 11,
-                    fontWeight: 600,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 4,
-                    borderRadius: 4,
-                    cursor: "pointer",
-                    border: allTokenized ? "1px solid #9c27b0" : "1px solid transparent",
-                    background: allTokenized ? "rgba(156,39,176,0.15)" : "transparent",
-                    color: "#9c27b0",
-                    boxShadow: allTokenized ? "0 0 8px rgba(156,39,176,0.3)" : "none",
-                    textShadow: "none",
-                    transition: "all 0.15s ease",
-                  }}
-                  title={allTokenized ? "Undo tokenize all" : "Tokenize all regions on this page"}
-                >
-                  <Key size={13} />
-                  Tokenize all
-                </button>
-                <button
-                  onClick={() => {
-                    if (!activeDocId) return;
-                    pushUndo();
-                    const ids = activeRegions.map(r => r.id);
-                    const newAction = allRemoved ? "PENDING" : "REMOVE";
-                    ids.forEach(id => updateRegionAction(id, newAction));
-                    batchRegionAction(activeDocId, ids, newAction).catch(() => {});
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: "5px 0",
-                    fontSize: 11,
-                    fontWeight: 600,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 4,
-                    borderRadius: 4,
-                    cursor: "pointer",
-                    border: allRemoved ? "1px solid #f44336" : "1px solid transparent",
-                    background: allRemoved ? "rgba(244,67,54,0.15)" : "transparent",
-                    color: "#f44336",
-                    boxShadow: allRemoved ? "0 0 8px rgba(244,67,54,0.3)" : "none",
-                    textShadow: "none",
-                    transition: "all 0.15s ease",
-                  }}
-                  title={allRemoved ? "Undo remove all" : "Remove all regions on this page"}
-                >
-                  <Trash2 size={13} />
-                  Remove all
-                </button>
-                <button
-                  onClick={() => {
-                    if (!activeDocId) return;
-                    pushUndo();
-                    const ids = activeRegions.map(r => r.id);
-                    ids.forEach(id => removeRegion(id));
-                    batchDeleteRegions(activeDocId, ids).catch(() => {});
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: "5px 0",
-                    fontSize: 11,
-                    fontWeight: 600,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 4,
-                    borderRadius: 4,
-                    cursor: "pointer",
-                    border: "1px solid transparent",
-                    background: "transparent",
-                    color: "var(--text-secondary)",
-                    transition: "all 0.15s ease",
-                  }}
-                  title="Clear all regions from this page"
-                >
-                  <X size={13} />
-                  Clear all
-                </button>
-                </div>
-              </div>
-              );
-            })()}
-            <div style={styles.regionList}>
-          {pageRegions.map((r) => (
-            <div
-              key={r.id}
-              style={{
-                ...styles.regionItem,
-                borderLeftColor: PII_COLORS[r.pii_type] || "#888",
-                background:
-                  selectedRegionIds.includes(r.id)
-                    ? "var(--bg-tertiary)"
-                    : "var(--bg-surface)",
-              }}
-              onClick={(e) => toggleSelectedRegionId(r.id, e.ctrlKey || e.metaKey)}
-            >
-              {/* Clear — top-right close button */}
-              <button
-                className="btn-ghost btn-sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleClearRegion(r.id);
-                }}
-                title="Clear — remove from document"
-                style={styles.sidebarCloseBtn}
-              >
-                <X size={14} />
-              </button>
-              <div style={styles.regionHeader}>
-                <span
-                  style={{
-                    ...styles.typeBadge,
-                    background: PII_COLORS[r.pii_type] || "#888",
-                  }}
-                >
-                  {r.pii_type}
-                </span>
-                <span style={styles.confidence}>
-                  {Math.round(r.confidence * 100)}%
-                </span>
-                <span style={styles.sourceTag}>{r.source}</span>
-              </div>
-              <p style={styles.regionText}>"{r.text}"</p>
-              <div style={styles.regionActions}>
-                {/* Replace all */}
-                <button
-                  className="btn-ghost btn-sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleHighlightAll(r.id);
-                  }}
-                  title="Replace all matching"
-                  style={styles.sidebarBtn}
-                >
-                  <Type size={13} />
-                </button>
-                {/* Detect */}
-                <button
-                  className="btn-ghost btn-sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRefreshRegion(r.id);
-                  }}
-                  title="Detect — re-analyze"
-                  style={styles.sidebarBtn}
-                >
-                  <Search size={13} />
-                </button>
-                {/* Edit */}
-                <button
-                  className="btn-ghost btn-sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedRegionIds([r.id]);
-                  }}
-                  title="Edit label/content"
-                  style={styles.sidebarBtn}
-                >
-                  <Edit3 size={13} />
-                </button>
-                {/* Separator */}
-                <div style={{ width: 1, height: 18, background: "rgba(255,255,255,0.15)", margin: "0 2px" }} />
-
-                {/* Tokenize */}
-                <button
-                  className="btn-tokenize btn-sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRegionAction(r.id, r.action === "TOKENIZE" ? "PENDING" : "TOKENIZE");
-                  }}
-                  title={r.action === "TOKENIZE" ? "Undo tokenize" : "Tokenize"}
-                  style={{
-                    ...styles.sidebarBtn,
-                    border: r.action === "TOKENIZE" ? "1px solid #9c27b0" : "1px solid transparent",
-                    background: r.action === "TOKENIZE" ? "rgba(156,39,176,0.15)" : "transparent",
-                    color: "#9c27b0",
-                    boxShadow: r.action === "TOKENIZE" ? "0 0 6px rgba(156,39,176,0.3)" : "none",
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  <Key size={13} />
-                </button>
-                {/* Remove */}
-                <button
-                  className="btn-danger btn-sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRegionAction(r.id, r.action === "REMOVE" ? "PENDING" : "REMOVE");
-                  }}
-                  title={r.action === "REMOVE" ? "Undo remove" : "Remove"}
-                  style={{
-                    ...styles.sidebarBtn,
-                    border: r.action === "REMOVE" ? "1px solid #f44336" : "1px solid transparent",
-                    background: r.action === "REMOVE" ? "rgba(244,67,54,0.15)" : "transparent",
-                    color: "#f44336",
-                    boxShadow: r.action === "REMOVE" ? "0 0 6px rgba(244,67,54,0.3)" : "none",
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  <Trash2 size={13} />
-                </button>
-              </div>
-              {r.action !== "PENDING" && (
-                <div
-                  style={{
-                    ...styles.actionStatus,
-                    color:
-                      r.action === "REMOVE"
-                        ? "var(--accent-danger)"
-                        : r.action === "TOKENIZE"
-                        ? "var(--accent-tokenize)"
-                        : "var(--text-muted)",
-                  }}
-                >
-                  {r.action === "CANCEL" ? "✕ Dismissed" : `✓ ${r.action}`}
-                </div>
-              )}
-            </div>
-          ))}
-          {pageRegions.length === 0 && (
-            <p style={{ color: "var(--text-muted)", padding: 12, fontSize: 13 }}>
-              No PII detected on this page.
-            </p>
-          )}
-            </div>
-            {/* Sidebar footer — stats */}
-            <div style={{
-              padding: "8px 12px",
-              borderTop: "1px solid var(--border-color)",
-              display: "flex",
-              justifyContent: "space-evenly",
-              flexShrink: 0,
-              background: "rgba(0,0,0,0.15)",
-            }}>
-              <span style={{ ...styles.statBadge, fontSize: 11, background: "transparent" }}>
-                {pendingCount} pending
-              </span>
-              <span style={{ ...styles.statBadge, fontSize: 11, color: "#f44336", background: "transparent" }}>
-                {removeCount} remove
-              </span>
-              <span style={{ ...styles.statBadge, fontSize: 11, color: "#9c27b0", background: "transparent" }}>
-                {tokenizeCount} tokenize
-              </span>
-            </div>
-          </>
-        )}
-      </div>
+      <RegionSidebar
+        sidebarRef={sidebarRef}
+        collapsed={sidebarCollapsed}
+        setCollapsed={setSidebarCollapsed}
+        pageRegions={pageRegions}
+        selectedRegionIds={selectedRegionIds}
+        activeDocId={activeDocId ?? null}
+        pendingCount={pendingCount}
+        removeCount={removeCount}
+        tokenizeCount={tokenizeCount}
+        onRegionAction={handleRegionAction}
+        onClear={handleClearRegion}
+        onRefresh={handleRefreshRegion}
+        onHighlightAll={handleHighlightAll}
+        onToggleSelect={toggleSelectedRegionId}
+        onSelect={setSelectedRegionIds}
+        pushUndo={pushUndo}
+        removeRegion={removeRegion}
+        updateRegionAction={updateRegionAction}
+        batchRegionAction={batchRegionAction}
+        batchDeleteRegions={batchDeleteRegions}
+      />
       </div>{/* end contentArea */}
     </div>
   );
@@ -3042,13 +2234,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pageInfo: { fontSize: 13, color: "var(--text-secondary)", minWidth: 80, textAlign: "center" },
   zoomLabel: { fontSize: 12, color: "var(--text-muted)", minWidth: 40, textAlign: "center" },
-  statBadge: {
-    fontSize: 11,
-    color: "var(--text-secondary)",
-    background: "var(--bg-surface)",
-    padding: "2px 8px",
-    borderRadius: 4,
-  },
   canvasArea: {
     position: "absolute" as const,
     top: 0,
@@ -3069,107 +2254,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: "block",
     maxWidth: "100%",
     boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
-  },
-  sidebar: {
-    position: "absolute",
-    right: 0,
-    top: 0,
-    bottom: 0,
-    width: 320,
-    background: "var(--bg-secondary)",
-    borderLeft: "1px solid var(--border-color)",
-    display: "flex",
-    flexDirection: "column",
-    zIndex: 10,
-  },
-  sidebarTitle: {
-    fontSize: 14,
-    fontWeight: 600,
-    padding: "12px 16px",
-    borderBottom: "1px solid var(--border-color)",
-  },
-  regionList: {
-    flex: 1,
-    overflowY: "auto",
-    padding: 8,
-  },
-  regionItem: {
-    position: "relative" as const,
-    padding: 10,
-    paddingRight: 28,
-    marginBottom: 6,
-    borderRadius: 6,
-    borderLeft: "3px solid",
-    cursor: "pointer",
-    transition: "background 0.1s ease",
-  },
-  regionHeader: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 4,
-  },
-  typeBadge: {
-    fontSize: 10,
-    fontWeight: 600,
-    color: "white",
-    padding: "1px 6px",
-    borderRadius: 3,
-    textTransform: "uppercase" as const,
-  },
-  confidence: {
-    fontSize: 11,
-    color: "var(--text-muted)",
-  },
-  sourceTag: {
-    fontSize: 10,
-    color: "var(--text-muted)",
-    background: "var(--bg-primary)",
-    padding: "1px 4px",
-    borderRadius: 2,
-  },
-  regionText: {
-    fontSize: 12,
-    color: "var(--text-secondary)",
-    marginBottom: 6,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    maxWidth: 260,
-  },
-  regionActions: {
-    display: "flex",
-    alignItems: "center",
-    gap: 2,
-  },
-  sidebarBtn: {
-    padding: "4px 6px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "transparent",
-    borderRadius: 4,
-    cursor: "pointer",
-  },
-  sidebarCloseBtn: {
-    position: "absolute" as const,
-    top: 4,
-    right: 4,
-    padding: 4,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "rgba(255,255,255,0.06)",
-    border: "1px solid rgba(255,255,255,0.1)",
-    borderRadius: 5,
-    cursor: "pointer",
-    color: "var(--text-secondary)",
-    transition: "opacity 0.15s ease, color 0.15s ease, background 0.15s ease",
-  },
-  actionStatus: {
-    fontSize: 11,
-    fontWeight: 500,
-    marginTop: 4,
   },
   empty: {
     display: "flex",

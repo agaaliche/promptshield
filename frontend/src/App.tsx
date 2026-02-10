@@ -13,6 +13,7 @@ import SettingsView from "./components/SettingsView";
 function App() {
   const {
     currentView,
+    setCurrentView,
     setBackendReady,
     setVaultUnlocked,
     setLLMStatus,
@@ -21,6 +22,7 @@ function App() {
     setRegions,
     updateDocument,
     activeDocId,
+    setActiveDocId,
   } = useAppStore();
 
   // Poll for backend readiness on startup
@@ -44,6 +46,12 @@ function App() {
             const docs = await listDocuments();
             if (!cancelled && docs.length > 0) {
               setDocuments(docs);
+              // Auto-select the first document
+              const state = useAppStore.getState();
+              if (!state.activeDocId) {
+                setActiveDocId(docs[0].doc_id);
+                setCurrentView("viewer");
+              }
             }
           } catch {
             // Storage may be empty — that's fine
@@ -57,7 +65,7 @@ function App() {
 
     poll();
     return () => { cancelled = true; };
-  }, [setBackendReady, setVaultUnlocked, setLLMStatus, setDocuments]);
+  }, [setBackendReady, setVaultUnlocked, setLLMStatus, setDocuments, setActiveDocId, setCurrentView]);
 
   // Load full document data + regions when the active document changes
   useEffect(() => {

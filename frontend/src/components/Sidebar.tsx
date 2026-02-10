@@ -131,8 +131,16 @@ export default function Sidebar() {
       const updated = documents.filter((d) => d.doc_id !== docId);
       setDocuments(updated);
       if (activeDocId === docId) {
-        setActiveDocId(null);
-        setRegions([]);
+        if (updated.length > 0) {
+          // Select the next document (or the last one if we deleted the last item)
+          const oldIndex = documents.findIndex((d) => d.doc_id === docId);
+          const nextIndex = Math.min(oldIndex, updated.length - 1);
+          setActiveDocId(updated[nextIndex].doc_id);
+        } else {
+          setActiveDocId(null);
+          setRegions([]);
+          setCurrentView("upload");
+        }
       }
     } catch (err) {
       console.error("Failed to delete document:", err);

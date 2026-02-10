@@ -171,7 +171,7 @@ _active_model_id: str = ""
 _label_map: dict[str, PIIType] = {}
 
 # Chunking parameters
-_CHUNK_SIZE = 10_000       # characters per chunk (BERT tokeniser limit ~512 tokens ≈ 2-3k chars)
+_CHUNK_SIZE = 2_500        # characters per chunk (BERT tokeniser limit ~512 tokens ≈ 2-3k chars)
 _CHUNK_OVERLAP = 300       # overlap in characters
 
 

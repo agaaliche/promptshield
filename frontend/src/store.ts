@@ -135,6 +135,9 @@ interface AppState {
 
 export const useAppStore = create<AppState>()(devtools((set) => ({
   // License / Auth
+  // C7: Auth tokens in localStorage is an XSS risk. In Tauri builds these
+  // should migrate to the Tauri secure store (keychain). localStorage is
+  // acceptable for the web-preview mode where there is no Tauri API.
   licenseStatus: null,
   setLicenseStatus: (s) => set({ licenseStatus: s }),
   authTokens: (() => {
@@ -249,7 +252,9 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
   canRedo: false,
   pushUndo: () =>
     set((s) => {
-      const stack = [...s._undoStack, s.regions.map((r) => ({ ...r }))];
+      // H14: deep-clone each region including nested bbox
+      const snapshot = s.regions.map((r) => ({ ...r, bbox: { ...r.bbox } }));
+      const stack = [...s._undoStack, snapshot];
       // Cap at 50 entries to avoid memory bloat
       if (stack.length > 50) stack.shift();
       return { _undoStack: stack, _redoStack: [], canUndo: true, canRedo: false };
@@ -259,7 +264,7 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
       if (s._undoStack.length === 0) return s;
       const newUndo = [...s._undoStack];
       const prev = newUndo.pop()!;
-      const newRedo = [...s._redoStack, s.regions.map((r) => ({ ...r }))];
+      const newRedo = [...s._redoStack, s.regions.map((r) => ({ ...r, bbox: { ...r.bbox } }))];
       if (newRedo.length > 50) newRedo.shift();
       return {
         regions: prev,
@@ -274,7 +279,7 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
       if (s._redoStack.length === 0) return s;
       const newRedo = [...s._redoStack];
       const next = newRedo.pop()!;
-      const newUndo = [...s._undoStack, s.regions.map((r) => ({ ...r }))];
+      const newUndo = [...s._undoStack, s.regions.map((r) => ({ ...r, bbox: { ...r.bbox } }))];
       if (newUndo.length > 50) newUndo.shift();
       return {
         regions: next,
@@ -325,11 +330,14 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
   statusMessage: "",
   setStatusMessage: (msg) => set({ statusMessage: msg }),
 
-  // Snackbar
+  // Snackbar (cap at 5 to prevent UI flooding)
   snackbars: [],
   addSnackbar: (message, type = "info") => {
     const id = `snack-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    set((s) => ({ snackbars: [...s.snackbars, { id, message, type, createdAt: Date.now() }] }));
+    set((s) => {
+      const next = [...s.snackbars, { id, message, type, createdAt: Date.now() }];
+      return { snackbars: next.length > 5 ? next.slice(-5) : next };
+    });
   },
   removeSnackbar: (id) =>
     set((s) => ({ snackbars: s.snackbars.filter((s2) => s2.id !== id) })),

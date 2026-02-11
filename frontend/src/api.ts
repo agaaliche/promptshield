@@ -35,6 +35,7 @@ export function logError(context: string) {
 
 /** Active AbortControllers — cancel all in-flight requests. */
 const _activeControllers = new Set<AbortController>();
+let _globalAbort: AbortController | null = null;
 
 /** Cancel all pending API requests (e.g. on doc switch). */
 export function cancelAllRequests(): void {
@@ -53,11 +54,14 @@ async function request<T>(
   const controller = new AbortController();
   _activeControllers.add(controller);
   const url = `${BASE_URL}${path}`;
+  // M17: Extract headers from options separately, then spread options first
+  // so that our signal and headers always take precedence.
+  const { headers: optHeaders, signal: _discardedSignal, ...restOptions } = options;
   try {
     const res = await fetch(url, {
-      headers: { "Content-Type": "application/json", ...options.headers as Record<string, string> },
+      ...restOptions,
+      headers: { "Content-Type": "application/json", ...optHeaders as Record<string, string> },
       signal: signal ?? controller.signal,
-      ...options,
     });
 
     if (!res.ok) {

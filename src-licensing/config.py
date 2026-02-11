@@ -33,7 +33,30 @@ class Settings(BaseSettings):
     # ── CORS ──
     allowed_origins: list[str] = ["https://promptshield.com", "http://localhost:3000"]
 
+    # Admin
+    admin_emails: str = ""  # comma-separated list of admin emails
+
     model_config = {"env_prefix": "PS_", "env_file": ".env"}
 
 
 settings = Settings()
+
+# ── Startup validation ─────────────────────────────────────────
+
+def validate_settings() -> None:
+    """Raise on dangerous default values."""
+    if settings.jwt_secret in ("CHANGE-ME-IN-PRODUCTION", ""):
+        import os
+        if os.getenv("PS_ALLOW_DEFAULT_SECRET") != "1":
+            raise RuntimeError(
+                "CRITICAL: PS_JWT_SECRET is not configured. "
+                "Set the PS_JWT_SECRET environment variable before starting the server. "
+                "Set PS_ALLOW_DEFAULT_SECRET=1 only for local development."
+            )
+    if not settings.ed25519_private_key_b64:
+        import os
+        if os.getenv("PS_ALLOW_DEFAULT_SECRET") != "1":
+            raise RuntimeError(
+                "CRITICAL: PS_ED25519_PRIVATE_KEY_B64 is not set. "
+                "Run 'python generate_keys.py' to generate a keypair."
+            )

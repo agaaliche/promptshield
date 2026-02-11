@@ -18,6 +18,28 @@ use std::path::PathBuf;
 // (all-zeros) that will always reject signatures.
 const ED25519_PUBLIC_KEY_B64: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
+// C3: Compile-time check — fail release builds if the placeholder key is still present
+#[cfg(not(debug_assertions))]
+const _: () = {
+    const KEY: &[u8] = ED25519_PUBLIC_KEY_B64.as_bytes();
+    // Check if it's the all-A placeholder (base64 of all zeros)
+    // All-A pattern: 43 'A' chars + '='
+    const fn is_all_a(key: &[u8]) -> bool {
+        let mut i = 0;
+        while i < key.len() - 1 {
+            if key[i] != b'A' {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+    assert!(
+        !is_all_a(KEY),
+        "CRITICAL: ED25519_PUBLIC_KEY_B64 is still the placeholder. Set the real public key before building a release."
+    );
+};
+
 /// Parsed license payload — matches the JSON the server signs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LicensePayload {
@@ -130,7 +152,17 @@ pub fn write_license_file(blob: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create license dir: {}", e))?;
     }
-    std::fs::write(&path, blob).map_err(|e| format!("Cannot write license file: {}", e))
+    std::fs::write(&path, blob).map_err(|e| format!("Cannot write license file: {}", e))?;
+
+    // M20: Restrict file permissions (Windows: this is best-effort; real ACL control
+    // would need the windows-acl crate. On Unix we'd use std::os::unix::fs::PermissionsExt.)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    Ok(())
 }
 
 /// Delete the license file (e.g. on logout).

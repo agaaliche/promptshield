@@ -49,7 +49,12 @@ async def detokenize_file_endpoint(file: UploadFile = File(...)):
         raise HTTPException(403, "Vault is locked. Unlock it first.")
 
     filename = file.filename or "unknown.txt"
+
+    # M11: Enforce max upload size (100 MB)
+    _MAX_FILE_SIZE = 100 * 1024 * 1024
     data = await file.read()
+    if len(data) > _MAX_FILE_SIZE:
+        raise HTTPException(413, f"File too large. Maximum size is {_MAX_FILE_SIZE // (1024*1024)} MB.")
 
     try:
         out_bytes, out_name, count, unresolved = detokenize_file(data, filename, vault)
@@ -57,7 +62,7 @@ async def detokenize_file_endpoint(file: UploadFile = File(...)):
         raise HTTPException(400, str(e))
     except Exception as e:
         logger.error(f"File de-tokenization failed: {e}")
-        raise HTTPException(500, f"De-tokenization failed: {e}")
+        raise HTTPException(500, "De-tokenization failed. Check server logs for details.")
 
     ext = Path(out_name).suffix.lower()
     media_types = {

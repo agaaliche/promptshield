@@ -53,12 +53,12 @@ async def load_llm(model_path: str, force_cpu: bool = False):
     # S1: Validate model_path is under models_dir and has .gguf extension
     resolved = Path(model_path).resolve()
     models_resolved = config.models_dir.resolve()
-    if not str(resolved).startswith(str(models_resolved)):
+    if not resolved.is_relative_to(models_resolved):
         raise HTTPException(400, "Model path must be within the models directory")
     if resolved.suffix.lower() != ".gguf":
         raise HTTPException(400, "Only .gguf model files are supported")
     if not resolved.exists():
-        raise HTTPException(404, f"Model file not found: {model_path}")
+        raise HTTPException(404, "Model file not found")
 
     try:
         llm_engine.load_model(model_path, force_cpu=force_cpu)
@@ -67,7 +67,8 @@ async def load_llm(model_path: str, force_cpu: bool = False):
         config.save_user_settings()
         return {"status": "ok", "model": llm_engine.model_name}
     except Exception as e:
-        raise HTTPException(500, f"Failed to load model: {e}")
+        logger.error("Failed to load model %s: %s", model_path, e)
+        raise HTTPException(500, "Failed to load model")
 
 
 @router.post("/llm/unload")

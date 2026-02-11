@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -29,10 +30,32 @@ from schemas import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# H7: Simple in-memory rate limiter for auth endpoints
+_AUTH_RATE: dict[str, list[float]] = {}  # ip/email -> list of timestamps
+_AUTH_MAX_ATTEMPTS = 10
+_AUTH_WINDOW_SECONDS = 60
+
+
+def _check_auth_rate_limit(key: str) -> None:
+    """Raise 429 if too many auth attempts from this key."""
+    now = time.monotonic()
+    attempts = _AUTH_RATE.setdefault(key, [])
+    # Prune old entries
+    while attempts and now - attempts[0] > _AUTH_WINDOW_SECONDS:
+        attempts.pop(0)
+    if len(attempts) >= _AUTH_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many attempts. Please wait {_AUTH_WINDOW_SECONDS}s.",
+        )
+    attempts.append(now)
+
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """Create a new user account."""
+    _check_auth_rate_limit(f"register:{body.email.lower()}")
+
     # Check for existing email
     existing = await db.execute(select(User).where(User.email == body.email.lower()))
     if existing.scalar_one_or_none():
@@ -59,9 +82,18 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     """Authenticate with email + password, return JWT tokens."""
+    _check_auth_rate_limit(f"login:{body.email.lower()}")
+
     result = await db.execute(select(User).where(User.email == body.email.lower()))
     user = result.scalar_one_or_none()
-    if not user or not verify_password(body.password, user.hashed_password):
+
+    # H8: Always run verify_password to prevent timing side-channel
+    # If user is None, verify against a dummy hash (constant-time rejection)
+    _DUMMY_HASH = "$2b$12$LJ3m4ys3Lz0EN8hPEc7ZKOP/R8GSAmGNp0xOAcJqQzFh7L.0A0ANC"  # noqa: S105
+    stored_hash = user.hashed_password if user else _DUMMY_HASH
+    password_ok = verify_password(body.password, stored_hash)
+
+    if not user or not password_ok:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account deactivated")
@@ -86,12 +118,30 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     token_hash = hashlib.sha256(body.refresh_token.encode()).hexdigest()
     result = await db.execute(
         select(RefreshToken)
-        .where(RefreshToken.token_hash == token_hash, RefreshToken.revoked == False)
+        .where(RefreshToken.token_hash == token_hash)
     )
     rt = result.scalar_one_or_none()
 
     if not rt or rt.expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
+
+    # M15: Detect refresh token reuse — if already revoked, revoke ALL tokens
+    # for this user (token family compromise)
+    if rt.revoked:
+        await db.execute(
+            select(RefreshToken)
+            .where(RefreshToken.user_id == rt.user_id)
+        )
+        all_tokens = (await db.execute(
+            select(RefreshToken).where(RefreshToken.user_id == rt.user_id, RefreshToken.revoked == False)
+        )).scalars().all()
+        for t in all_tokens:
+            t.revoked = True
+        await db.flush()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token reuse detected. All sessions revoked for security.",
+        )
 
     # Rotate refresh token (revoke old, issue new)
     rt.revoked = True

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
-from functools import wraps
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,6 +15,7 @@ from auth import get_current_user
 from database import get_db
 from models import LicenseKey, Machine, Subscription, User
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 ADMIN_EMAILS: set[str] = set(
@@ -22,16 +23,10 @@ ADMIN_EMAILS: set[str] = set(
 )
 
 
-def require_admin(func_):
-    """Dependency that ensures the current user is an admin."""
-
-    @wraps(func_)
-    async def wrapper(*args, user: User = Depends(get_current_user), **kwargs):
-        if user.email not in ADMIN_EMAILS:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-        return await func_(*args, user=user, **kwargs)
-
-    return wrapper
+def _require_admin(user: User) -> None:
+    """Raise 403 if user is not an admin. Use inline in each endpoint."""
+    if user.email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
 @router.get("/stats")
@@ -40,8 +35,7 @@ async def stats(
     db: AsyncSession = Depends(get_db),
 ):
     """Get high-level licensing statistics."""
-    if user.email not in ADMIN_EMAILS:
-        raise HTTPException(status_code=403, detail="Admin access required")
+    _require_admin(user)
 
     total_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
     total_subs = (await db.execute(select(func.count(Subscription.id)))).scalar() or 0
@@ -76,8 +70,7 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
 ):
     """List all users with pagination."""
-    if user.email not in ADMIN_EMAILS:
-        raise HTTPException(status_code=403, detail="Admin access required")
+    _require_admin(user)
 
     result = await db.execute(
         select(User).order_by(User.created_at.desc()).offset(skip).limit(limit)
@@ -90,7 +83,8 @@ async def list_users(
             "email": u.email,
             "created_at": u.created_at.isoformat(),
             "trial_used": u.trial_used,
-            "stripe_customer_id": u.stripe_customer_id,
+            # L11: Redact Stripe customer ID from listing (use detail endpoint for full info)
+            "has_billing": bool(u.stripe_customer_id),
             "subscription_count": len(u.subscriptions),
             "machine_count": len(u.machines),
         }
@@ -105,8 +99,7 @@ async def get_user_detail(
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed info for a specific user."""
-    if user.email not in ADMIN_EMAILS:
-        raise HTTPException(status_code=403, detail="Admin access required")
+    _require_admin(user)
 
     import uuid as _uuid
 
@@ -157,8 +150,7 @@ async def revoke_user_licenses(
     db: AsyncSession = Depends(get_db),
 ):
     """Revoke all license keys for a user and deactivate machines."""
-    if user.email not in ADMIN_EMAILS:
-        raise HTTPException(status_code=403, detail="Admin access required")
+    _require_admin(user)
 
     import uuid as _uuid
 

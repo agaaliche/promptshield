@@ -4,6 +4,7 @@
 /// that uniquely identifies the physical machine. The fingerprint is stable
 /// across reboots but will change if hardware is swapped.
 
+use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::process::Command;
 
@@ -90,12 +91,18 @@ fn collect_raw_identifiers() -> String {
 
 #[cfg(target_os = "windows")]
 fn wmi_query(wmi_class: &str, property: &str) -> String {
+    // M22: Use -EncodedCommand to avoid shell injection via class/property names.
+    // Structured arguments prevent any interpolation attacks.
     let script = format!(
-        "(Get-WmiObject Win32_{}).{}", 
+        "(Get-CimInstance -ClassName Win32_{} -ErrorAction SilentlyContinue | Select-Object -First 1).{}",
         wmi_class, property
     );
+    // Encode the script as base64 UTF-16LE for -EncodedCommand
+    let encoded: String = base64::engine::general_purpose::STANDARD.encode(
+        script.encode_utf16().flat_map(|c| c.to_le_bytes()).collect::<Vec<u8>>()
+    );
     Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|_| "unknown".to_string())

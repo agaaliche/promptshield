@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -143,7 +145,8 @@ async def reanalyze_region(doc_id: str, region_id: str):
         raise HTTPException(400, f"Page {region.page_number} data not available")
 
     engine = llm_engine if llm_engine.is_loaded() else None
-    result = reanalyze_bbox(page_data, region.bbox, llm_engine=engine)
+    # H5: reanalyze_bbox is CPU-bound; run in a thread to avoid blocking the event loop
+    result = await asyncio.to_thread(reanalyze_bbox, page_data, region.bbox, llm_engine=engine)
 
     region.text = result["text"] or region.text
     if result["confidence"] > 0:
@@ -196,6 +199,8 @@ async def batch_delete_regions(doc_id: str, req: BatchActionRequest):
 async def add_manual_region(doc_id: str, region: PIIRegion):
     """Add a manually selected PII region."""
     doc = get_doc(doc_id)
+    # H4: Always generate server-side ID — never trust client-provided IDs
+    region.id = uuid.uuid4().hex[:12]
     region.source = "MANUAL"
     doc.regions.append(region)
     save_doc(doc)

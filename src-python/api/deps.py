@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time as _time
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 documents: dict[str, DocumentInfo] = {}
 store: Optional[DocumentStore] = None
+
+# H1: asyncio lock to serialise document mutations from concurrent requests
+_documents_lock = asyncio.Lock()
 
 # In-memory detection progress tracker  (doc_id → progress dict)
 detection_progress: dict[str, dict] = {}
@@ -68,8 +72,9 @@ def save_doc(doc: DocumentInfo) -> None:
         s = get_store()
         s.save_document(doc)
         logger.debug(f"Auto-saved document {doc.doc_id}")
-    except Exception as e:
-        logger.error(f"Failed to auto-save document {doc.doc_id}: {e}")
+    except Exception:
+        # M9: Log full traceback — callers should not silently lose data
+        logger.exception(f"Failed to auto-save document {doc.doc_id}")
 
 
 def now_ts() -> float:
@@ -112,7 +117,8 @@ def release_detection_lock() -> None:
 def config_override(**overrides):
     """Temporarily override config attributes in a thread-safe manner.
 
-    Must be used inside the detection lock to prevent concurrent mutations.
+    C6: This mutates a global singleton. Must ONLY be used while the
+    detection lock is held to prevent concurrent mutations.
     """
     originals = {}
     for key, value in overrides.items():

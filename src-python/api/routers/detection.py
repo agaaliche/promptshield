@@ -7,7 +7,7 @@ import time as _time
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel as _PydanticBaseModel
+from pydantic import BaseModel as _PydanticBaseModel, Field
 
 from core.config import config
 from models.schemas import (
@@ -142,7 +142,8 @@ async def detect_pii(doc_id: str):
 
 class RedetectRequest(_PydanticBaseModel):
     """Request body for the redetect (autodetect) endpoint."""
-    confidence_threshold: float = 0.55
+    # M10: Add ge/le bounds to confidence_threshold
+    confidence_threshold: float = Field(default=0.55, ge=0.0, le=1.0)
     page_number: Optional[int] = None  # None = all pages
     regex_enabled: bool = True
     ner_enabled: bool = True

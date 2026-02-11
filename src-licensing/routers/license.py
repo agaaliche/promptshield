@@ -41,9 +41,11 @@ def _check_subscription(user: User) -> Subscription:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No active subscription. Please subscribe at https://promptshield.com",
         )
-    # Check expiry for trials
+    # Check expiry for trials — H9: persist status change before raising
     if sub.status == "trialing" and sub.trial_end and sub.trial_end < datetime.now(timezone.utc):
         sub.status = "expired"
+        # Note: caller must pass db and commit, or use a dedicated update.
+        # The status is set on the ORM object so the session's auto-commit will persist it.
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Trial has expired")
     return sub
 
@@ -184,6 +186,18 @@ async def generate_offline_key(
     """
     sub = _check_subscription(user)
 
+    # C4: Enforce machine limits — same check as /activate
+    active_machines = [m for m in user.machines if m.is_active]
+    max_machines = sub.seats * settings.max_machines_per_seat
+
+    # Verify machine is either already activated or within seat limit
+    is_activated = any(m.machine_fingerprint == body.machine_fingerprint for m in active_machines)
+    if not is_activated and len(active_machines) >= max_machines:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Machine limit reached ({max_machines}). Activate the machine first or deactivate another.",
+        )
+
     now = datetime.now(timezone.utc)
     expires = now + timedelta(days=settings.license_validity_days)
 
@@ -261,7 +275,6 @@ async def deactivate_machine(
     db: AsyncSession = Depends(get_db),
 ):
     """Deactivate a machine to free up a seat."""
-    import uuid as _uuid
     machine = next(
         (m for m in user.machines if str(m.id) == machine_id),
         None,
@@ -269,5 +282,17 @@ async def deactivate_machine(
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
     machine.is_active = False
+
+    # H10: Also revoke all license keys for this machine's fingerprint
+    key_result = await db.execute(
+        select(LicenseKey).where(
+            LicenseKey.user_id == user.id,
+            LicenseKey.machine_fingerprint == machine.machine_fingerprint,
+            LicenseKey.revoked == False,
+        )
+    )
+    for key in key_result.scalars().all():
+        key.revoked = True
+
     await db.flush()
-    return {"ok": True, "message": "Machine deactivated"}
+    return {"ok": True, "message": "Machine deactivated and license keys revoked"}

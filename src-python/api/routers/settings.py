@@ -8,7 +8,7 @@ import platform
 import subprocess
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from core.config import config
@@ -46,11 +46,15 @@ class SettingsUpdate(BaseModel):
 
 @router.get("/settings")
 async def get_settings():
-    """Get current app settings (masks API key)."""
+    """Get current app settings (masks sensitive fields, excludes internal paths)."""
     data = config.model_dump(mode="json")
     # Never expose the full API key over the wire
     if data.get("llm_api_key"):
         data["llm_api_key"] = "••••••••"
+    # M12: Don't expose internal file-system paths to the frontend
+    _sensitive_path_keys = {"data_dir", "temp_dir", "models_dir", "app_data_dir"}
+    for key in _sensitive_path_keys:
+        data.pop(key, None)
     return data
 
 
@@ -62,8 +66,13 @@ async def update_settings(body: SettingsUpdate):
     updates = body.model_dump(exclude_none=True)
     applied = {}
 
-    # Acquire detection lock to prevent races with config_override
+    # H2: Acquire detection lock; if busy, reject with 409 instead of ignoring
     lock_held = acquire_detection_lock("settings-update")
+    if not lock_held:
+        raise HTTPException(
+            status_code=409,
+            detail="Detection is in progress. Please try again after it finishes.",
+        )
     try:
         for key, value in updates.items():
             if hasattr(config, key):

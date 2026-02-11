@@ -11,12 +11,16 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from datetime import datetime, timezone
 
+import nacl.exceptions
 from nacl.encoding import RawEncoder
 from nacl.signing import SigningKey, VerifyKey
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _get_signing_key() -> SigningKey:
@@ -55,11 +59,11 @@ def create_license_blob(
         "v": 1,  # schema version
     }
     payload_bytes = json.dumps(payload, separators=(",", ":")).encode()
-    payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode()
+    payload_b64 = base64.b64encode(payload_bytes).decode()
 
     sk = _get_signing_key()
     sig = sk.sign(payload_bytes, encoder=RawEncoder).signature
-    sig_b64 = base64.urlsafe_b64encode(sig).decode()
+    sig_b64 = base64.b64encode(sig).decode()
 
     return f"{payload_b64}.{sig_b64}"
 
@@ -75,14 +79,17 @@ def verify_license_blob(blob: str) -> dict | None:
             return None
 
         payload_b64, sig_b64 = parts
-        payload_bytes = base64.urlsafe_b64decode(payload_b64)
-        sig_bytes = base64.urlsafe_b64decode(sig_b64)
+        payload_bytes = base64.b64decode(payload_b64)
+        sig_bytes = base64.b64decode(sig_b64)
 
         vk = _get_verify_key()
         vk.verify(payload_bytes, sig_bytes, encoder=RawEncoder)
 
         return json.loads(payload_bytes)
+    except (ValueError, nacl.exceptions.BadSignatureError):
+        return None
     except Exception:
+        logger.warning("Unexpected error in verify_license_blob: %s", __import__('traceback').format_exc())
         return None
 
 

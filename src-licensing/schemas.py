@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, Field
+from urllib.parse import urlparse
+
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # ── Auth ───────────────────────────────────────────────────────
@@ -13,6 +16,18 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     full_name: str | None = None
+
+    # L10: Password complexity validation
+    @field_validator("password")
+    @classmethod
+    def validate_password_complexity(cls, v: str) -> str:
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not re.search(r"[0-9]", v):
+            raise ValueError("Password must contain at least one digit")
+        return v
 
 
 class LoginRequest(BaseModel):
@@ -85,10 +100,24 @@ class MachineResponse(BaseModel):
 
 # ── Billing ────────────────────────────────────────────────────
 
+# H11: Allowed domains for checkout redirect URLs
+_ALLOWED_REDIRECT_DOMAINS = {"promptshield.com", "www.promptshield.com", "localhost"}
+
+
 class CheckoutRequest(BaseModel):
     plan: str = "pro"  # "pro" or "free_trial"
     success_url: str = "https://promptshield.com/billing/success"
     cancel_url: str = "https://promptshield.com/billing/cancel"
+
+    @field_validator("success_url", "cancel_url")
+    @classmethod
+    def validate_redirect_url(cls, v: str) -> str:
+        parsed = urlparse(v)
+        if parsed.scheme not in ("https", "http"):
+            raise ValueError("URL must use http or https scheme")
+        if parsed.hostname not in _ALLOWED_REDIRECT_DOMAINS:
+            raise ValueError(f"Redirect URL must be on an allowed domain: {_ALLOWED_REDIRECT_DOMAINS}")
+        return v
 
 
 class CheckoutResponse(BaseModel):

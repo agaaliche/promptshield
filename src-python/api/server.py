@@ -28,6 +28,9 @@ from api.routers import (
 
 logger = logging.getLogger(__name__)
 
+# L1: Single source of truth for the app version
+_VERSION = "0.1.0"
+
 
 # ---------------------------------------------------------------------------
 # Lifecycle — replaces deprecated on_event("startup") / on_event("shutdown")
@@ -51,8 +54,9 @@ async def lifespan(app: FastAPI):
         deps.documents.update(loaded)
         logger.info(f"Loaded {len(deps.documents)} existing documents")
     except Exception as e:
+        # L6: Log the error but don't wipe all documents — individual
+        # corrupt files are already skipped inside load_all_documents.
         logger.error(f"Failed to load documents: {e}")
-        deps.documents.clear()
 
     # Mount temp dir for serving page bitmaps (legacy support)
     config.temp_dir.mkdir(parents=True, exist_ok=True)
@@ -136,7 +140,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="promptShield",
-    version="0.1.0",
+    version=_VERSION,
     description="Offline document anonymizer with local LLM — promptShield",
     lifespan=lifespan,
 )
@@ -153,7 +157,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
+    # M7: Only allow methods the API actually uses
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -172,7 +177,7 @@ app.include_router(settings.router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": _VERSION}
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +215,7 @@ if _frontend_dir is not None:
             raise HTTPException(404)
         file_path = (_frontend_dir / full_path).resolve()
         # Prevent path traversal — ensure resolved path is within frontend dir
-        if not str(file_path).startswith(str(_frontend_dir.resolve())):
+        if not file_path.is_relative_to(_frontend_dir.resolve()):
             raise HTTPException(404)
         if file_path.is_file():
             return FileResponse(str(file_path))

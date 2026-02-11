@@ -111,7 +111,8 @@ class PageData(BaseModel):
 
 class PIIRegion(BaseModel):
     """A detected PII region on a document page."""
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
+    # L2: Use 16 hex chars (64 bits) instead of 12 (48 bits) for better collision resistance
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:16])
     page_number: int
     bbox: BBox
     text: str

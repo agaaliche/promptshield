@@ -130,7 +130,22 @@ export async function login(
   return tokens;
 }
 
+// H15: Singleton promise to prevent concurrent token refresh races
+let _refreshPromise: Promise<boolean> | null = null;
+
 export async function tryRefreshToken(): Promise<boolean> {
+  // If a refresh is already in-flight, piggyback on it
+  if (_refreshPromise) return _refreshPromise;
+
+  _refreshPromise = _doRefreshToken();
+  try {
+    return await _refreshPromise;
+  } finally {
+    _refreshPromise = null;
+  }
+}
+
+async function _doRefreshToken(): Promise<boolean> {
   const tokens = useAppStore.getState().authTokens;
   if (!tokens?.refresh_token) return false;
   try {

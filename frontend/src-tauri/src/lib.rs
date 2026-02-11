@@ -92,6 +92,20 @@ async fn start_backend(app: tauri::AppHandle) -> Result<String, String> {
         .sidecar("doc-anonymizer-sidecar")
         .map_err(|e| format!("Failed to create sidecar command: {}", e))?;
 
+    // H12: Verify sidecar binary integrity before spawning (if hash is available)
+    // In production, set SIDECAR_HASH at build time.
+    if let Ok(expected_hash) = std::env::var("SIDECAR_EXPECTED_HASH") {
+        let sidecar_path = app
+            .path()
+            .resource_dir()
+            .map(|d| d.join("binaries").join("doc-anonymizer-sidecar"))
+            .unwrap_or_default();
+        let path_str = sidecar_path.to_string_lossy();
+        if !path_str.is_empty() && !integrity::verify_binary_integrity(&path_str, &expected_hash) {
+            return Err("Sidecar binary integrity check failed — possible tampering".to_string());
+        }
+    }
+
     let (mut rx, child) = sidecar_command
         .spawn()
         .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;

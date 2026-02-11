@@ -18,6 +18,9 @@ router = APIRouter(prefix="/api", tags=["vault"])
 # ── Rate-limiting state for vault unlock ──────────────────────────
 _MAX_UNLOCK_ATTEMPTS = 5
 _LOCKOUT_SECONDS = 60
+# M6: Use a threading.Lock to protect the rate-limit list from concurrent access
+import threading
+_unlock_lock = threading.Lock()
 _unlock_attempts: list[float] = []  # timestamps of recent failures
 
 
@@ -28,15 +31,16 @@ class _PassphraseBody(_PydanticBaseModel):
 def _check_unlock_rate_limit() -> None:
     """Raise 429 if too many failed unlock attempts within the lockout window."""
     now = time.monotonic()
-    # Prune old entries outside the window
-    while _unlock_attempts and now - _unlock_attempts[0] > _LOCKOUT_SECONDS:
-        _unlock_attempts.pop(0)
-    if len(_unlock_attempts) >= _MAX_UNLOCK_ATTEMPTS:
-        wait = int(_LOCKOUT_SECONDS - (now - _unlock_attempts[0])) + 1
-        raise HTTPException(
-            429,
-            f"Too many unlock attempts. Try again in {wait}s.",
-        )
+    with _unlock_lock:
+        # Prune old entries outside the window
+        while _unlock_attempts and now - _unlock_attempts[0] > _LOCKOUT_SECONDS:
+            _unlock_attempts.pop(0)
+        if len(_unlock_attempts) >= _MAX_UNLOCK_ATTEMPTS:
+            wait = int(_LOCKOUT_SECONDS - (now - _unlock_attempts[0])) + 1
+            raise HTTPException(
+                429,
+                f"Too many unlock attempts. Try again in {wait}s.",
+            )
 
 
 @router.post("/vault/unlock")
@@ -49,13 +53,15 @@ async def unlock_vault(body: _PassphraseBody):
     try:
         vault.initialize(body.passphrase)
         # Success — clear failure history
-        _unlock_attempts.clear()
+        with _unlock_lock:
+            _unlock_attempts.clear()
         return {"status": "ok", "message": "Vault unlocked"}
     except ValueError as e:
-        _unlock_attempts.append(time.monotonic())
+        with _unlock_lock:
+            _unlock_attempts.append(time.monotonic())
         raise HTTPException(403, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Failed to open vault: {e}")
+        raise HTTPException(500, "Failed to open vault. Check server logs for details.")
 
 
 @router.get("/vault/status")
@@ -78,13 +84,27 @@ async def vault_stats():
 
 
 @router.get("/vault/tokens")
-async def list_vault_tokens(source_document: str | None = None):
-    """List all tokens in the vault."""
+async def list_vault_tokens(
+    source_document: str | None = None,
+    offset: int = 0,
+    limit: int = 200,
+):
+    """List tokens in the vault with pagination."""
     from core.vault.store import vault
     if not vault.is_unlocked:
         raise HTTPException(403, "Vault is locked")
+    # M5: Pagination support
+    if limit > 1000:
+        limit = 1000
     tokens = await asyncio.to_thread(vault.list_tokens, source_document=source_document)
-    return [t.model_dump(mode="json") for t in tokens]
+    total = len(tokens)
+    page = tokens[offset : offset + limit]
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "tokens": [t.model_dump(mode="json") for t in page],
+    }
 
 
 @router.post("/vault/export")
@@ -118,4 +138,4 @@ async def import_vault(body: _VaultImportBody):
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Import failed: {e}")
+        raise HTTPException(500, "Import failed. Check server logs for details.")

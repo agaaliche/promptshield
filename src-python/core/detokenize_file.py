@@ -136,7 +136,14 @@ def _detokenize_pdf(data: bytes, vault) -> tuple[bytes, int, list[str]]:
             full_text += page.get_text() + "\n"
 
         # Find token-shaped strings  [PREFIX_TYPE_HEX]
-        token_pattern = re.compile(r"\[[A-Z][A-Z0-9_]{4,40}\]")
+        # M1: Use configurable token format from vault, falling back to general pattern
+        token_prefix = getattr(vault, 'token_prefix', None)
+        if token_prefix:
+            import re as _re2
+            escaped = _re2.escape(token_prefix)
+            token_pattern = re.compile(rf"\[{escaped}[A-Z0-9_]{{3,40}}\]")
+        else:
+            token_pattern = re.compile(r"\[[A-Z][A-Z0-9_]{4,40}\]")
         found_tokens = set(token_pattern.findall(full_text))
 
         if not found_tokens:

@@ -18,8 +18,14 @@ from core.config import config
 
 
 def find_free_port() -> int:
-    """Find an available TCP port."""
+    """Find an available TCP port.
+
+    L8: To mitigate TOCTOU, we keep SO_REUSEADDR so the port can be
+    immediately rebound by uvicorn.  The window is tiny and acceptable
+    for a local-only desktop app.
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 

@@ -1,6 +1,8 @@
 /** Global application state using Zustand. */
 
 import { create } from "zustand";
+import { devtools } from "zustand/middleware";
+import { useShallow } from "zustand/react/shallow";
 import type {
   BBox,
   DocumentInfo,
@@ -118,7 +120,7 @@ interface AppState {
   clearCompletedUploads: () => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>()(devtools((set) => ({
   // Connection
   backendReady: false,
   setBackendReady: (v) => set({ backendReady: v }),
@@ -289,14 +291,7 @@ export const useAppStore = create<AppState>((set) => ({
   isProcessing: false,
   setIsProcessing: (v) => set({ isProcessing: v }),
   statusMessage: "",
-  setStatusMessage: (msg) => {
-    set({ statusMessage: msg });
-    if (!msg) return;
-    const isError = /fail|error/i.test(msg);
-    const type = isError ? "error" : "success";
-    const id = `snack-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    set((s) => ({ snackbars: [...s.snackbars, { id, message: msg, type, createdAt: Date.now() }] }));
-  },
+  setStatusMessage: (msg) => set({ statusMessage: msg }),
 
   // Snackbar
   snackbars: [],
@@ -317,4 +312,53 @@ export const useAppStore = create<AppState>((set) => ({
   clearCompletedUploads: () => set((s) => ({
     uploadQueue: s.uploadQueue.filter((u) => u.status !== "done"),
   })),
-}));
+}), { name: "doc-anonymizer-store", enabled: import.meta.env.DEV }));
+
+// ── Focused selector hooks (M3: reduce unnecessary re-renders) ──
+
+/** Document-related selectors. */
+export const useDocumentStore = () =>
+  useAppStore(useShallow((s) => ({
+    documents: s.documents,
+    activeDocId: s.activeDocId,
+    activePage: s.activePage,
+    setActiveDocId: s.setActiveDocId,
+    setActivePage: s.setActivePage,
+    addDocument: s.addDocument,
+    updateDocument: s.updateDocument,
+  })));
+
+/** Region-related selectors. */
+export const useRegionStore = () =>
+  useAppStore(useShallow((s) => ({
+    regions: s.regions,
+    setRegions: s.setRegions,
+    updateRegionAction: s.updateRegionAction,
+    removeRegion: s.removeRegion,
+    updateRegionBBox: s.updateRegionBBox,
+    updateRegion: s.updateRegion,
+    selectedRegionIds: s.selectedRegionIds,
+    setSelectedRegionIds: s.setSelectedRegionIds,
+    toggleSelectedRegionId: s.toggleSelectedRegionId,
+    clearSelection: s.clearSelection,
+    pushUndo: s.pushUndo,
+    undo: s.undo,
+    redo: s.redo,
+    canUndo: s.canUndo,
+    canRedo: s.canRedo,
+  })));
+
+/** UI-related selectors. */
+export const useUIStore = () =>
+  useAppStore(useShallow((s) => ({
+    currentView: s.currentView,
+    setCurrentView: s.setCurrentView,
+    isProcessing: s.isProcessing,
+    setIsProcessing: s.setIsProcessing,
+    statusMessage: s.statusMessage,
+    setStatusMessage: s.setStatusMessage,
+    zoom: s.zoom,
+    setZoom: s.setZoom,
+    drawMode: s.drawMode,
+    setDrawMode: s.setDrawMode,
+  })));

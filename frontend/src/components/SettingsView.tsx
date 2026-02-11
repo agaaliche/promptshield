@@ -236,7 +236,7 @@ export default function SettingsView() {
                 </button>
               </div>
               {exportStatus && (
-                <p style={{ fontSize: 12, marginTop: 4, color: exportStatus.startsWith("Export f") ? "var(--accent-danger)" : "var(--accent-success)" }}>
+                <p style={{ fontSize: 12, marginTop: 4, color: exportStatus.toLowerCase().includes("failed") ? "var(--accent-danger)" : "var(--accent-success)" }}>
                   {exportStatus}
                 </p>
               )}
@@ -302,7 +302,7 @@ export default function SettingsView() {
                 </div>
               )}
               {importStatus && (
-                <p style={{ fontSize: 12, marginTop: 4, color: importStatus.startsWith("Import f") ? "var(--accent-danger)" : "var(--accent-success)" }}>
+                <p style={{ fontSize: 12, marginTop: 4, color: importStatus.toLowerCase().includes("failed") ? "var(--accent-danger)" : "var(--accent-success)" }}>
                   {importStatus}
                 </p>
               )}
@@ -368,7 +368,7 @@ export default function SettingsView() {
 
           {detectionSettings.ner_enabled && (
             <div style={{ marginLeft: 24, marginTop: 4, marginBottom: 8 }}>
-              <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>
+              <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
                 AI recognition model
               </label>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -384,9 +384,9 @@ export default function SettingsView() {
                       width: "100%",
                       padding: "6px 8px",
                       borderRadius: 6,
-                      border: "1px solid #444",
-                      background: "#1e1e1e",
-                      color: "#eee",
+                      border: "1px solid var(--border-color)",
+                      background: "var(--bg-secondary)",
+                      color: "var(--text-primary)",
                       fontSize: 13,
                       textAlign: "left",
                       cursor: "pointer",
@@ -405,17 +405,17 @@ export default function SettingsView() {
                       return (
                         <span style={{
                           fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4, flexShrink: 0,
-                          ...(isAuto ? { background: "rgba(76,175,80,0.15)", color: "#66bb6a" } : isMulti ? { background: "rgba(74,158,255,0.12)", color: "var(--accent-primary)" } : { background: "rgba(255,255,255,0.06)", color: "var(--text-muted)" }),
+                          ...(isAuto ? { background: "rgba(76,175,80,0.15)", color: "var(--accent-success)" } : isMulti ? { background: "rgba(74,158,255,0.12)", color: "var(--accent-primary)" } : { background: "rgba(255,255,255,0.06)", color: "var(--text-muted)" }),
                         }}>{sel.lang}</span>
                       );
                     })()}
-                    <ChevronDown size={14} style={{ flexShrink: 0, color: "#888", transition: "transform 0.15s", transform: nerDropOpen ? "rotate(180deg)" : "none" }} />
+                    <ChevronDown size={14} style={{ flexShrink: 0, color: "var(--text-muted)", transition: "transform 0.15s", transform: nerDropOpen ? "rotate(180deg)" : "none" }} />
                   </button>
                   {/* Dropdown list */}
                   {nerDropOpen && (
                     <div style={{
                       position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
-                      background: "#1e1e1e", border: "1px solid #444", borderRadius: 6,
+                      background: "var(--bg-secondary)", border: "1px solid var(--border-color)", borderRadius: 6,
                       zIndex: 50, maxHeight: 260, overflowY: "auto",
                       boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
                     }}>
@@ -431,7 +431,7 @@ export default function SettingsView() {
                             style={{
                               width: "100%", padding: "8px 10px",
                               background: selected ? "rgba(74,158,255,0.1)" : "transparent",
-                              border: "none", color: "#eee", fontSize: 13, textAlign: "left",
+                              border: "none", color: "var(--text-primary)", fontSize: 13, textAlign: "left",
                               cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
                               borderBottom: m.value === "auto" ? "1px solid rgba(255,255,255,0.10)" : "1px solid rgba(255,255,255,0.04)",
                             }}
@@ -441,7 +441,7 @@ export default function SettingsView() {
                             <span style={{ flex: 1 }}>{m.label}</span>
                             <span style={{
                               fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4, flexShrink: 0,
-                              ...(isAuto ? { background: "rgba(76,175,80,0.15)", color: "#66bb6a" } : isMulti ? { background: "rgba(74,158,255,0.12)", color: "var(--accent-primary)" } : { background: "rgba(255,255,255,0.06)", color: "var(--text-muted)" }),
+                              ...(isAuto ? { background: "rgba(76,175,80,0.15)", color: "var(--accent-success)" } : isMulti ? { background: "rgba(74,158,255,0.12)", color: "var(--accent-primary)" } : { background: "rgba(255,255,255,0.06)", color: "var(--text-muted)" }),
                             }}>{m.lang}</span>
                           </button>
                         );
@@ -593,7 +593,7 @@ export default function SettingsView() {
         ) : (
           <div>
             {localLlmReady === false ? (
-              <div style={{ padding: "10px 12px", marginBottom: 12, background: "rgba(244,67,54,0.08)", borderRadius: 6, border: "1px solid rgba(244,67,54,0.2)", fontSize: 12, color: "#f44336", lineHeight: 1.6 }}>
+              <div style={{ padding: "10px 12px", marginBottom: 12, background: "rgba(244,67,54,0.08)", borderRadius: 6, border: "1px solid rgba(244,67,54,0.2)", fontSize: 12, color: "var(--accent-danger)", lineHeight: 1.6 }}>
                 <strong>Local LLM disabled</strong> — minimum hardware requirements not met.
                 <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
                   Requires an NVIDIA GPU with 4+ GB VRAM, or at least 16 GB RAM.
@@ -680,7 +680,7 @@ export default function SettingsView() {
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div>
-                <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>
+                <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
                   API Base URL
                 </label>
                 <input
@@ -688,11 +688,11 @@ export default function SettingsView() {
                   value={remoteApiUrl}
                   onChange={(e) => { setRemoteApiUrl(e.target.value); setRemoteStatus(""); }}
                   placeholder="https://api.openai.com/v1"
-                  style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid #444", background: "#1e1e1e", color: "#eee", fontSize: 13 }}
+                  style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border-color)", background: "var(--bg-secondary)", color: "var(--text-primary)", fontSize: 13 }}
                 />
               </div>
               <div>
-                <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>
+                <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
                   API Key
                 </label>
                 <input
@@ -700,11 +700,11 @@ export default function SettingsView() {
                   value={remoteApiKey}
                   onChange={(e) => { setRemoteApiKey(e.target.value); setRemoteStatus(""); }}
                   placeholder="sk-..."
-                  style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid #444", background: "#1e1e1e", color: "#eee", fontSize: 13 }}
+                  style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border-color)", background: "var(--bg-secondary)", color: "var(--text-primary)", fontSize: 13 }}
                 />
               </div>
               <div>
-                <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>
+                <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
                   Model name
                 </label>
                 <input
@@ -712,7 +712,7 @@ export default function SettingsView() {
                   value={remoteModel}
                   onChange={(e) => { setRemoteModel(e.target.value); setRemoteStatus(""); }}
                   placeholder="gpt-4o-mini"
-                  style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid #444", background: "#1e1e1e", color: "#eee", fontSize: 13 }}
+                  style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border-color)", background: "var(--bg-secondary)", color: "var(--text-primary)", fontSize: 13 }}
                 />
                 <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
                   Examples: gpt-4o-mini, claude-sonnet-4-20250514, llama-3.1-70b-versatile, mistral-large-latest

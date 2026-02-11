@@ -3,7 +3,7 @@
  * Supports move (drag the body) and resize (drag corner/edge handles).
  */
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
 import { PII_COLORS, getPIIColor, loadLabelConfig, type PIIRegion, type RegionAction, type PIIType } from "../types";
 import { CURSOR_GRAB, CURSOR_GRABBING } from "../cursors";
@@ -90,7 +90,7 @@ interface Props {
   cursorToolbarExpanded?: boolean;
 }
 
-export default function RegionOverlay({
+function RegionOverlay({
   region,
   pageWidth,
   pageHeight,
@@ -987,3 +987,5 @@ export default function RegionOverlay({
     </>
   );
 }
+
+export default memo(RegionOverlay);

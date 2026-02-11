@@ -10,6 +10,8 @@ import io
 import logging
 from pathlib import Path
 
+from typing import Callable
+
 import fitz  # PyMuPDF
 
 from core.config import config
@@ -187,7 +189,7 @@ def _detokenize_pdf(data: bytes, vault) -> tuple[bytes, int, list[str]]:
 # Public API
 # ---------------------------------------------------------------------------
 
-_HANDLERS: dict[str, callable] = {
+_HANDLERS: dict[str, Callable] = {
     ".txt":  _detokenize_txt,
     ".csv":  _detokenize_txt,
     ".docx": _detokenize_docx,

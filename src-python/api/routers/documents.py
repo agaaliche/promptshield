@@ -74,6 +74,9 @@ async def upload_document(file: UploadFile = File(...)):
         logger.info(f"Stored file permanently: {stored_file_path}")
     except Exception as e:
         logger.error(f"Failed to store file permanently: {e}")
+    finally:
+        # Clean up temporary upload file
+        upload_path.unlink(missing_ok=True)
 
     # Copy page bitmaps to persistent storage
     try:

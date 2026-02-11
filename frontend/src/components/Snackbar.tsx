@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { X } from "lucide-react";
 import { useAppStore } from "../store";
+import { Z_TOAST } from "../zIndex";
 
 export default function Snackbar() {
   const snackbars = useAppStore((s) => s.snackbars);
@@ -53,7 +54,7 @@ const styles: Record<string, React.CSSProperties> = {
     top: 12,
     left: "50%",
     transform: "translateX(-50%)",
-    zIndex: 99999,
+    zIndex: Z_TOAST,
     display: "flex",
     flexDirection: "column",
     gap: 6,

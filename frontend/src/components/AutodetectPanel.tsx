@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ScanSearch } from "lucide-react";
+import { Z_TOP_DIALOG } from "../zIndex";
 
 interface AutodetectPanelProps {
   isProcessing: boolean;
@@ -69,7 +70,7 @@ export default function AutodetectPanel({
         border: "1px solid var(--border-color)",
         borderRadius: 8,
         boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
-        zIndex: 9999,
+        zIndex: Z_TOP_DIALOG,
         width: 340,
         display: "flex",
         flexDirection: "column",

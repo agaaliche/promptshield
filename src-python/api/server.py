@@ -208,7 +208,10 @@ if _frontend_dir is not None:
     async def spa_fallback(full_path: str):
         if full_path.startswith(("api/", "health", "bitmaps/")):
             raise HTTPException(404)
-        file_path = _frontend_dir / full_path
+        file_path = (_frontend_dir / full_path).resolve()
+        # Prevent path traversal — ensure resolved path is within frontend dir
+        if not str(file_path).startswith(str(_frontend_dir.resolve())):
+            raise HTTPException(404)
         if file_path.is_file():
             return FileResponse(str(file_path))
         return HTMLResponse((_frontend_dir / "index.html").read_text(encoding="utf-8"))

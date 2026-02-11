@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Loader2, CheckCircle2, AlertCircle, FileSearch, Clock, Shield } from "lucide-react";
 import { getDetectionProgress } from "../api";
+import { Z_MODAL } from "../zIndex";
 import type { DetectionProgressData, DetectionProgressPageStatus } from "../types";
 
 interface Props {
@@ -40,7 +41,7 @@ export default function DetectionProgressDialog({ docId, docName, visible }: Pro
     };
 
     poll(); // immediate first poll
-    intervalRef.current = setInterval(poll, 500);
+    intervalRef.current = setInterval(poll, 1500);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -60,14 +61,14 @@ export default function DetectionProgressDialog({ docId, docName, visible }: Pro
   const pageStatuses: DetectionProgressPageStatus[] = progress?.page_statuses || [];
 
   return (
-    <div style={{
+    <div role="dialog" aria-modal="true" aria-label="Detection progress" style={{
       position: "absolute",
       inset: 0,
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
       background: "rgba(0, 0, 0, 0.6)",
-      zIndex: 100,
+      zIndex: Z_MODAL,
     }}>
       <div style={{
         background: "var(--bg-secondary)",
@@ -217,13 +218,6 @@ export default function DetectionProgressDialog({ docId, docName, visible }: Pro
         </div>
       </div>
 
-      {/* Spin animation keyframe */}
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
 }

@@ -1,7 +1,49 @@
 /** Root application component. */
 
-import { useEffect } from "react";
+import { useEffect, Component } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 import { useAppStore } from "./store";
+
+// ── Error Boundary ──────────────────────────────────────────────
+interface EBProps { children: ReactNode }
+interface EBState { hasError: boolean; error: Error | null }
+
+class ErrorBoundary extends Component<EBProps, EBState> {
+  state: EBState = { hasError: false, error: null };
+
+  static getDerivedStateFromError(error: Error): EBState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[ErrorBoundary]", error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 32, textAlign: "center", color: "var(--text-secondary)" }}>
+          <h2 style={{ color: "var(--text-primary)", marginBottom: 8 }}>Something went wrong</h2>
+          <p style={{ fontSize: 13, marginBottom: 16 }}>{this.state.error?.message}</p>
+          <button
+            onClick={() => this.setState({ hasError: false, error: null })}
+            style={{
+              padding: "8px 16px",
+              background: "var(--accent-primary)",
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+              cursor: "pointer",
+            }}
+          >
+            Try Again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import { checkHealth, getVaultStatus, getLLMStatus, listDocuments, getRegions, getDocument, logError } from "./api";
 import { resolveAllOverlaps } from "./regionUtils";
 import Sidebar from "./components/Sidebar";
@@ -162,7 +204,9 @@ function App() {
             </p>
           </div>
         ) : (
-          renderView()
+          <ErrorBoundary>
+            {renderView()}
+          </ErrorBoundary>
         )}
       </main>
     </div>

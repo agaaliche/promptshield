@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import NamedTuple
+import threading
+from dataclasses import dataclass, field
+from typing import Callable, NamedTuple
 
 from spacy.lang.en.stop_words import STOP_WORDS as _EN_STOP_WORDS
 from spacy.lang.fr.stop_words import STOP_WORDS as _FR_STOP_WORDS
@@ -37,65 +39,44 @@ _FRENCH_STOPWORD_THRESHOLD = 0.12   # 12% — French text typically 20-35%
 _ITALIAN_STOPWORD_THRESHOLD = 0.12  # 12% — Italian text typically 20-35%
 
 
-def _is_english_text(text: str) -> bool:
-    """Quick heuristic: is *text* likely English?
+def _is_language(
+    text: str,
+    stopwords: set[str],
+    threshold: float,
+    lang_label: str,
+    short_default: bool = False,
+) -> bool:
+    """Unified language-detection heuristic (M7: dedup EN/FR/IT).
 
     Samples the first ~2 000 characters, tokenises by whitespace,
-    and checks what fraction of tokens are English stop words.
-    English prose normally has 25-40 % stop words; non-English text
-    (French, German, etc.) usually falls well below 15 %.
+    and checks what fraction of tokens are in the given *stopwords* set.
+    *short_default* is returned when the sample is too short to judge
+    (True for English so we don't block PII, False for others).
     """
     sample = text[:_LANG_SAMPLE_SIZE]
     words = [w.lower().strip(".,;:!?()[]{}\"'") for w in sample.split()]
     words = [w for w in words if len(w) >= 2]  # drop 1-char tokens
     if len(words) < 20:
-        # Too short to judge — assume English to avoid blocking real PII
-        return True
-    stop_count = sum(1 for w in words if w in _EN_STOP_LOWER)
+        return short_default
+    stop_count = sum(1 for w in words if w in stopwords)
     ratio = stop_count / len(words)
     logger.debug(
-        "Language check: %d/%d words (%.1f%%) are English stop words",
-        stop_count, len(words), ratio * 100,
+        "%s language check: %d/%d words (%.1f%%) are stop words",
+        lang_label, stop_count, len(words), ratio * 100,
     )
-    return ratio >= _ENGLISH_STOPWORD_THRESHOLD
+    return ratio >= threshold
+
+
+def _is_english_text(text: str) -> bool:
+    return _is_language(text, _EN_STOP_LOWER, _ENGLISH_STOPWORD_THRESHOLD, "English", short_default=True)
 
 
 def _is_french_text(text: str) -> bool:
-    """Quick heuristic: is *text* likely French?
-
-    Same approach as ``_is_english_text`` but using French stop words.
-    """
-    sample = text[:_LANG_SAMPLE_SIZE]
-    words = [w.lower().strip(".,;:!?()[]{}\"'") for w in sample.split()]
-    words = [w for w in words if len(w) >= 2]
-    if len(words) < 20:
-        return False  # too short to judge
-    stop_count = sum(1 for w in words if w in _FR_STOP_LOWER)
-    ratio = stop_count / len(words)
-    logger.debug(
-        "French language check: %d/%d words (%.1f%%) are French stop words",
-        stop_count, len(words), ratio * 100,
-    )
-    return ratio >= _FRENCH_STOPWORD_THRESHOLD
+    return _is_language(text, _FR_STOP_LOWER, _FRENCH_STOPWORD_THRESHOLD, "French")
 
 
 def _is_italian_text(text: str) -> bool:
-    """Quick heuristic: is *text* likely Italian?
-
-    Same approach as ``_is_english_text`` but using Italian stop words.
-    """
-    sample = text[:_LANG_SAMPLE_SIZE]
-    words = [w.lower().strip(".,;:!?()[]{}\"'") for w in sample.split()]
-    words = [w for w in words if len(w) >= 2]
-    if len(words) < 20:
-        return False  # too short to judge
-    stop_count = sum(1 for w in words if w in _IT_STOP_LOWER)
-    ratio = stop_count / len(words)
-    logger.debug(
-        "Italian language check: %d/%d words (%.1f%%) are Italian stop words",
-        stop_count, len(words), ratio * 100,
-    )
-    return ratio >= _ITALIAN_STOPWORD_THRESHOLD
+    return _is_language(text, _IT_STOP_LOWER, _ITALIAN_STOPWORD_THRESHOLD, "Italian")
 
 
 class NERMatch(NamedTuple):
@@ -187,6 +168,9 @@ _active_fr_model_name: str = ""
 _nlp_it = None
 _active_it_model_name: str = ""
 
+# Lock protecting lazy model initialisation (all three languages)
+_model_lock = threading.Lock()
+
 # Model cascade order depending on user preference
 _MODEL_CASCADE: dict[str, list[str]] = {
     "trf": ["en_core_web_trf", "en_core_web_lg", "en_core_web_sm"],
@@ -214,74 +198,68 @@ _CHUNK_OVERLAP = 500           # 500-char overlap so entities at boundaries aren
 
 
 def _load_model():
-    """Lazy-load the best available spaCy model based on config preference."""
+    """Lazy-load the best available spaCy model based on config preference.
+
+    Thread-safe: uses ``_model_lock`` so concurrent requests don't race.
+    Will NOT auto-download models at runtime — raises RuntimeError if
+    none are installed.
+    """
     global _nlp, _active_model_name
-    if _nlp is not None:
+    if _nlp is not None:  # fast path — no lock needed once loaded
         return _nlp
 
-    import spacy
-    from core.config import config
-
-    preference = getattr(config, "ner_model_preference", "trf")
-    cascade = _MODEL_CASCADE.get(preference, _MODEL_CASCADE["trf"])
-
-    for model_name in cascade:
-        try:
-            _nlp = spacy.load(model_name)
-            _active_model_name = model_name
-            logger.info(f"Loaded spaCy model '{model_name}'")
+    with _model_lock:
+        # Double-check after acquiring lock
+        if _nlp is not None:
             return _nlp
-        except OSError:
-            logger.info(f"spaCy model '{model_name}' not installed — trying next")
 
-    # Nothing installed — attempt to download en_core_web_sm as last resort
-    logger.warning("No spaCy model found. Downloading en_core_web_sm…")
-    try:
-        spacy.cli.download("en_core_web_sm")
-        _nlp = spacy.load("en_core_web_sm")
-        _active_model_name = "en_core_web_sm"
-        logger.info("Using fallback model 'en_core_web_sm'")
-        return _nlp
-    except (Exception, SystemExit) as e:
-        logger.error(f"Failed to load any spaCy model: {e}")
+        import spacy
+        from core.config import config
+
+        preference = getattr(config, "ner_model_preference", "trf")
+        cascade = _MODEL_CASCADE.get(preference, _MODEL_CASCADE["trf"])
+
+        for model_name in cascade:
+            try:
+                _nlp = spacy.load(model_name)
+                _active_model_name = model_name
+                logger.info(f"Loaded spaCy model '{model_name}'")
+                return _nlp
+            except OSError:
+                logger.info(f"spaCy model '{model_name}' not installed — trying next")
+
         raise RuntimeError(
             "No spaCy NER model available. Install one with: "
             "python -m spacy download en_core_web_lg"
-        ) from e
+        )
 
 
 def _load_french_model():
     """Lazy-load the best available French spaCy model.
 
-    Tries fr_core_news_lg → fr_core_news_md → fr_core_news_sm.
-    If none are installed, attempts to download fr_core_news_sm.
-    Returns None if no French model can be loaded.
+    Thread-safe via ``_model_lock``.  Will NOT auto-download.
+    Returns None if no French model is installed.
     """
     global _nlp_fr, _active_fr_model_name
     if _nlp_fr is not None:
         return _nlp_fr
 
-    import spacy
-
-    for model_name in _FR_MODEL_CASCADE:
-        try:
-            _nlp_fr = spacy.load(model_name)
-            _active_fr_model_name = model_name
-            logger.info(f"Loaded French spaCy model '{model_name}'")
+    with _model_lock:
+        if _nlp_fr is not None:
             return _nlp_fr
-        except OSError:
-            logger.info(f"French spaCy model '{model_name}' not installed — trying next")
 
-    # Nothing installed — attempt to download fr_core_news_sm
-    logger.warning("No French spaCy model found. Downloading fr_core_news_sm…")
-    try:
-        spacy.cli.download("fr_core_news_sm")
-        _nlp_fr = spacy.load("fr_core_news_sm")
-        _active_fr_model_name = "fr_core_news_sm"
-        logger.info("Using fallback French model 'fr_core_news_sm'")
-        return _nlp_fr
-    except (Exception, SystemExit) as e:
-        logger.warning(f"Failed to load any French spaCy model: {e}")
+        import spacy
+
+        for model_name in _FR_MODEL_CASCADE:
+            try:
+                _nlp_fr = spacy.load(model_name)
+                _active_fr_model_name = model_name
+                logger.info(f"Loaded French spaCy model '{model_name}'")
+                return _nlp_fr
+            except OSError:
+                logger.info(f"French spaCy model '{model_name}' not installed — trying next")
+
+        logger.warning("No French spaCy model found. Install with: python -m spacy download fr_core_news_lg")
         return None
 
 
@@ -293,68 +271,138 @@ def is_french_ner_available() -> bool:
         return False
 
 
-def _is_false_positive_person(text: str) -> bool:
-    """Return True if a PERSON entity is likely a false positive."""
+# ── Unified false-positive helpers (M7: dedup EN/FR/IT) ──────────
+
+def _is_false_positive_person_generic(text: str, stopwords: set[str]) -> bool:
+    """Return True if a PERSON entity is likely a false positive.
+
+    Shared logic for all languages — only the *stopwords* set differs.
+    """
     clean = text.strip().lower()
-    # Single-word match that's a common false positive
-    if clean in _PERSON_STOPWORDS:
+    if clean in stopwords:
         return True
-    # All-caps short strings (likely acronyms, not names)
     if text.isupper() and len(text) <= 5:
         return True
-    # Starts with a digit (unlikely name)
     if text.strip() and text.strip()[0].isdigit():
         return True
-    # Single word that doesn't look like a real name
     words = text.strip().split()
     if len(words) == 1 and len(words[0]) <= 3:
         return True
     return False
 
 
-def _is_false_positive_org(text: str) -> bool:
-    """Return True if an ORG entity is likely a false positive."""
+def _is_false_positive_org_generic(
+    text: str,
+    org_stopwords: set[str],
+    generic_stopwords: set[str] | None = None,
+) -> bool:
+    """Return True if an ORG entity is likely a false positive.
+
+    Shared logic for all languages.  *generic_stopwords* is only used by
+    English (pass ``None`` for FR/IT).
+    """
     clean = text.strip().lower()
-    if clean in _ORG_STOPWORDS:
+    if clean in org_stopwords:
         return True
-    if clean in _GENERIC_STOPWORDS:
+    if generic_stopwords and clean in generic_stopwords:
         return True
-    # Very short org names are almost always noise
     if len(clean) <= 2:
         return True
-    # Single short all-caps word (abbreviations like "IT", "HR", "AI")
     if text.isupper() and len(text.strip()) <= 4:
         return True
     return False
 
 
-def _process_chunk(nlp, text: str, global_offset: int) -> list[NERMatch]:
-    """Run NER on a single text chunk, adjusting offsets to the global text."""
+def _is_false_positive_person(text: str) -> bool:
+    return _is_false_positive_person_generic(text, _PERSON_STOPWORDS)
+
+
+def _is_false_positive_org(text: str) -> bool:
+    return _is_false_positive_org_generic(text, _ORG_STOPWORDS, _GENERIC_STOPWORDS)
+
+
+# ── Per-language NER configuration (M7: dedup EN/FR/IT) ──────────
+
+@dataclass(frozen=True)
+class _LangNERConfig:
+    """All per-language parameters that differ between EN/FR/IT NER."""
+
+    label_map: dict[str, PIIType]
+    article_prefixes: tuple[str, ...]
+    strip_title_suffixes: bool  # True only for EN
+    fp_person: Callable[[str], bool]
+    fp_org: Callable[[str], bool]
+    generic_stopwords_filter: bool  # extra _GENERIC_STOPWORDS check (EN only)
+    active_model_name: Callable[[], str]
+    # confidence tuning
+    base_confidence: dict[PIIType, float] = field(default_factory=dict)
+    person_multiword_cap: float = 0.95
+    org_3word_cap: float = 0.80
+    person_single_penalty: float = 0.20
+    org_single_floor: float = 0.25
+    model_boost_tiers: tuple[tuple[str, float, float], ...] = ()
+
+
+def _get_active_en_model() -> str:
+    return _active_model_name
+
+
+def _get_active_fr_model() -> str:
+    return _active_fr_model_name
+
+
+def _get_active_it_model() -> str:
+    return _active_it_model_name
+
+
+_EN_CONFIG = _LangNERConfig(
+    label_map=_SPACY_LABEL_MAP,
+    article_prefixes=("the ", "The ", "a ", "A ", "an ", "An "),
+    strip_title_suffixes=True,
+    fp_person=_is_false_positive_person,
+    fp_org=_is_false_positive_org,
+    generic_stopwords_filter=True,
+    active_model_name=_get_active_en_model,
+    base_confidence={
+        PIIType.PERSON: 0.80, PIIType.ORG: 0.45,
+        PIIType.LOCATION: 0.40, PIIType.ADDRESS: 0.55,
+    },
+    person_multiword_cap=0.95,
+    org_3word_cap=0.80,
+    person_single_penalty=0.20,
+    org_single_floor=0.25,
+    model_boost_tiers=(("_trf", 0.08, 0.98), ("_lg", 0.03, 0.95)),
+)
+
+
+# ── Unified _process_chunk / _estimate_confidence (M7) ──────────
+
+def _process_chunk_generic(
+    nlp, text: str, global_offset: int, cfg: _LangNERConfig,
+) -> list[NERMatch]:
+    """Run NER on a single text chunk — shared logic for all languages."""
     doc = nlp(text)
     matches: list[NERMatch] = []
 
     for ent in doc.ents:
-        pii_type = _SPACY_LABEL_MAP.get(ent.label_)
+        pii_type = cfg.label_map.get(ent.label_)
         if pii_type is None:
             continue
 
-        # Trim entity text at the first newline — spaCy sometimes grabs
-        # content that spills across lines.
         raw_text = ent.text
         nl_idx = raw_text.find("\n")
         if nl_idx > 0:
             raw_text = raw_text[:nl_idx]
         cleaned = raw_text.strip()
 
-        # Strip leading articles / filler words
-        for prefix in ("the ", "The ", "a ", "A ", "an ", "An "):
+        # Strip leading articles
+        for prefix in cfg.article_prefixes:
             if cleaned.startswith(prefix):
                 cleaned = cleaned[len(prefix):].strip()
                 break
 
-        # For PERSON entities, trim trailing job titles
-        # e.g. "Kathryn Ruemmler Chief" → "Kathryn Ruemmler"
-        if pii_type == PIIType.PERSON:
+        # For PERSON entities, trim trailing job titles (EN only)
+        if cfg.strip_title_suffixes and pii_type == PIIType.PERSON:
             words = cleaned.split()
             while len(words) > 2 and words[-1].lower() in _TITLE_SUFFIXES:
                 words.pop()
@@ -364,23 +412,21 @@ def _process_chunk(nlp, text: str, global_offset: int) -> list[NERMatch]:
         if len(cleaned) < min_len:
             continue
 
-        # Filter obvious false positives per type
-        if pii_type == PIIType.PERSON and _is_false_positive_person(cleaned):
+        if pii_type == PIIType.PERSON and cfg.fp_person(cleaned):
             continue
-        if pii_type == PIIType.ORG and _is_false_positive_org(cleaned):
+        if pii_type == PIIType.ORG and cfg.fp_org(cleaned):
             continue
 
-        # Filter generic NER noise — all-uppercase short tokens,
-        # single-char entities, or purely-numeric strings.
+        # Generic noise filters
         if cleaned.isupper() and len(cleaned) <= 5:
             continue
         if cleaned.isdigit():
             continue
-        if cleaned.lower() in _GENERIC_STOPWORDS:
+        if cfg.generic_stopwords_filter and cleaned.lower() in _GENERIC_STOPWORDS:
             continue
 
         end_char = ent.start_char + len(raw_text.rstrip())
-        confidence = _estimate_confidence(ent, pii_type)
+        confidence = _estimate_confidence_generic(ent, pii_type, cfg)
         matches.append(NERMatch(
             start=global_offset + ent.start_char,
             end=global_offset + end_char,
@@ -390,6 +436,44 @@ def _process_chunk(nlp, text: str, global_offset: int) -> list[NERMatch]:
         ))
 
     return matches
+
+
+def _estimate_confidence_generic(ent, pii_type: PIIType, cfg: _LangNERConfig) -> float:
+    """Estimate confidence for a spaCy entity — shared logic for all languages."""
+    conf = cfg.base_confidence.get(pii_type, 0.40)
+
+    text = ent.text.strip()
+    word_count = len(text.split())
+
+    if word_count >= 2 and pii_type == PIIType.PERSON:
+        conf = min(conf + 0.08, cfg.person_multiword_cap)
+    if word_count >= 2 and pii_type == PIIType.ORG:
+        conf = min(conf + 0.15, 0.80)
+    if word_count >= 3 and pii_type == PIIType.ORG:
+        conf = min(conf + 0.05, cfg.org_3word_cap)
+
+    if pii_type == PIIType.PERSON and word_count == 1:
+        conf = max(conf - cfg.person_single_penalty, 0.40)
+    if pii_type == PIIType.ORG and word_count == 1:
+        conf = max(conf - 0.15, cfg.org_single_floor)
+    if pii_type == PIIType.LOCATION and word_count == 1:
+        conf = max(conf - 0.10, 0.30)
+
+    model_name = cfg.active_model_name()
+    for suffix, delta, cap in cfg.model_boost_tiers:
+        if model_name.endswith(suffix):
+            conf = min(conf + delta, cap)
+            break
+
+    return round(conf, 4)
+
+
+def _process_chunk(nlp, text: str, global_offset: int) -> list[NERMatch]:
+    return _process_chunk_generic(nlp, text, global_offset, _EN_CONFIG)
+
+
+def _estimate_confidence(ent, pii_type: PIIType) -> float:
+    return _estimate_confidence_generic(ent, pii_type, _EN_CONFIG)
 
 
 def _deduplicate_matches(matches: list[NERMatch]) -> list[NERMatch]:
@@ -489,116 +573,42 @@ _FR_ORG_STOPWORDS: set[str] = {
 
 def _is_false_positive_person_fr(text: str) -> bool:
     """Return True if a French PERSON entity is likely a false positive."""
-    clean = text.strip().lower()
-    if clean in _FR_PERSON_STOPWORDS:
-        return True
-    if text.isupper() and len(text) <= 5:
-        return True
-    if text.strip() and text.strip()[0].isdigit():
-        return True
-    words = text.strip().split()
-    if len(words) == 1 and len(words[0]) <= 3:
-        return True
-    return False
+    return _is_false_positive_person_generic(text, _FR_PERSON_STOPWORDS)
 
 
 def _is_false_positive_org_fr(text: str) -> bool:
     """Return True if a French ORG entity is likely a false positive."""
-    clean = text.strip().lower()
-    if clean in _FR_ORG_STOPWORDS:
-        return True
-    if clean in _GENERIC_STOPWORDS:
-        return True
-    if len(clean) <= 2:
-        return True
-    if text.isupper() and len(text.strip()) <= 4:
-        return True
-    return False
+    return _is_false_positive_org_generic(text, _FR_ORG_STOPWORDS, _GENERIC_STOPWORDS)
+
+
+_FR_CONFIG = _LangNERConfig(
+    label_map=_SPACY_FR_LABEL_MAP,
+    article_prefixes=(
+        "le ", "Le ", "la ", "La ", "l'", "L'",
+        "les ", "Les ", "un ", "Un ", "une ", "Une ",
+    ),
+    strip_title_suffixes=False,
+    fp_person=_is_false_positive_person_fr,
+    fp_org=_is_false_positive_org_fr,
+    generic_stopwords_filter=False,
+    active_model_name=_get_active_fr_model,
+    base_confidence={
+        PIIType.PERSON: 0.78, PIIType.ORG: 0.55, PIIType.LOCATION: 0.40,
+    },
+    person_multiword_cap=0.92,
+    org_3word_cap=0.85,
+    person_single_penalty=0.18,
+    org_single_floor=0.30,
+    model_boost_tiers=(("_lg", 0.05, 0.95), ("_md", 0.03, 0.92)),
+)
 
 
 def _process_chunk_fr(nlp, text: str, global_offset: int) -> list[NERMatch]:
-    """Run French NER on a single text chunk, adjusting offsets."""
-    doc = nlp(text)
-    matches: list[NERMatch] = []
-
-    for ent in doc.ents:
-        pii_type = _SPACY_FR_LABEL_MAP.get(ent.label_)
-        if pii_type is None:
-            continue
-
-        raw_text = ent.text
-        nl_idx = raw_text.find("\n")
-        if nl_idx > 0:
-            raw_text = raw_text[:nl_idx]
-        cleaned = raw_text.strip()
-
-        # Strip leading French articles
-        for prefix in ("le ", "Le ", "la ", "La ", "l'", "L'",
-                       "les ", "Les ", "un ", "Un ", "une ", "Une "):
-            if cleaned.startswith(prefix):
-                cleaned = cleaned[len(prefix):].strip()
-                break
-
-        min_len = _MIN_ENTITY_LENGTH.get(pii_type, 2)
-        if len(cleaned) < min_len:
-            continue
-
-        if pii_type == PIIType.PERSON and _is_false_positive_person_fr(cleaned):
-            continue
-        if pii_type == PIIType.ORG and _is_false_positive_org_fr(cleaned):
-            continue
-        if cleaned.isupper() and len(cleaned) <= 5:
-            continue
-        if cleaned.isdigit():
-            continue
-
-        end_char = ent.start_char + len(raw_text.rstrip())
-        confidence = _estimate_confidence_fr(ent, pii_type)
-        matches.append(NERMatch(
-            start=global_offset + ent.start_char,
-            end=global_offset + end_char,
-            text=cleaned,
-            pii_type=pii_type,
-            confidence=confidence,
-        ))
-
-    return matches
+    return _process_chunk_generic(nlp, text, global_offset, _FR_CONFIG)
 
 
 def _estimate_confidence_fr(ent, pii_type: PIIType) -> float:
-    """Estimate confidence for a French spaCy entity."""
-    base_confidence = {
-        PIIType.PERSON: 0.78,
-        PIIType.ORG: 0.55,
-        PIIType.LOCATION: 0.40,
-    }
-    conf = base_confidence.get(pii_type, 0.40)
-
-    text = ent.text.strip()
-    word_count = len(text.split())
-
-    if word_count >= 2 and pii_type == PIIType.PERSON:
-        conf = min(conf + 0.08, 0.92)
-    if word_count >= 2 and pii_type == PIIType.ORG:
-        conf = min(conf + 0.15, 0.80)
-    if word_count >= 3 and pii_type == PIIType.ORG:
-        conf = min(conf + 0.05, 0.85)
-
-    # Single-word entities — reduce confidence
-    if pii_type == PIIType.PERSON and word_count == 1:
-        conf = max(conf - 0.18, 0.40)
-    if pii_type == PIIType.ORG and word_count == 1:
-        conf = max(conf - 0.15, 0.30)
-    if pii_type == PIIType.LOCATION and word_count == 1:
-        conf = max(conf - 0.10, 0.30)
-
-    # Boost for larger French models
-    if _active_fr_model_name.endswith("_lg"):
-        conf = min(conf + 0.05, 0.95)
-    elif _active_fr_model_name.endswith("_md"):
-        conf = min(conf + 0.03, 0.92)
-
-    return round(conf, 4)
+    return _estimate_confidence_generic(ent, pii_type, _FR_CONFIG)
 
 
 def detect_ner_french(text: str) -> list[NERMatch]:
@@ -676,35 +686,29 @@ _IT_ORG_STOPWORDS: set[str] = {
 def _load_italian_model():
     """Lazy-load the best available Italian spaCy model.
 
-    Tries it_core_news_lg → it_core_news_md → it_core_news_sm.
-    If none are installed, attempts to download it_core_news_sm.
-    Returns None if no Italian model can be loaded.
+    Thread-safe via ``_model_lock``.  Will NOT auto-download.
+    Returns None if no Italian model is installed.
     """
     global _nlp_it, _active_it_model_name
     if _nlp_it is not None:
         return _nlp_it
 
-    import spacy
-
-    for model_name in _IT_MODEL_CASCADE:
-        try:
-            _nlp_it = spacy.load(model_name)
-            _active_it_model_name = model_name
-            logger.info(f"Loaded Italian spaCy model '{model_name}'")
+    with _model_lock:
+        if _nlp_it is not None:
             return _nlp_it
-        except OSError:
-            logger.info(f"Italian spaCy model '{model_name}' not installed — trying next")
 
-    # Nothing installed — attempt to download it_core_news_sm
-    logger.warning("No Italian spaCy model found. Downloading it_core_news_sm…")
-    try:
-        spacy.cli.download("it_core_news_sm")
-        _nlp_it = spacy.load("it_core_news_sm")
-        _active_it_model_name = "it_core_news_sm"
-        logger.info("Using fallback Italian model 'it_core_news_sm'")
-        return _nlp_it
-    except (Exception, SystemExit) as e:
-        logger.warning(f"Failed to load any Italian spaCy model: {e}")
+        import spacy
+
+        for model_name in _IT_MODEL_CASCADE:
+            try:
+                _nlp_it = spacy.load(model_name)
+                _active_it_model_name = model_name
+                logger.info(f"Loaded Italian spaCy model '{model_name}'")
+                return _nlp_it
+            except OSError:
+                logger.info(f"Italian spaCy model '{model_name}' not installed — trying next")
+
+        logger.warning("No Italian spaCy model found. Install with: python -m spacy download it_core_news_lg")
         return None
 
 
@@ -718,117 +722,43 @@ def is_italian_ner_available() -> bool:
 
 def _is_false_positive_person_it(text: str) -> bool:
     """Return True if an Italian PERSON entity is likely a false positive."""
-    clean = text.strip().lower()
-    if clean in _IT_PERSON_STOPWORDS:
-        return True
-    if text.isupper() and len(text) <= 5:
-        return True
-    if text.strip() and text.strip()[0].isdigit():
-        return True
-    words = text.strip().split()
-    if len(words) == 1 and len(words[0]) <= 3:
-        return True
-    return False
+    return _is_false_positive_person_generic(text, _IT_PERSON_STOPWORDS)
 
 
 def _is_false_positive_org_it(text: str) -> bool:
     """Return True if an Italian ORG entity is likely a false positive."""
-    clean = text.strip().lower()
-    if clean in _IT_ORG_STOPWORDS:
-        return True
-    if clean in _GENERIC_STOPWORDS:
-        return True
-    if len(clean) <= 2:
-        return True
-    if text.isupper() and len(text.strip()) <= 4:
-        return True
-    return False
+    return _is_false_positive_org_generic(text, _IT_ORG_STOPWORDS, _GENERIC_STOPWORDS)
+
+
+_IT_CONFIG = _LangNERConfig(
+    label_map=_SPACY_IT_LABEL_MAP,
+    article_prefixes=(
+        "il ", "Il ", "lo ", "Lo ", "la ", "La ", "l'", "L'",
+        "le ", "Le ", "gli ", "Gli ", "i ", "I ",
+        "un ", "Un ", "uno ", "Uno ", "una ", "Una ",
+    ),
+    strip_title_suffixes=False,
+    fp_person=_is_false_positive_person_it,
+    fp_org=_is_false_positive_org_it,
+    generic_stopwords_filter=False,
+    active_model_name=_get_active_it_model,
+    base_confidence={
+        PIIType.PERSON: 0.78, PIIType.ORG: 0.55, PIIType.LOCATION: 0.40,
+    },
+    person_multiword_cap=0.92,
+    org_3word_cap=0.85,
+    person_single_penalty=0.18,
+    org_single_floor=0.30,
+    model_boost_tiers=(("_lg", 0.05, 0.95), ("_md", 0.03, 0.92)),
+)
 
 
 def _process_chunk_it(nlp, text: str, global_offset: int) -> list[NERMatch]:
-    """Run Italian NER on a single text chunk, adjusting offsets."""
-    doc = nlp(text)
-    matches: list[NERMatch] = []
-
-    for ent in doc.ents:
-        pii_type = _SPACY_IT_LABEL_MAP.get(ent.label_)
-        if pii_type is None:
-            continue
-
-        raw_text = ent.text
-        nl_idx = raw_text.find("\n")
-        if nl_idx > 0:
-            raw_text = raw_text[:nl_idx]
-        cleaned = raw_text.strip()
-
-        # Strip leading Italian articles
-        for prefix in ("il ", "Il ", "lo ", "Lo ", "la ", "La ", "l'", "L'",
-                       "le ", "Le ", "gli ", "Gli ", "i ", "I ",
-                       "un ", "Un ", "uno ", "Uno ", "una ", "Una "):
-            if cleaned.startswith(prefix):
-                cleaned = cleaned[len(prefix):].strip()
-                break
-
-        min_len = _MIN_ENTITY_LENGTH.get(pii_type, 2)
-        if len(cleaned) < min_len:
-            continue
-
-        if pii_type == PIIType.PERSON and _is_false_positive_person_it(cleaned):
-            continue
-        if pii_type == PIIType.ORG and _is_false_positive_org_it(cleaned):
-            continue
-        if cleaned.isupper() and len(cleaned) <= 5:
-            continue
-        if cleaned.isdigit():
-            continue
-
-        end_char = ent.start_char + len(raw_text.rstrip())
-        confidence = _estimate_confidence_it(ent, pii_type)
-        matches.append(NERMatch(
-            start=global_offset + ent.start_char,
-            end=global_offset + end_char,
-            text=cleaned,
-            pii_type=pii_type,
-            confidence=confidence,
-        ))
-
-    return matches
+    return _process_chunk_generic(nlp, text, global_offset, _IT_CONFIG)
 
 
 def _estimate_confidence_it(ent, pii_type: PIIType) -> float:
-    """Estimate confidence for an Italian spaCy entity."""
-    base_confidence = {
-        PIIType.PERSON: 0.78,
-        PIIType.ORG: 0.55,
-        PIIType.LOCATION: 0.40,
-    }
-    conf = base_confidence.get(pii_type, 0.40)
-
-    text = ent.text.strip()
-    word_count = len(text.split())
-
-    if word_count >= 2 and pii_type == PIIType.PERSON:
-        conf = min(conf + 0.08, 0.92)
-    if word_count >= 2 and pii_type == PIIType.ORG:
-        conf = min(conf + 0.15, 0.80)
-    if word_count >= 3 and pii_type == PIIType.ORG:
-        conf = min(conf + 0.05, 0.85)
-
-    # Single-word entities — reduce confidence
-    if pii_type == PIIType.PERSON and word_count == 1:
-        conf = max(conf - 0.18, 0.40)
-    if pii_type == PIIType.ORG and word_count == 1:
-        conf = max(conf - 0.15, 0.30)
-    if pii_type == PIIType.LOCATION and word_count == 1:
-        conf = max(conf - 0.10, 0.30)
-
-    # Boost for larger Italian models
-    if _active_it_model_name.endswith("_lg"):
-        conf = min(conf + 0.05, 0.95)
-    elif _active_it_model_name.endswith("_md"):
-        conf = min(conf + 0.03, 0.92)
-
-    return round(conf, 4)
+    return _estimate_confidence_generic(ent, pii_type, _IT_CONFIG)
 
 
 def detect_ner_italian(text: str) -> list[NERMatch]:
@@ -864,48 +794,6 @@ def detect_ner_italian(text: str) -> list[NERMatch]:
             break
 
     return _deduplicate_matches(all_matches)
-
-
-def _estimate_confidence(ent, pii_type: PIIType) -> float:
-    """Estimate confidence for a spaCy entity based on heuristics."""
-    base_confidence = {
-        PIIType.PERSON: 0.80,
-        PIIType.ORG: 0.45,
-        PIIType.LOCATION: 0.40,   # generic place names are rarely PII
-        PIIType.ADDRESS: 0.55,
-    }
-    conf = base_confidence.get(pii_type, 0.40)
-
-    # Boost for multi-word entities (more likely correct, especially names)
-    text = ent.text.strip()
-    word_count = len(text.split())
-    if word_count >= 2 and pii_type == PIIType.PERSON:
-        conf = min(conf + 0.08, 0.95)   # "John Smith" > "John"
-    # Multi-word ORGs are more likely real company names
-    if word_count >= 2 and pii_type == PIIType.ORG:
-        conf = min(conf + 0.15, 0.80)   # "Goldman Sachs" > "Company"
-    if word_count >= 3 and pii_type == PIIType.ORG:
-        conf = min(conf + 0.05, 0.80)
-
-    # Single-word PERSON — reduce more aggressively (high FP rate)
-    if pii_type == PIIType.PERSON and word_count == 1:
-        conf = max(conf - 0.20, 0.40)
-
-    # Single-word ORG — very likely a false positive
-    if pii_type == PIIType.ORG and word_count == 1:
-        conf = max(conf - 0.15, 0.25)
-
-    # Single-word LOCATION — very likely noise ("London", "Tokyo")
-    if pii_type == PIIType.LOCATION and word_count == 1:
-        conf = max(conf - 0.10, 0.30)
-
-    # Boost when using the transformer model (higher accuracy)
-    if _active_model_name.endswith("_trf"):
-        conf = min(conf + 0.08, 0.98)
-    elif _active_model_name.endswith("_lg"):
-        conf = min(conf + 0.03, 0.95)
-
-    return round(conf, 4)
 
 
 # ---------------------------------------------------------------------------
@@ -1019,5 +907,18 @@ def is_ner_available() -> bool:
     try:
         _load_model()
         return True
-    except BaseException:
+    except Exception:
         return False
+
+
+def unload_models() -> None:
+    """Free memory held by all loaded spaCy NER models."""
+    global _nlp, _active_model_name, _nlp_fr, _active_fr_model_name, _nlp_it, _active_it_model_name
+    with _model_lock:
+        _nlp = None
+        _active_model_name = ""
+        _nlp_fr = None
+        _active_fr_model_name = ""
+        _nlp_it = None
+        _active_it_model_name = ""
+    logger.info("spaCy NER models unloaded")

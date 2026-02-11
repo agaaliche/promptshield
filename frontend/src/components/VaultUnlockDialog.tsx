@@ -2,6 +2,7 @@
 
 import { Lock } from "lucide-react";
 import type { CSSProperties } from "react";
+import { Z_MODAL } from "../zIndex";
 
 interface VaultUnlockDialogProps {
   vaultPass: string;
@@ -21,10 +22,10 @@ export default function VaultUnlockDialog({
   onCancel,
 }: VaultUnlockDialogProps) {
   return (
-    <div style={overlayStyle}>
+    <div style={overlayStyle} role="dialog" aria-modal="true" aria-labelledby="vault-unlock-title">
       <div style={dialogStyle}>
         <Lock size={24} style={{ color: "var(--accent-warning)", marginBottom: 8 }} />
-        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Unlock Vault</h3>
+        <h3 id="vault-unlock-title" style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Unlock Vault</h3>
         <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
           Tokenization requires the vault to store reversible mappings.
           Enter your passphrase to unlock or create the vault.
@@ -69,7 +70,7 @@ const overlayStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  zIndex: 100,
+  zIndex: Z_MODAL,
 };
 
 const dialogStyle: CSSProperties = {

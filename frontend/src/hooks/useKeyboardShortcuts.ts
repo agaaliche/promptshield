@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { PIIRegion, RegionAction } from "../types";
 import { logError } from "../api";
 
@@ -34,155 +34,133 @@ interface UseKeyboardShortcutsOptions {
 }
 
 export default function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) {
-  const {
-    activePage,
-    pageCount,
-    zoom,
-    regions,
-    pageRegions,
-    selectedRegionIds,
-    copiedRegions,
-    activeDocId,
-    cursorTool,
-    showTypePicker,
-    canUndo,
-    canRedo,
-    setActivePage,
-    setZoom,
-    setSelectedRegionIds,
-    clearSelection,
-    setCursorTool,
-    prevCursorToolRef,
-    cancelTypePicker,
-    handleRegionAction,
-    undo,
-    redo,
-    pushUndo,
-    removeRegion,
-    setCopiedRegions,
-    setStatusMessage,
-    handlePasteRegions,
-    batchDeleteRegions,
-  } = opts;
+  // Keep a ref to the latest opts so the keydown handler always reads
+  // fresh values without needing to re-register the listener.
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const o = optsRef.current;
+      const el = e.target as HTMLElement;
+      const tag = el.tagName;
+      // Skip when user is typing in an editable field
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        el.isContentEditable
+      ) return;
       switch (e.key) {
         case "z":
-          if (e.ctrlKey || e.metaKey) { e.preventDefault(); undo(); }
+          if (e.ctrlKey || e.metaKey) { e.preventDefault(); o.undo(); }
           break;
         case "y":
-          if (e.ctrlKey || e.metaKey) { e.preventDefault(); redo(); }
+          if (e.ctrlKey || e.metaKey) { e.preventDefault(); o.redo(); }
           break;
         case "a":
           if (e.ctrlKey || e.metaKey) {
             e.preventDefault();
-            setSelectedRegionIds(pageRegions.filter((r) => r.action !== "CANCEL").map((r) => r.id));
+            o.setSelectedRegionIds(o.pageRegions.filter((r) => r.action !== "CANCEL").map((r) => r.id));
           }
           break;
         case "ArrowLeft":
           e.preventDefault();
-          setActivePage(Math.max(1, activePage - 1));
+          o.setActivePage(Math.max(1, o.activePage - 1));
           break;
         case "ArrowRight":
           e.preventDefault();
-          setActivePage(Math.min(pageCount, activePage + 1));
+          o.setActivePage(Math.min(o.pageCount, o.activePage + 1));
           break;
         case "+":
         case "=":
-          e.preventDefault(); setZoom(zoom + 0.1);
+          e.preventDefault(); o.setZoom(o.zoom + 0.1);
           break;
         case "-":
-          e.preventDefault(); setZoom(zoom - 0.1);
+          e.preventDefault(); o.setZoom(o.zoom - 0.1);
           break;
         case "0":
-          e.preventDefault(); setZoom(1);
+          e.preventDefault(); o.setZoom(1);
           break;
         case "Escape":
-          clearSelection();
-          if (cursorTool !== "pointer") setCursorTool("pointer");
-          if (showTypePicker) cancelTypePicker();
+          o.clearSelection();
+          if (o.cursorTool !== "pointer") o.setCursorTool("pointer");
+          if (o.showTypePicker) o.cancelTypePicker();
           break;
         case " ": {
           e.preventDefault();
-          if (cursorTool !== "pointer") {
-            prevCursorToolRef.current = cursorTool;
-            setCursorTool("pointer");
+          if (o.cursorTool !== "pointer") {
+            o.prevCursorToolRef.current = o.cursorTool;
+            o.setCursorTool("pointer");
           } else {
-            setCursorTool(prevCursorToolRef.current);
+            o.setCursorTool(o.prevCursorToolRef.current);
           }
           break;
         }
         case "d":
-          if (selectedRegionIds.length > 0) {
+          if (o.selectedRegionIds.length > 0) {
             e.preventDefault();
-            selectedRegionIds.forEach((id) => {
-              const r = regions.find((reg) => reg.id === id);
-              handleRegionAction(id, r?.action === "REMOVE" ? "PENDING" : "REMOVE");
+            o.selectedRegionIds.forEach((id) => {
+              const r = o.regions.find((reg) => reg.id === id);
+              o.handleRegionAction(id, r?.action === "REMOVE" ? "PENDING" : "REMOVE");
             });
           }
           break;
         case "Delete":
-          if (selectedRegionIds.length > 0) {
+          if (o.selectedRegionIds.length > 0 && o.activeDocId) {
             e.preventDefault();
-            pushUndo();
-            const delIds = [...selectedRegionIds];
-            delIds.forEach((id) => removeRegion(id));
-            batchDeleteRegions(activeDocId!, delIds).catch(logError("delete-regions"));
+            o.pushUndo();
+            const delIds = [...o.selectedRegionIds];
+            delIds.forEach((id) => o.removeRegion(id));
+            o.batchDeleteRegions(o.activeDocId, delIds).catch(logError("delete-regions"));
           }
           break;
         case "Backspace":
-          if (selectedRegionIds.length > 0) {
+          if (o.selectedRegionIds.length > 0) {
             e.preventDefault();
-            selectedRegionIds.forEach((id) => {
-              const r = regions.find((reg) => reg.id === id);
-              handleRegionAction(id, r?.action === "REMOVE" ? "PENDING" : "REMOVE");
+            o.selectedRegionIds.forEach((id) => {
+              const r = o.regions.find((reg) => reg.id === id);
+              o.handleRegionAction(id, r?.action === "REMOVE" ? "PENDING" : "REMOVE");
             });
           }
           break;
         case "t":
-          if (selectedRegionIds.length > 0) {
+          if (o.selectedRegionIds.length > 0) {
             e.preventDefault();
-            selectedRegionIds.forEach((id) => {
-              const r = regions.find((reg) => reg.id === id);
-              handleRegionAction(id, r?.action === "TOKENIZE" ? "PENDING" : "TOKENIZE");
+            o.selectedRegionIds.forEach((id) => {
+              const r = o.regions.find((reg) => reg.id === id);
+              o.handleRegionAction(id, r?.action === "TOKENIZE" ? "PENDING" : "TOKENIZE");
             });
           }
           break;
         case "c":
           if (e.ctrlKey || e.metaKey) {
-            if (selectedRegionIds.length > 0) {
+            if (o.selectedRegionIds.length > 0) {
               e.preventDefault();
-              const regionsToCopy = regions.filter((r) => selectedRegionIds.includes(r.id));
-              setCopiedRegions(regionsToCopy);
-              setStatusMessage(`Copied ${regionsToCopy.length} region(s)`);
+              const regionsToCopy = o.regions.filter((r) => o.selectedRegionIds.includes(r.id));
+              o.setCopiedRegions(regionsToCopy);
+              o.setStatusMessage(`Copied ${regionsToCopy.length} region(s)`);
             }
-          } else if (selectedRegionIds.length > 0) {
-            e.preventDefault();
-            pushUndo();
-            const clearIds = [...selectedRegionIds];
-            clearIds.forEach((id) => removeRegion(id));
-            batchDeleteRegions(activeDocId!, clearIds).catch(logError("clear-regions"));
           }
+          // Bare "c" without modifier is intentionally a no-op to prevent
+          // accidental region deletion (M14: destructive-action guard).
           break;
         case "v":
-          if ((e.ctrlKey || e.metaKey) && copiedRegions.length > 0) {
+          if ((e.ctrlKey || e.metaKey) && o.copiedRegions.length > 0) {
             e.preventDefault();
-            handlePasteRegions();
+            o.handlePasteRegions();
           }
           break;
         case "Tab": {
           e.preventDefault();
-          const pending = pageRegions.filter((r) => r.action === "PENDING");
+          const pending = o.pageRegions.filter((r) => r.action === "PENDING");
           if (pending.length === 0) break;
-          const lastSelected = selectedRegionIds[selectedRegionIds.length - 1];
+          const lastSelected = o.selectedRegionIds[o.selectedRegionIds.length - 1];
           const currentIdx = pending.findIndex((r) => r.id === lastSelected);
           const next = e.shiftKey
             ? (currentIdx <= 0 ? pending.length - 1 : currentIdx - 1)
             : (currentIdx + 1) % pending.length;
-          setSelectedRegionIds([pending[next].id]);
+          o.setSelectedRegionIds([pending[next].id]);
           break;
         }
       }
@@ -190,34 +168,5 @@ export default function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) 
 
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [
-    activePage,
-    pageCount,
-    zoom,
-    regions,
-    pageRegions,
-    selectedRegionIds,
-    copiedRegions,
-    activeDocId,
-    cursorTool,
-    showTypePicker,
-    canUndo,
-    canRedo,
-    setActivePage,
-    setZoom,
-    setSelectedRegionIds,
-    clearSelection,
-    setCursorTool,
-    prevCursorToolRef,
-    cancelTypePicker,
-    handleRegionAction,
-    undo,
-    redo,
-    pushUndo,
-    removeRegion,
-    setCopiedRegions,
-    setStatusMessage,
-    handlePasteRegions,
-    batchDeleteRegions,
-  ]);
+  }, []); // stable — handler reads from optsRef
 }

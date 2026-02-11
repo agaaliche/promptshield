@@ -67,18 +67,21 @@ def ocr_page_image(
     from core.config import config
 
     img = Image.open(image_path)
-    img_width, img_height = img.size
+    try:
+        img_width, img_height = img.size
 
-    # Scale factors to convert pixel coords → page coords
-    sx = page_width / img_width
-    sy = page_height / img_height
+        # Scale factors to convert pixel coords → page coords
+        sx = page_width / img_width
+        sy = page_height / img_height
 
-    data = pytesseract.image_to_data(
-        img,
-        lang=config.ocr_language,
-        output_type=pytesseract.Output.DICT,
-        config=f"--oem 1 --psm 6 --dpi {config.ocr_dpi}",
-    )
+        data = pytesseract.image_to_data(
+            img,
+            lang=config.ocr_language,
+            output_type=pytesseract.Output.DICT,
+            config=f"--oem 1 --psm 6 --dpi {config.ocr_dpi}",
+        )
+    finally:
+        img.close()
 
     blocks: list[TextBlock] = []
     n_items = len(data["text"])

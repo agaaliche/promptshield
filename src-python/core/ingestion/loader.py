@@ -242,77 +242,86 @@ def _render_page_bitmap(pdf_page: pdfium.PdfPage, page_index: int, doc_id: str) 
     out_path = config.temp_dir / doc_id / f"page_{page_index + 1:04d}.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     pil_image.save(str(out_path), "PNG")
+    pil_image.close()
+    del bitmap
     return out_path
 
 
 def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
     """Process a PDF file into page data."""
     pdf = pdfium.PdfDocument(str(pdf_path))
-    pages: list[PageData] = []
+    try:
+        pages: list[PageData] = []
 
-    for i in range(len(pdf)):
-        pdf_page = pdf[i]
-        width = pdf_page.get_width()
-        height = pdf_page.get_height()
+        for i in range(len(pdf)):
+            pdf_page = pdf[i]
+            width = pdf_page.get_width()
+            height = pdf_page.get_height()
 
-        # Render bitmap
-        bitmap_path = _render_page_bitmap(pdf_page, i, doc_id)
+            # Render bitmap
+            bitmap_path = _render_page_bitmap(pdf_page, i, doc_id)
 
-        # Extract text with bounding boxes
-        text_blocks = _extract_text_blocks_from_page(pdf_page, i)
+            # Extract text with bounding boxes
+            text_blocks = _extract_text_blocks_from_page(pdf_page, i)
 
-        # If very few text blocks found, page might be scanned — try OCR
-        full_text = _build_full_text(text_blocks)
-        if len(full_text.strip()) < 20:
-            logger.info(f"Page {i + 1}: sparse text ({len(full_text)} chars), running OCR")
-            ocr_blocks = ocr_page_image(bitmap_path, width, height)
-            if ocr_blocks:
-                text_blocks = ocr_blocks
-                full_text = _build_full_text(text_blocks)
+            # If very few text blocks found, page might be scanned — try OCR
+            full_text = _build_full_text(text_blocks)
+            if len(full_text.strip()) < 20:
+                logger.info(f"Page {i + 1}: sparse text ({len(full_text)} chars), running OCR")
+                ocr_blocks = ocr_page_image(bitmap_path, width, height)
+                if ocr_blocks:
+                    text_blocks = ocr_blocks
+                    full_text = _build_full_text(text_blocks)
 
-        pages.append(PageData(
-            page_number=i + 1,
-            width=width,
-            height=height,
-            bitmap_path=str(bitmap_path),
-            text_blocks=text_blocks,
-            full_text=full_text,
-        ))
+            pages.append(PageData(
+                page_number=i + 1,
+                width=width,
+                height=height,
+                bitmap_path=str(bitmap_path),
+                text_blocks=text_blocks,
+                full_text=full_text,
+            ))
 
-    return pages
+        return pages
+    finally:
+        pdf.close()
 
 
 def _process_image(image_path: Path, doc_id: str) -> list[PageData]:
     """Process a standalone image file (always OCR)."""
     img = Image.open(image_path)
-    width, height = img.size
+    try:
+        width, height = img.size
 
-    # Save as PNG in temp
-    out_path = config.temp_dir / doc_id / "page_0001.png"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+        # Save as PNG in temp
+        out_path = config.temp_dir / doc_id / "page_0001.png"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Upscale small images to improve OCR accuracy
-    min_dim = min(width, height)
-    if min_dim < 1500:
-        scale = max(2, 1500 // min_dim)
-        big = img.resize((width * scale, height * scale), Image.LANCZOS)
-        big.save(str(out_path), "PNG")
-        logger.info(f"Upscaled image {width}x{height} by {scale}x for OCR")
-    else:
-        img.save(str(out_path), "PNG")
+        # Upscale small images to improve OCR accuracy
+        min_dim = min(width, height)
+        if min_dim < 1500:
+            scale = max(2, 1500 // min_dim)
+            big = img.resize((width * scale, height * scale), Image.LANCZOS)
+            big.save(str(out_path), "PNG")
+            big.close()
+            logger.info(f"Upscaled image {width}x{height} by {scale}x for OCR")
+        else:
+            img.save(str(out_path), "PNG")
 
-    # OCR is required for images
-    text_blocks = ocr_page_image(out_path, float(width), float(height))
-    full_text = _build_full_text(text_blocks)
+        # OCR is required for images
+        text_blocks = ocr_page_image(out_path, float(width), float(height))
+        full_text = _build_full_text(text_blocks)
 
-    return [PageData(
-        page_number=1,
-        width=float(width),
-        height=float(height),
-        bitmap_path=str(out_path),
-        text_blocks=text_blocks,
-        full_text=full_text,
-    )]
+        return [PageData(
+            page_number=1,
+            width=float(width),
+            height=float(height),
+            bitmap_path=str(out_path),
+            text_blocks=text_blocks,
+            full_text=full_text,
+        )]
+    finally:
+        img.close()
 
 
 async def ingest_document(
@@ -325,6 +334,8 @@ async def ingest_document(
 
     Returns a DocumentInfo with pages populated.
     """
+    import asyncio
+
     doc_id = uuid.uuid4().hex[:12]
     if mime_type is None:
         mime_type = guess_mime(file_path)
@@ -339,20 +350,22 @@ async def ingest_document(
         status=DocumentStatus.PROCESSING,
     )
 
-    try:
+    def _do_ingest() -> list:
         if mime_type in PDF_TYPES:
-            doc.pages = _process_pdf(file_path, doc_id)
+            return _process_pdf(file_path, doc_id)
         elif mime_type in IMAGE_TYPES:
-            doc.pages = _process_image(file_path, doc_id)
+            return _process_image(file_path, doc_id)
         elif mime_type in OFFICE_TYPES:
-            # Convert to PDF first
             pdf_path = _libreoffice_convert_to_pdf(
                 file_path,
                 config.temp_dir / doc_id,
             )
-            doc.pages = _process_pdf(pdf_path, doc_id)
+            return _process_pdf(pdf_path, doc_id)
         else:
             raise ValueError(f"Unsupported file type: {mime_type}")
+
+    try:
+        doc.pages = await asyncio.to_thread(_do_ingest)
 
         doc.page_count = len(doc.pages)
         doc.status = DocumentStatus.DETECTING

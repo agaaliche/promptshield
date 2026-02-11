@@ -340,14 +340,23 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest):
             matches.append((orig_start, orig_end))
 
         # Also try fuzzy sliding window to catch OCR variations
-        if needle_len >= 2:
+        # Only if exact matching found fewer than expected matches
+        if needle_len >= 2 and len(matches) == 0:
             window = needle_len
+            # Pre-compute needle character frequency for fast pre-filter
+            from collections import Counter
+            needle_freq = Counter(needle_norm)
             for tol in (0, 1, 2):
                 wlen = window + tol
                 if wlen > len(full_norm):
                     continue
                 for si in range(len(full_norm) - wlen + 1):
                     chunk = full_norm[si : si + wlen]
+                    # Fast char-frequency pre-filter: skip if character overlap is too low
+                    chunk_freq = Counter(chunk)
+                    shared = sum((needle_freq & chunk_freq).values())
+                    if shared < needle_len * 0.6:
+                        continue
                     if _fuzzy_ratio(needle_norm, chunk) >= _FUZZY_THRESHOLD:
                         orig_start = norm_idx_to_orig(si)
                         orig_end = norm_idx_to_orig(si + wlen) if si + wlen < len(full_norm) else len(full_text)
@@ -358,6 +367,10 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest):
                 if wlen >= 2 and wlen <= len(full_norm):
                     for si in range(len(full_norm) - wlen + 1):
                         chunk = full_norm[si : si + wlen]
+                        chunk_freq = Counter(chunk)
+                        shared = sum((needle_freq & chunk_freq).values())
+                        if shared < needle_len * 0.6:
+                            continue
                         if _fuzzy_ratio(needle_norm, chunk) >= _FUZZY_THRESHOLD:
                             orig_start = norm_idx_to_orig(si)
                             orig_end = norm_idx_to_orig(si + wlen) if si + wlen < len(full_norm) else len(full_text)

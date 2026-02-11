@@ -33,37 +33,42 @@ export function logError(context: string) {
   };
 }
 
-/** Global AbortController — cancel all in-flight requests. */
-let _globalAbort: AbortController | null = null;
+/** Active AbortControllers — cancel all in-flight requests. */
+const _activeControllers = new Set<AbortController>();
 
 /** Cancel all pending API requests (e.g. on doc switch). */
 export function cancelAllRequests(): void {
-  if (_globalAbort) {
-    _globalAbort.abort();
-    _globalAbort = null;
+  for (const ctrl of _activeControllers) {
+    ctrl.abort();
   }
+  _activeControllers.clear();
 }
 
 async function request<T>(
   path: string,
   options: RequestInit = {},
-  /** Pass a custom signal to override the global one. */
+  /** Pass a custom signal to override the default per-request one. */
   signal?: AbortSignal,
 ): Promise<T> {
-  if (!_globalAbort) _globalAbort = new AbortController();
+  const controller = new AbortController();
+  _activeControllers.add(controller);
   const url = `${BASE_URL}${path}`;
-  const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...options.headers as Record<string, string> },
-    signal: signal ?? _globalAbort.signal,
-    ...options,
-  });
+  try {
+    const res = await fetch(url, {
+      headers: { "Content-Type": "application/json", ...options.headers as Record<string, string> },
+      signal: signal ?? controller.signal,
+      ...options,
+    });
 
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API error ${res.status}: ${body}`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`API error ${res.status}: ${body}`);
+    }
+
+    return res.json();
+  } finally {
+    _activeControllers.delete(controller);
   }
-
-  return res.json();
 }
 
 // ──────────────────────────────────────────────

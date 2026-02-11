@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from core.config import config
 from models.schemas import (
@@ -26,7 +29,9 @@ async def detokenize(req: DetokenizeRequest):
     if not vault.is_unlocked:
         raise HTTPException(403, "Vault is locked. Unlock it first.")
 
-    result_text, count, unresolved = vault.resolve_all_tokens(req.text)
+    result_text, count, unresolved = await asyncio.to_thread(
+        vault.resolve_all_tokens, req.text
+    )
     return DetokenizeResponse(
         original_text=result_text,
         tokens_replaced=count,
@@ -64,10 +69,16 @@ async def detokenize_file_endpoint(file: UploadFile = File(...)):
     }
     media_type = media_types.get(ext, "application/octet-stream")
 
-    import tempfile, os
+    import tempfile
     tmp = Path(tempfile.mkdtemp(dir=str(config.temp_dir)))
     out_path = tmp / out_name
     out_path.write_bytes(out_bytes)
+
+    def _cleanup() -> None:
+        try:
+            shutil.rmtree(tmp, ignore_errors=True)
+        except Exception:
+            pass
 
     headers = {
         "X-Tokens-Replaced": str(count),
@@ -80,4 +91,5 @@ async def detokenize_file_endpoint(file: UploadFile = File(...)):
         media_type=media_type,
         filename=out_name,
         headers=headers,
+        background=BackgroundTask(_cleanup),
     )

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -13,9 +15,28 @@ from models.schemas import VaultStatsResponse
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["vault"])
 
+# ── Rate-limiting state for vault unlock ──────────────────────────
+_MAX_UNLOCK_ATTEMPTS = 5
+_LOCKOUT_SECONDS = 60
+_unlock_attempts: list[float] = []  # timestamps of recent failures
+
 
 class _PassphraseBody(_PydanticBaseModel):
     passphrase: str
+
+
+def _check_unlock_rate_limit() -> None:
+    """Raise 429 if too many failed unlock attempts within the lockout window."""
+    now = time.monotonic()
+    # Prune old entries outside the window
+    while _unlock_attempts and now - _unlock_attempts[0] > _LOCKOUT_SECONDS:
+        _unlock_attempts.pop(0)
+    if len(_unlock_attempts) >= _MAX_UNLOCK_ATTEMPTS:
+        wait = int(_LOCKOUT_SECONDS - (now - _unlock_attempts[0])) + 1
+        raise HTTPException(
+            429,
+            f"Too many unlock attempts. Try again in {wait}s.",
+        )
 
 
 @router.post("/vault/unlock")
@@ -23,10 +44,15 @@ async def unlock_vault(body: _PassphraseBody):
     """Unlock the token vault with a passphrase."""
     from core.vault.store import vault
 
+    _check_unlock_rate_limit()
+
     try:
         vault.initialize(body.passphrase)
+        # Success — clear failure history
+        _unlock_attempts.clear()
         return {"status": "ok", "message": "Vault unlocked"}
     except ValueError as e:
+        _unlock_attempts.append(time.monotonic())
         raise HTTPException(403, str(e))
     except Exception as e:
         raise HTTPException(500, f"Failed to open vault: {e}")
@@ -38,7 +64,6 @@ async def vault_status():
     from core.vault.store import vault
     return {
         "unlocked": vault.is_unlocked,
-        "path": str(vault.db_path),
     }
 
 
@@ -48,7 +73,7 @@ async def vault_stats():
     from core.vault.store import vault
     if not vault.is_unlocked:
         raise HTTPException(403, "Vault is locked")
-    stats = vault.get_stats()
+    stats = await asyncio.to_thread(vault.get_stats)
     return VaultStatsResponse(**stats)
 
 
@@ -58,7 +83,7 @@ async def list_vault_tokens(source_document: str | None = None):
     from core.vault.store import vault
     if not vault.is_unlocked:
         raise HTTPException(403, "Vault is locked")
-    tokens = vault.list_tokens(source_document=source_document)
+    tokens = await asyncio.to_thread(vault.list_tokens, source_document=source_document)
     return [t.model_dump(mode="json") for t in tokens]
 
 

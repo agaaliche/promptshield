@@ -100,6 +100,13 @@ def is_gliner_available() -> bool:
         return False
 
 
+def unload_model() -> None:
+    """Free memory held by the loaded GLiNER model."""
+    global _model
+    _model = None
+    logger.info("GLiNER model unloaded")
+
+
 # ---------------------------------------------------------------------------
 # False-positive filters
 # ---------------------------------------------------------------------------

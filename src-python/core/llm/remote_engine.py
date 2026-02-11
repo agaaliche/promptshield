@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Optional
 
 import httpx
@@ -20,13 +21,17 @@ from core.config import config
 
 logger = logging.getLogger(__name__)
 
-# Timeout for a single chat-completion request (seconds).
-_REQUEST_TIMEOUT = 60.0
+# Defaults — can be overridden via configure().
+_DEFAULT_REQUEST_TIMEOUT = 60.0
+_MAX_RETRIES = 3
+_RETRY_BACKOFF_BASE = 1.5  # seconds — exponential backoff base
 
 
 class RemoteLLMEngine:
     """
     OpenAI-compatible remote LLM wrapper.
+
+    Uses a **persistent** ``httpx.Client`` for connection pooling and keep-alive.
 
     Usage:
         engine = RemoteLLMEngine()
@@ -38,7 +43,9 @@ class RemoteLLMEngine:
         self._api_url: str = ""
         self._api_key: str = ""
         self._model: str = ""
+        self._timeout: float = _DEFAULT_REQUEST_TIMEOUT
         self._lock = threading.Lock()  # serialise for safety
+        self._client: httpx.Client | None = None
 
     # ── Configuration ─────────────────────────────────────────────
 
@@ -47,14 +54,39 @@ class RemoteLLMEngine:
         api_url: str,
         api_key: str,
         model: str,
+        timeout: float = _DEFAULT_REQUEST_TIMEOUT,
     ) -> None:
-        """Set or update remote API parameters."""
-        self._api_url = api_url.rstrip("/")
-        self._api_key = api_key
-        self._model = model
+        """Set or update remote API parameters.
+
+        Recreates the persistent HTTP client when the URL or key changes.
+        """
+        with self._lock:
+            url_changed = api_url.rstrip("/") != self._api_url
+            key_changed = api_key != self._api_key
+
+            self._api_url = api_url.rstrip("/")
+            self._api_key = api_key
+            self._model = model
+            self._timeout = timeout
+
+            # Rebuild the pooled client when credentials change
+            if url_changed or key_changed or self._client is None:
+                if self._client is not None:
+                    try:
+                        self._client.close()
+                    except Exception:
+                        pass
+                self._client = httpx.Client(
+                    timeout=self._timeout,
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                )
+
         logger.info(
-            "Remote LLM configured: url=%s model=%s",
-            self._api_url, self._model,
+            "Remote LLM configured: url=%s model=%s timeout=%ss",
+            self._api_url, self._model, self._timeout,
         )
 
     def is_loaded(self) -> bool:
@@ -109,38 +141,62 @@ class RemoteLLMEngine:
         if stop:
             payload["stop"] = stop
 
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
-
         url = f"{self._api_url}/chat/completions"
 
         with self._lock:
-            return self._call(url, headers, payload)
+            return self._call(url, payload)
 
-    def _call(self, url: str, headers: dict, payload: dict) -> str:
-        """HTTP POST with retries."""
-        try:
-            with httpx.Client(timeout=_REQUEST_TIMEOUT) as client:
-                resp = client.post(url, json=payload, headers=headers)
+    def _call(self, url: str, payload: dict) -> str:
+        """HTTP POST with retries and exponential backoff."""
+        if self._client is None:
+            raise RuntimeError("Remote LLM HTTP client not initialised — call configure() first")
+
+        last_error: Exception | None = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                resp = self._client.post(url, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
 
-            # Standard OpenAI response shape
-            text = data["choices"][0]["message"]["content"]
-            return text.strip()
+                # Standard OpenAI response shape
+                text = data["choices"][0]["message"]["content"]
+                return text.strip()
 
-        except httpx.HTTPStatusError as e:
-            body = e.response.text[:500] if e.response else ""
-            logger.error("Remote LLM HTTP %s: %s", e.response.status_code, body)
-            raise RuntimeError(f"Remote LLM API error {e.response.status_code}: {body}") from e
-        except httpx.TimeoutException:
-            logger.error("Remote LLM request timed out after %ss", _REQUEST_TIMEOUT)
-            raise RuntimeError("Remote LLM request timed out")
-        except Exception as e:
-            logger.error("Remote LLM request failed: %s", e)
-            raise
+            except httpx.HTTPStatusError as e:
+                status = e.response.status_code
+                body = e.response.text[:500] if e.response else ""
+                # Retry on 429 (rate-limit) and 5xx (server errors)
+                if status in (429, 500, 502, 503, 504) and attempt < _MAX_RETRIES - 1:
+                    wait = _RETRY_BACKOFF_BASE ** attempt
+                    logger.warning(
+                        "Remote LLM HTTP %s (attempt %d/%d), retrying in %.1fs",
+                        status, attempt + 1, _MAX_RETRIES, wait,
+                    )
+                    time.sleep(wait)
+                    last_error = e
+                    continue
+                logger.error("Remote LLM HTTP %s: %s", status, body)
+                raise RuntimeError(f"Remote LLM API error {status}: {body}") from e
+
+            except httpx.TimeoutException as e:
+                if attempt < _MAX_RETRIES - 1:
+                    wait = _RETRY_BACKOFF_BASE ** attempt
+                    logger.warning(
+                        "Remote LLM timeout (attempt %d/%d), retrying in %.1fs",
+                        attempt + 1, _MAX_RETRIES, wait,
+                    )
+                    time.sleep(wait)
+                    last_error = e
+                    continue
+                logger.error("Remote LLM request timed out after %ss", self._timeout)
+                raise RuntimeError("Remote LLM request timed out") from e
+
+            except Exception as e:
+                logger.error("Remote LLM request failed: %s", e)
+                raise
+
+        # Should not reach here, but just in case
+        raise RuntimeError(f"Remote LLM request failed after {_MAX_RETRIES} retries") from last_error
 
     def test_connection(self) -> dict:
         """Quick connectivity check — sends a minimal request and reports latency."""

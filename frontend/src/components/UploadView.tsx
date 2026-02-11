@@ -2,92 +2,22 @@
 
 import { useCallback, useRef, useState } from "react";
 import { Upload, AlertCircle, FolderUp } from "lucide-react";
-import { uploadDocument, getDocument, detectPII } from "../api";
-import { resolveAllOverlaps } from "../regionUtils";
 import { useAppStore } from "../store";
-import type { UploadItem } from "../types";
+import { useDocumentUpload, ACCEPTED_FILE_TYPES } from "../hooks/useDocumentUpload";
 
-const ACCEPT =
-  ".pdf,.jpg,.jpeg,.png,.tiff,.tif,.bmp,.webp,.docx,.xlsx,.pptx,.doc,.xls,.ppt";
+const ACCEPT = ACCEPTED_FILE_TYPES;
 
 export default function UploadView() {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
-  const {
-    setActiveDocId,
-    setRegions,
-    setCurrentView,
-    addDocument,
-    updateDocument,
-    isProcessing,
-    addToUploadQueue,
-    updateUploadItem,
-    clearCompletedUploads,
-    setDocDetecting,
-    setDocLoadingMessage,
-  } = useAppStore();
+  const { isProcessing } = useAppStore();
 
-  const handleFiles = useCallback(
-    async (files: FileList | null) => {
-      if (!files || files.length === 0) return;
-      const fileArray = Array.from(files);
-      setError("");
-
-      // Build queue items — they appear immediately in the Sidebar accordion
-      const items: { file: File; item: UploadItem }[] = [];
-      for (let i = 0; i < fileArray.length; i++) {
-        const file = fileArray[i];
-        const relPath = (file as any).webkitRelativePath || "";
-        const parentPath = relPath ? relPath.substring(0, relPath.lastIndexOf("/")) : "";
-        const id = `upload-${Date.now()}-${i}`;
-        items.push({
-          file,
-          item: { id, name: file.name, parentPath, status: "queued", progress: 0 },
-        });
-      }
-
-      // Add to store queue — Sidebar will show them immediately
-      addToUploadQueue(items.map((i) => i.item));
-      // Switch to viewer so the Sidebar accordion is visible
-      setCurrentView("viewer");
-
-      // Process sequentially
-      for (const { file, item } of items) {
-        try {
-          updateUploadItem(item.id, { status: "uploading", progress: 30 });
-          const uploadRes = await uploadDocument(file);
-
-          updateUploadItem(item.id, { progress: 50 });
-          const doc = await getDocument(uploadRes.doc_id);
-          addDocument(doc);
-          // Set detecting BEFORE activeDocId so the progress dialog shows immediately
-          setDocDetecting(true);
-          setDocLoadingMessage("Analyzing document for PII entities\u2026");
-          setActiveDocId(doc.doc_id);
-
-          updateUploadItem(item.id, { status: "detecting", progress: 70 });
-          const detection = await detectPII(doc.doc_id);
-          const resolved = resolveAllOverlaps(detection.regions);
-          setRegions(resolved);
-          updateDocument(doc.doc_id, { regions: resolved });
-
-          setDocDetecting(false);
-          setDocLoadingMessage("");
-          updateUploadItem(item.id, { status: "done", progress: 100 });
-        } catch (e: any) {
-          setDocDetecting(false);
-          setDocLoadingMessage("");
-          updateUploadItem(item.id, { status: "error", error: e.message || "Failed" });
-          setError(e.message || "Upload failed");
-        }
-      }
-
-      clearCompletedUploads();
-    },
-    [setActiveDocId, setRegions, setCurrentView, addDocument, updateDocument, addToUploadQueue, updateUploadItem, clearCompletedUploads, setDocDetecting, setDocLoadingMessage]
-  );
+  const { handleFiles } = useDocumentUpload({
+    onBeforeUpload: () => setError(""),
+    onFileError: (e) => setError(e.message || "Upload failed"),
+  });
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import platform
@@ -48,6 +49,17 @@ async def llm_status():
 async def load_llm(model_path: str, force_cpu: bool = False):
     """Load a GGUF model and save the choice for future auto-load."""
     from core.llm.engine import llm_engine
+
+    # S1: Validate model_path is under models_dir and has .gguf extension
+    resolved = Path(model_path).resolve()
+    models_resolved = config.models_dir.resolve()
+    if not str(resolved).startswith(str(models_resolved)):
+        raise HTTPException(400, "Model path must be within the models directory")
+    if resolved.suffix.lower() != ".gguf":
+        raise HTTPException(400, "Only .gguf model files are supported")
+    if not resolved.exists():
+        raise HTTPException(404, f"Model file not found: {model_path}")
+
     try:
         llm_engine.load_model(model_path, force_cpu=force_cpu)
         config.llm_model_path = model_path
@@ -111,13 +123,12 @@ async def disconnect_remote_llm():
 @router.post("/llm/remote/test")
 async def test_remote_llm():
     """Test the remote LLM connection with a minimal ping."""
-    import asyncio
     from core.llm.remote_engine import remote_llm_engine
 
     if not remote_llm_engine.is_loaded():
         raise HTTPException(400, "Remote LLM not configured")
-    result = await asyncio.get_event_loop().run_in_executor(
-        None, remote_llm_engine.test_connection
+    result = await asyncio.to_thread(
+        remote_llm_engine.test_connection
     )
     return result
 

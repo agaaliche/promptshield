@@ -57,25 +57,34 @@ async def get_settings():
 @router.patch("/settings")
 async def update_settings(body: SettingsUpdate):
     """Update app settings (partial update with Pydantic validation)."""
+    from api.deps import acquire_detection_lock, release_detection_lock
+
     updates = body.model_dump(exclude_none=True)
     applied = {}
-    for key, value in updates.items():
-        if hasattr(config, key):
-            setattr(config, key, value)
-            applied[key] = value
 
-    # When the NER backend changes, unload the cached BERT pipeline so the
-    # newly selected model is loaded on the next detection run.
-    if "ner_backend" in applied:
-        try:
-            from core.detection.bert_detector import unload_pipeline
-            unload_pipeline()
-            logger.info(f"NER backend changed to '{applied['ner_backend']}' — BERT pipeline unloaded")
-        except Exception:
-            pass  # non-fatal; pipeline will reload on next detection
+    # Acquire detection lock to prevent races with config_override
+    lock_held = acquire_detection_lock("settings-update")
+    try:
+        for key, value in updates.items():
+            if hasattr(config, key):
+                setattr(config, key, value)
+                applied[key] = value
 
-    if applied:
-        config.save_user_settings()
+        # When the NER backend changes, unload the cached BERT pipeline so the
+        # newly selected model is loaded on the next detection run.
+        if "ner_backend" in applied:
+            try:
+                from core.detection.bert_detector import unload_pipeline
+                unload_pipeline()
+                logger.info(f"NER backend changed to '{applied['ner_backend']}' — BERT pipeline unloaded")
+            except Exception:
+                pass  # non-fatal; pipeline will reload on next detection
+
+        if applied:
+            config.save_user_settings()
+    finally:
+        if lock_held:
+            release_detection_lock()
 
     return {"status": "ok", "applied": applied}
 
@@ -126,10 +135,22 @@ async def get_label_config():
 
 @router.put("/settings/labels")
 async def save_label_config(labels: list[dict]):
-    """Save PII label configuration."""
+    """Save PII label configuration.
+
+    Validates that each entry has the required keys.
+    """
+    _REQUIRED_KEYS = {"label"}
+    _ALLOWED_KEYS = {"label", "frequent", "hidden", "user_added", "color"}
+    validated: list[dict] = []
+    for entry in labels:
+        if not isinstance(entry, dict) or not _REQUIRED_KEYS.issubset(entry.keys()):
+            raise HTTPException(400, f"Each label entry must contain at least: {_REQUIRED_KEYS}")
+        # Only keep allowed keys to prevent injection of arbitrary data
+        clean = {k: v for k, v in entry.items() if k in _ALLOWED_KEYS}
+        validated.append(clean)
     store = get_store()
-    store.save_label_config(labels)
-    return {"status": "ok", "count": len(labels)}
+    store.save_label_config(validated)
+    return {"status": "ok", "count": len(validated)}
 
 
 # ---------------------------------------------------------------------------

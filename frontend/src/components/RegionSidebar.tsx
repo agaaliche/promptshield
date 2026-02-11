@@ -12,6 +12,7 @@ import {
   Search,
   Edit3,
   MoreVertical,
+  ChevronDown,
 } from "lucide-react";
 import { PII_COLORS, type PIIRegion, type RegionAction } from "../types";
 import { logError } from "../api";
@@ -87,6 +88,13 @@ export default function RegionSidebar({
   const [clearConfirmOpen, setClearConfirmOpen] = React.useState(false);
   const [clearNeverAsk, setClearNeverAsk] = React.useState(false);
   const clearConfirmRef = React.useRef<{ ids: string[] }>({ ids: [] });
+
+  // ── Virtualization: cap rendered items to avoid DOM bloat ──
+  const INITIAL_VISIBLE = 100;
+  const LOAD_MORE_STEP = 100;
+  const [maxVisible, setMaxVisible] = React.useState(INITIAL_VISIBLE);
+  // Reset max visible when tab/page/doc changes
+  React.useEffect(() => { setMaxVisible(INITIAL_VISIBLE); }, [activeTab, activeDocId, pageRegions]);
 
   // Close dropdown on outside click
   React.useEffect(() => {
@@ -505,7 +513,7 @@ export default function RegionSidebar({
             );
           })()}
           <div style={styles.regionList}>
-        {displayedRegions.map((r) => (
+        {displayedRegions.slice(0, maxVisible).map((r) => (
           <div
             key={r.id}
             style={{
@@ -685,6 +693,21 @@ export default function RegionSidebar({
             )}
           </div>
         ))}
+        {displayedRegions.length > maxVisible && (
+          <button
+            onClick={() => setMaxVisible(prev => prev + LOAD_MORE_STEP)}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+              padding: "8px 12px", margin: "4px 8px", fontSize: 12, color: "var(--accent-primary)",
+              background: "var(--bg-primary)", border: "1px solid var(--border-color)",
+              borderRadius: 6, cursor: "pointer", width: "calc(100% - 16px)",
+            }}
+          >
+            <ChevronDown size={14} />
+            Show {Math.min(LOAD_MORE_STEP, displayedRegions.length - maxVisible)} more
+            ({displayedRegions.length - maxVisible} remaining)
+          </button>
+        )}
         {displayedRegions.length === 0 && (
           <p style={{ color: "var(--text-muted)", padding: 12, fontSize: 13 }}>
             {activeTab === "page" ? "No PII detected on this page." : "No PII detected in this document."}

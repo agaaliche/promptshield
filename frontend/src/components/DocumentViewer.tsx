@@ -61,6 +61,8 @@ import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useLabelConfig from "../hooks/useLabelConfig";
 import AutodetectPanel from "./AutodetectPanel";
 import VaultUnlockDialog from "./VaultUnlockDialog";
+import CursorToolToolbar from "./CursorToolToolbar";
+import MultiSelectToolbar from "./MultiSelectToolbar";
 
 export default function DocumentViewer() {
   const {
@@ -340,6 +342,7 @@ export default function DocumentViewer() {
     async (regionId: string, newType: PIIType) => {
       if (!activeDocId) return;
       try {
+        pushUndo();
         updateRegion(regionId, { pii_type: newType });
         await updateRegionLabel(activeDocId, regionId, newType);
       } catch (e: any) {
@@ -347,13 +350,14 @@ export default function DocumentViewer() {
         setStatusMessage(`Update failed: ${e.message}`);
       }
     },
-    [activeDocId, updateRegion, setStatusMessage]
+    [activeDocId, pushUndo, updateRegion, setStatusMessage]
   );
 
   const handleUpdateText = useCallback(
     async (regionId: string, newText: string) => {
       if (!activeDocId) return;
       try {
+        pushUndo();
         updateRegion(regionId, { text: newText });
         await updateRegionText(activeDocId, regionId, newText);
       } catch (e: any) {
@@ -361,7 +365,7 @@ export default function DocumentViewer() {
         setStatusMessage(`Update failed: ${e.message}`);
       }
     },
-    [activeDocId, updateRegion, setStatusMessage]
+    [activeDocId, pushUndo, updateRegion, setStatusMessage]
   );
 
   const handlePasteRegions = useCallback(
@@ -549,6 +553,7 @@ export default function DocumentViewer() {
   }, [activeDocId, setIsProcessing, setStatusMessage, regions, vaultUnlocked]);
 
   const handleVaultUnlockAndAnonymize = useCallback(async () => {
+    if (!activeDocId) return;
     try {
       setVaultError("");
       await unlockVault(vaultPass);
@@ -559,15 +564,15 @@ export default function DocumentViewer() {
       setIsProcessing(true);
       setStatusMessage("Syncing regions & anonymizing...");
       await syncRegions(
-        activeDocId!,
+        activeDocId,
         regions.map((r) => ({ id: r.id, action: r.action, bbox: r.bbox })),
       );
-      const result = await anonymizeDocument(activeDocId!);
+      const result = await anonymizeDocument(activeDocId);
       setStatusMessage(
         `Done! ${result.regions_removed} removed, ${result.tokens_created} tokenized`
       );
       if (result.output_path) {
-        window.open(getDownloadUrl(activeDocId!, "pdf"), "_blank");
+        window.open(getDownloadUrl(activeDocId, "pdf"), "_blank");
       }
     } catch (e: any) {
       if (e.message?.includes("403") || e.message?.includes("passphrase")) {
@@ -1158,12 +1163,6 @@ export default function DocumentViewer() {
             </div>
           </div>
         </div>
-        <style>{`
-          @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-          }
-        `}</style>
       </div>
     );
   }
@@ -1356,526 +1355,56 @@ export default function DocumentViewer() {
       {/* Content area — everything below toolbar */}
       <div ref={contentAreaRef} style={styles.contentArea}>
 
-      {/* Cursor tool toolbar — fixed next to left sidebar, like zoom control */}
-      <div
-        ref={cursorToolbarRef}
-        data-cursor-toolbar
-        onMouseDown={(e) => e.stopPropagation()}
-        style={{
-          position: "fixed",
-          top: cursorToolbarPos.y,
-          left: cursorToolbarPos.x,
-          zIndex: 30,
-          background: "var(--bg-secondary)",
-          borderRadius: 8,
-          boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          userSelect: "none",
-          cursor: isDraggingCursorToolbar ? CURSOR_GRABBING : "default",
+      <CursorToolToolbar
+        cursorToolbarRef={cursorToolbarRef}
+        cursorToolbarPos={cursorToolbarPos}
+        isDragging={isDraggingCursorToolbar}
+        startDrag={startCursorToolbarDrag}
+        expanded={cursorToolbarExpanded}
+        setExpanded={(v) => {
+          setCursorToolbarExpanded(v);
+          try { localStorage.setItem('cursorToolbarExpanded', String(v)); } catch {}
         }}
-      >
-        {/* Drag handle header */}
-        <div
-          onMouseDown={(e) => {
-            e.stopPropagation();
-            startCursorToolbarDrag(e);
-          }}
-          style={{
-            padding: "4px 6px",
-            background: "var(--bg-primary)",
-            cursor: isDraggingCursorToolbar ? CURSOR_GRABBING : CURSOR_GRAB,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            borderBottom: "1px solid var(--border-color)",
-          }}
-        >
-          <div style={{ 
-            width: 24, 
-            height: 4, 
-            background: "var(--text-secondary)", 
-            borderRadius: 2,
-            opacity: 0.5,
-          }} />
-          <button
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              setCursorToolbarExpanded(!cursorToolbarExpanded);
-              try { localStorage.setItem('cursorToolbarExpanded', String(!cursorToolbarExpanded)); } catch {}
-            }}
-            style={{
-              background: "transparent",
-              border: "none",
-              padding: 2,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              color: "var(--text-secondary)",
-            }}
-            title={cursorToolbarExpanded ? "Collapse" : "Expand"}
-          >
-            {cursorToolbarExpanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
-          </button>
-        </div>
-
-        {/* Toolbar buttons */}
-        <div
-          onMouseDown={(e) => e.stopPropagation()}
-          style={{ padding: 4, display: "flex", flexDirection: "column", gap: 2 }}
-        >
-          {/* Pointer */}
-          <button
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); setCursorTool("pointer"); }}
-            style={{
-              padding: "8px",
-              fontSize: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              background: cursorTool === "pointer" ? "var(--bg-primary)" : "transparent",
-              border: cursorTool === "pointer" ? "1px solid var(--accent-primary)" : "1px solid transparent",
-              borderRadius: 4,
-              cursor: "pointer",
-              color: cursorTool === "pointer" ? "var(--accent-primary)" : "var(--text-primary)",
-              fontWeight: cursorTool === "pointer" ? 600 : 400,
-              whiteSpace: "nowrap",
-            }}
-            title="Pointer — pan & select (Esc)"
-          >
-            <MousePointer size={16} />
-            {cursorToolbarExpanded && "Pointer"}
-          </button>
-
-          {/* Lasso */}
-          <button
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); setCursorTool("lasso"); }}
-            style={{
-              padding: "8px",
-              fontSize: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              background: cursorTool === "lasso" ? "var(--bg-primary)" : "transparent",
-              border: cursorTool === "lasso" ? "1px solid var(--accent-primary)" : "1px solid transparent",
-              borderRadius: 4,
-              cursor: "pointer",
-              color: cursorTool === "lasso" ? "var(--accent-primary)" : "var(--text-primary)",
-              fontWeight: cursorTool === "lasso" ? 600 : 400,
-              whiteSpace: "nowrap",
-            }}
-            title="Lasso — drag to select multiple regions"
-          >
-            <BoxSelect size={16} />
-            {cursorToolbarExpanded && "Lasso"}
-          </button>
-
-          {/* Draw */}
-          <button
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); setCursorTool("draw"); }}
-            style={{
-              padding: "8px",
-              fontSize: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              background: cursorTool === "draw" ? "var(--bg-primary)" : "transparent",
-              border: cursorTool === "draw" ? "1px solid var(--accent-primary)" : "1px solid transparent",
-              borderRadius: 4,
-              cursor: "pointer",
-              color: cursorTool === "draw" ? "var(--accent-primary)" : "var(--text-primary)",
-              fontWeight: cursorTool === "draw" ? 600 : 400,
-              whiteSpace: "nowrap",
-            }}
-            title="Draw — create new anonymization region"
-          >
-            <PenTool size={16} />
-            {cursorToolbarExpanded && "Draw"}
-          </button>
-
-          {/* Separator */}
-          <div style={{ height: 1, background: "rgba(255,255,255,0.15)", margin: "2px 4px" }} />
-
-          {/* Undo */}
-          <button
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); undo(); }}
-            disabled={!canUndo}
-            style={{
-              padding: "8px",
-              fontSize: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              background: "transparent",
-              border: "1px solid transparent",
-              borderRadius: 4,
-              cursor: canUndo ? "pointer" : "default",
-              color: canUndo ? "var(--text-primary)" : "var(--text-secondary)",
-              opacity: canUndo ? 1 : 0.4,
-              whiteSpace: "nowrap",
-            }}
-            title="Undo (Ctrl+Z)"
-          >
-            <Undo2 size={16} />
-            {cursorToolbarExpanded && "Undo"}
-          </button>
-
-          {/* Redo */}
-          <button
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); redo(); }}
-            disabled={!canRedo}
-            style={{
-              padding: "8px",
-              fontSize: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              background: "transparent",
-              border: "1px solid transparent",
-              borderRadius: 4,
-              cursor: canRedo ? "pointer" : "default",
-              color: canRedo ? "var(--text-primary)" : "var(--text-secondary)",
-              opacity: canRedo ? 1 : 0.4,
-              whiteSpace: "nowrap",
-            }}
-            title="Redo (Ctrl+Y)"
-          >
-            <Redo2 size={16} />
-            {cursorToolbarExpanded && "Redo"}
-          </button>
-        </div>
-      </div>
+        cursorTool={cursorTool}
+        setCursorTool={setCursorTool}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        undo={undo}
+        redo={redo}
+      />
 
       {/* Multi-select toolbar — shown when multiple regions selected */}
       {selectedRegionIds.length > 1 && (
-        <div
-          ref={multiSelectToolbarRef}
-          data-multi-select-toolbar
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: "fixed",
-            left: multiSelectToolbarPos.x,
-            top: multiSelectToolbarPos.y,
-            zIndex: 30,
-            background: "var(--bg-secondary)",
-            borderRadius: 8,
-            boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            cursor: isDraggingMultiSelectToolbar ? CURSOR_GRABBING : "default",
+        <MultiSelectToolbar
+          toolbarRef={multiSelectToolbarRef}
+          pos={multiSelectToolbarPos}
+          isDragging={isDraggingMultiSelectToolbar}
+          startDrag={startMultiSelectToolbarDrag}
+          expanded={multiSelectToolbarExpanded}
+          setExpanded={(v) => {
+            setMultiSelectToolbarExpanded(v);
+            try { localStorage.setItem('multiSelectToolbarExpanded', String(v)); } catch {}
           }}
-        >
-          {/* Drag handle header */}
-          <div
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              startMultiSelectToolbarDrag(e);
-            }}
-            style={{
-              padding: "4px 6px",
-              background: "var(--bg-primary)",
-              cursor: isDraggingMultiSelectToolbar ? CURSOR_GRABBING : CURSOR_GRAB,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              borderBottom: "1px solid var(--border-color)",
-            }}
-          >
-            <div style={{ 
-              width: 24, 
-              height: 4, 
-              background: "var(--text-secondary)", 
-              borderRadius: 2,
-              opacity: 0.5,
-            }} />
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                setMultiSelectToolbarExpanded(!multiSelectToolbarExpanded);
-              }}
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: 2,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                color: "var(--text-secondary)",
-              }}
-              title={multiSelectToolbarExpanded ? "Collapse" : "Expand"}
-            >
-              {multiSelectToolbarExpanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
-            </button>
-          </div>
-
-          {/* Toolbar buttons */}
-          <div
-            onMouseDown={(e) => e.stopPropagation()}
-            style={{ padding: 4, display: "flex", flexDirection: "column", gap: 2 }}
-          >
-            {/* Replace all */}
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!activeDocId || selectedRegionIds.length === 0) return;
-                pushUndo();
-                selectedRegionIds.forEach(id => handleHighlightAll(id));
-              }}
-              style={{
-                padding: "8px",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: "transparent",
-                border: "1px solid transparent",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "var(--text-primary)",
-                whiteSpace: "nowrap",
-              }}
-              title="Replace all matching text"
-              className="btn-ghost btn-sm"
-            >
-              <Type size={16} />
-              {multiSelectToolbarExpanded && "Replace all"}
-            </button>
-
-            {/* Detect */}
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!activeDocId || selectedRegionIds.length === 0) return;
-                pushUndo();
-                selectedRegionIds.forEach(id => handleRefreshRegion(id));
-              }}
-              style={{
-                padding: "8px",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: "transparent",
-                border: "1px solid transparent",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "var(--text-primary)",
-                whiteSpace: "nowrap",
-              }}
-              title="Re-detect content"
-              className="btn-ghost btn-sm"
-            >
-              <Search size={16} />
-              {multiSelectToolbarExpanded && "Detect"}
-            </button>
-
-            {/* Edit */}
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowMultiSelectEdit(!showMultiSelectEdit);
-              }}
-              style={{
-                padding: "8px",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: showMultiSelectEdit ? "var(--bg-primary)" : "transparent",
-                border: "1px solid transparent",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "var(--text-primary)",
-                fontWeight: showMultiSelectEdit ? 600 : 400,
-                whiteSpace: "nowrap",
-              }}
-              title="Edit label"
-              className="btn-ghost btn-sm"
-            >
-              <Edit3 size={16} />
-              {multiSelectToolbarExpanded && "Edit"}
-            </button>
-
-            {/* Clear */}
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!activeDocId || selectedRegionIds.length === 0) return;
-                pushUndo();
-                const ids = [...selectedRegionIds];
-                batchDeleteRegions(activeDocId, ids).catch(logError("batch-delete"));
-                ids.forEach(id => removeRegion(id));
-              }}
-              style={{
-                padding: "8px",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: "transparent",
-                border: "1px solid transparent",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "var(--text-primary)",
-                whiteSpace: "nowrap",
-              }}
-              title="Clear — remove from document"
-              className="btn-ghost btn-sm"
-            >
-              <X size={16} />
-              {multiSelectToolbarExpanded && "Clear"}
-            </button>
-
-            {/* Separator */}
-            <div style={{ height: 1, background: "rgba(255,255,255,0.15)", margin: "2px 4px" }} />
-
-            {/* Tokenize */}
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!activeDocId || selectedRegionIds.length === 0) return;
-                pushUndo();
-                selectedRegionIds.forEach(id => {
-                  setRegionAction(activeDocId, id, "TOKENIZE").catch(logError("set-tokenize"));
-                  updateRegionAction(id, "TOKENIZE");
-                });
-              }}
-              style={{
-                padding: "8px",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: "transparent",
-                border: "1px solid transparent",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "var(--tokenize)",
-                whiteSpace: "nowrap",
-              }}
-              title="Tokenize"
-              className="btn-tokenize btn-sm"
-            >
-              <Key size={16} />
-              {multiSelectToolbarExpanded && "Tokenize"}
-            </button>
-
-            {/* Remove */}
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!activeDocId || selectedRegionIds.length === 0) return;
-                pushUndo();
-                selectedRegionIds.forEach(id => {
-                  setRegionAction(activeDocId, id, "REMOVE").catch(logError("set-remove"));
-                  updateRegionAction(id, "REMOVE");
-                });
-              }}
-              style={{
-                padding: "8px",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: "transparent",
-                border: "1px solid transparent",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "var(--danger)",
-                whiteSpace: "nowrap",
-              }}
-              title="Remove"
-              className="btn-danger btn-sm"
-            >
-              <Trash2 size={16} />
-              {multiSelectToolbarExpanded && "Remove"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Multi-select edit dialog */}
-      {showMultiSelectEdit && selectedRegionIds.length > 1 && (
-        <div
-          style={{
-            position: "fixed",
-            left: multiSelectToolbarPos.x + 100,
-            top: multiSelectToolbarPos.y,
-            zIndex: 1000,
-            background: "var(--bg-secondary)",
-            borderRadius: 8,
-            boxShadow: "0 4px 24px rgba(0,0,0,0.6)",
-            minWidth: 280,
-            maxWidth: 350,
-            border: "1px solid var(--border-color)",
-            padding: 12,
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>
-            Change Label for {selectedRegionIds.length} Regions
-          </div>
-          <select
-            autoFocus
-            value={multiSelectEditLabel}
-            onChange={(e) => setMultiSelectEditLabel(e.target.value as PIIType)}
-            style={{
-              width: "100%",
-              padding: "6px 8px",
-              fontSize: 13,
-              background: "var(--bg-primary)",
-              border: "1px solid var(--border-color)",
-              borderRadius: 4,
-              color: "var(--text-primary)",
-              marginBottom: 8,
-            }}
-          >
-            {visibleLabels.map((entry) => (
-              <option key={entry.label} value={entry.label}>{entry.label}</option>
-            ))}
-          </select>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              className="btn-primary"
-              onClick={() => {
-                if (!activeDocId || selectedRegionIds.length === 0) return;
-                pushUndo();
-                selectedRegionIds.forEach(id => {
-                  updateRegion(id, { pii_type: multiSelectEditLabel });
-                  updateRegionLabel(activeDocId, id, multiSelectEditLabel).catch(logError("update-label"));
-                });
-                setShowMultiSelectEdit(false);
-              }}
-              style={{ flex: 1 }}
-            >
-              Apply
-            </button>
-            <button
-              className="btn-ghost btn-sm"
-              onClick={() => setShowMultiSelectEdit(false)}
-              style={{ flex: 1 }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+          selectedRegionIds={selectedRegionIds}
+          regions={regions}
+          activeDocId={activeDocId}
+          activePage={activePage}
+          showEditDialog={showMultiSelectEdit}
+          setShowEditDialog={setShowMultiSelectEdit}
+          multiSelectEditLabel={multiSelectEditLabel}
+          setMultiSelectEditLabel={setMultiSelectEditLabel}
+          visibleLabels={visibleLabels}
+          frequentLabels={frequentLabels}
+          otherLabels={otherLabels}
+          pushUndo={pushUndo}
+          handleHighlightAll={handleHighlightAll}
+          handleRefreshRegion={handleRefreshRegion}
+          removeRegion={(_docId, regionId) => removeRegion(regionId)}
+          updateRegionAction={(_docId, regionId, action) => updateRegionAction(regionId, action)}
+          updateRegion={(_docId, regionId, patch) => updateRegion(regionId, patch)}
+          clearSelection={clearSelection}
+          setStatusMessage={setStatusMessage}
+        />
       )}
 
       {/* Export dialog */}

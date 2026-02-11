@@ -15,6 +15,7 @@ from models.schemas import (
     PIIRegion,
 )
 from api.deps import (
+    cleanup_stale_progress,
     detection_progress,
     get_active_llm_engine,
     get_doc,
@@ -31,6 +32,8 @@ router = APIRouter(prefix="/api", tags=["detection"])
 @router.get("/documents/{doc_id}/detection-progress")
 async def get_detection_progress(doc_id: str):
     """Return real-time detection progress for a document."""
+    # Evict stale entries on each poll
+    cleanup_stale_progress()
     progress = detection_progress.get(doc_id)
     if progress is None:
         return {
@@ -103,7 +106,7 @@ async def detect_pii(doc_id: str):
             return all_regions
 
         # Run CPU-bound detection in a thread pool
-        all_regions = await asyncio.get_event_loop().run_in_executor(None, _run_detection)
+        all_regions = await asyncio.to_thread(_run_detection)
 
         # Propagate: if text was detected on one page, flag it on every
         # other page where it also appears.
@@ -223,7 +226,7 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
                     progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
                 return results
 
-            new_regions = await asyncio.get_event_loop().run_in_executor(None, _run_redetection)
+            new_regions = await asyncio.to_thread(_run_redetection)
 
         # ── Merge new detections into existing regions ──
         scanned_pages = {p.page_number for p in pages_to_scan}

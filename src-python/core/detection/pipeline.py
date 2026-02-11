@@ -405,22 +405,37 @@ def _merge_detections(
     # Cross-layer confidence boost
     # When multiple layers independently detect the same span, boost the
     # highest-priority candidate's confidence.
+    #
+    # Optimised: sort by start position, then scan forward only while
+    # candidates can still overlap (start < current end).  This cuts
+    # typical O(n²) down to O(n·k) where k ≤ overlap-cluster size.
     # ------------------------------------------------------------------
     _BOOST_2_LAYERS = 0.10
     _BOOST_3_LAYERS = 0.15
 
-    for i, c in enumerate(candidates):
+    # Pre-sort a copy by start for the scan (original order restored later)
+    idx_sorted = sorted(range(len(candidates)), key=lambda k: candidates[k]["start"])
+
+    for ii in range(len(idx_sorted)):
+        i = idx_sorted[ii]
+        c = candidates[i]
         overlapping_sources: set[str] = {c["source"]}
-        for j, other in enumerate(candidates):
-            if i == j:
-                continue
+        c_end = c["end"]
+
+        # Scan forward — candidates are sorted by start, so once
+        # other["start"] >= c_end no further overlap is possible.
+        for jj in range(ii + 1, len(idx_sorted)):
+            j = idx_sorted[jj]
+            other = candidates[j]
+            if other["start"] >= c_end:
+                break
             # Check for significant overlap (≥50% of either span)
             overlap_start = max(c["start"], other["start"])
-            overlap_end = min(c["end"], other["end"])
+            overlap_end = min(c_end, other["end"])
             if overlap_end <= overlap_start:
                 continue
             overlap_len = overlap_end - overlap_start
-            c_len = c["end"] - c["start"]
+            c_len = c_end - c["start"]
             o_len = other["end"] - other["start"]
             if c_len > 0 and o_len > 0:
                 ratio = overlap_len / min(c_len, o_len)

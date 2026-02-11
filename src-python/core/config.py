@@ -40,6 +40,8 @@ class AppConfig(BaseModel):
     llm_context_size: int = 2048
     llm_gpu_layers: int = 0                           # 0 = CPU only (avoids NaN assertions with mixed GPU/CPU)
     llm_threads: int = 0                              # 0 = auto (use all physical cores)
+    llm_batch_size: int = 2048                        # token batch size for llama.cpp
+    llm_flash_attn: bool = True                       # use flash attention if supported
 
     # LLM — remote API (OpenAI-compatible)
     llm_provider: str = "local"                       # "local" | "remote"
@@ -116,7 +118,8 @@ class AppConfig(BaseModel):
         "render_dpi", "tesseract_cmd",
         "ner_backend", "ner_model_preference",
         "llm_model_path",
-        "llm_provider", "llm_api_url", "llm_api_key", "llm_api_model",
+        "llm_provider", "llm_api_url", "llm_api_model",
+        "llm_batch_size", "llm_flash_attn",
     }
 
     @property

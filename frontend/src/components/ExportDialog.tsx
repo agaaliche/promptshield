@@ -8,6 +8,7 @@ import { Shield, X, Search, FileText, Download, Package, Lock } from "lucide-rea
 import { useAppStore } from "../store";
 import { batchAnonymize, syncRegions, unlockVault } from "../api";
 import type { DocumentInfo } from "../types";
+import { Z_TOP_DIALOG } from "../zIndex";
 
 interface Props {
   open: boolean;
@@ -141,6 +142,9 @@ export default function ExportDialog({ open, onClose }: Props) {
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="export-dialog-title"
       style={{
         position: "fixed",
         inset: 0,
@@ -148,7 +152,7 @@ export default function ExportDialog({ open, onClose }: Props) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        zIndex: 10000,
+        zIndex: Z_TOP_DIALOG,
       }}
       onClick={onClose}
     >
@@ -170,10 +174,10 @@ export default function ExportDialog({ open, onClose }: Props) {
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid var(--border-color)", gap: 10 }}>
           <Shield size={18} style={{ color: "#4caf50" }} />
-          <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+          <span id="export-dialog-title" style={{ flex: 1, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
             Export Secure Files
           </span>
-          <button className="btn-ghost btn-sm" onClick={onClose} style={{ padding: 4 }}>
+          <button className="btn-ghost btn-sm" onClick={onClose} style={{ padding: 4 }} aria-label="Close export dialog">
             <X size={16} />
           </button>
         </div>

@@ -8,6 +8,8 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+import psutil
+
 from core.config import config
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,15 @@ class LLMEngine:
         if not path.suffix.lower() == ".gguf":
             raise ValueError(f"Expected a .gguf model file, got: {path.suffix}")
 
+        # Memory check — warn if available RAM is less than model file size
+        model_size = path.stat().st_size
+        available_ram = psutil.virtual_memory().available
+        if model_size > available_ram:
+            logger.warning(
+                f"Model file ({model_size / 1e9:.1f} GB) exceeds available RAM "
+                f"({available_ram / 1e9:.1f} GB). Loading may fail or cause swapping."
+            )
+
         # Determine thread count
         n_threads = config.llm_threads
         if n_threads <= 0:
@@ -81,8 +92,8 @@ class LLMEngine:
                 n_ctx=config.llm_context_size,
                 n_threads=n_threads,
                 n_gpu_layers=n_gpu_layers,
-                n_batch=2048,
-                flash_attn=True,
+                n_batch=config.llm_batch_size,
+                flash_attn=config.llm_flash_attn,
                 verbose=False,
             )
 

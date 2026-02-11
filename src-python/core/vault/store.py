@@ -7,6 +7,7 @@ import logging
 import os
 import secrets
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -64,6 +65,7 @@ class TokenVault:
         self._conn: Optional[sqlite3.Connection] = None
         self._fernet: Optional[Fernet] = None
         self._is_unlocked = False
+        self._lock = threading.Lock()  # Protects all SQLite operations
 
     @property
     def is_unlocked(self) -> bool:
@@ -81,10 +83,14 @@ class TokenVault:
         token. If it exists, verifies the passphrase against the stored
         verification token.
         """
+        with self._lock:
+            self._initialize_locked(passphrase)
+
+    def _initialize_locked(self, passphrase: str) -> None:
         is_new = not self._db_path.exists()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self._conn = sqlite3.connect(str(self._db_path))
+        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(self._SCHEMA)
 
@@ -155,6 +161,7 @@ class TokenVault:
         return self._fernet.decrypt(ciphertext).decode()
 
     def _store_meta(self, key: str, value: str) -> None:
+        """Store metadata (must be called under self._lock)."""
         if self._conn is None:
             raise RuntimeError("Vault database connection not open")
         self._conn.execute(
@@ -164,6 +171,7 @@ class TokenVault:
         self._conn.commit()
 
     def _get_meta(self, key: str) -> Optional[str]:
+        """Read metadata (must be called under self._lock)."""
         if self._conn is None:
             raise RuntimeError("Vault database connection not open")
         row = self._conn.execute(
@@ -180,25 +188,26 @@ class TokenVault:
     # -----------------------------------------------------------------------
 
     def generate_token_string(self, pii_type: PIIType) -> str:
-        """Generate a unique token string like [ANON_PERSON_A3F2B1]."""
+        """Generate a unique token string like [ANON_PERSON_A3F2B1C8D9]."""
         type_str = pii_type.value if isinstance(pii_type, PIIType) else str(pii_type)
-        hex_part = secrets.token_hex(3).upper()  # 6 hex chars
-        token = config.token_format.format(
-            prefix=config.token_prefix,
-            type=type_str,
-            hex=hex_part,
-        )
-
-        # Ensure uniqueness
-        while self._token_string_exists(token):
-            hex_part = secrets.token_hex(3).upper()
+        with self._lock:
+            hex_part = secrets.token_hex(5).upper()  # 10 hex chars — ~1 trillion unique per type
             token = config.token_format.format(
                 prefix=config.token_prefix,
                 type=type_str,
                 hex=hex_part,
             )
 
-        return token
+            # Ensure uniqueness
+            while self._token_string_exists(token):
+                hex_part = secrets.token_hex(4).upper()
+                token = config.token_format.format(
+                    prefix=config.token_prefix,
+                    type=type_str,
+                    hex=hex_part,
+                )
+
+            return token
 
     def _token_string_exists(self, token_string: str) -> bool:
         if self._conn is None:
@@ -211,10 +220,10 @@ class TokenVault:
     def store_token(self, mapping: TokenMapping) -> None:
         """Store a token mapping in the vault."""
         self._ensure_unlocked()
-        if self._conn is None:
-            raise RuntimeError("Vault database connection not open")
-
-        self._conn.execute(
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("Vault database connection not open")
+            self._conn.execute(
             """INSERT INTO tokens
                (token_id, token_string, original_text_enc, pii_type,
                 source_document, context_snippet_enc, created_at)
@@ -228,21 +237,21 @@ class TokenVault:
                 self._encrypt(mapping.context_snippet) if mapping.context_snippet else None,
                 mapping.created_at.isoformat(),
             ),
-        )
-        self._conn.commit()
+            )
+            self._conn.commit()
 
     def resolve_token(self, token_string: str) -> Optional[TokenMapping]:
         """Look up a token and return the decrypted mapping."""
         self._ensure_unlocked()
-        if self._conn is None:
-            raise RuntimeError("Vault database connection not open")
-
-        row = self._conn.execute(
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("Vault database connection not open")
+            row = self._conn.execute(
             """SELECT token_id, token_string, original_text_enc, pii_type,
                       source_document, context_snippet_enc, created_at
                FROM tokens WHERE token_string = ?""",
             (token_string,),
-        ).fetchone()
+            ).fetchone()
 
         if row is None:
             return None
@@ -270,14 +279,13 @@ class TokenVault:
 
         # Find all token patterns in the text
         pattern = re.compile(
-            r"\[" + re.escape(config.token_prefix) + r"_[A-Z_]+_[A-F0-9]{6}\]"
+            r"\[" + re.escape(config.token_prefix) + r"_[A-Z_]+_[A-F0-9]{6,12}\]"
         )
         found_tokens = pattern.findall(text)
 
         if not found_tokens:
             return text, 0, []
 
-        replaced_count = 0
         unresolved: list[str] = []
         result = text
 
@@ -285,11 +293,9 @@ class TokenVault:
             mapping = self.resolve_token(token_str)
             if mapping:
                 result = result.replace(token_str, mapping.original_text)
-                replaced_count += result.count(mapping.original_text)  # Rough count
             else:
                 unresolved.append(token_str)
 
-        # More accurate count
         replaced_count = len(found_tokens) - len(unresolved)
         return result, replaced_count, unresolved
 
@@ -300,21 +306,21 @@ class TokenVault:
     ) -> list[TokenMapping]:
         """List tokens, optionally filtered."""
         self._ensure_unlocked()
-        if self._conn is None:
-            raise RuntimeError("Vault database connection not open")
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("Vault database connection not open")
+            query = "SELECT * FROM tokens WHERE 1=1"
+            params: list = []
 
-        query = "SELECT * FROM tokens WHERE 1=1"
-        params: list = []
+            if source_document:
+                query += " AND source_document = ?"
+                params.append(source_document)
+            if pii_type:
+                query += " AND pii_type = ?"
+                params.append(pii_type.value if isinstance(pii_type, PIIType) else str(pii_type))
 
-        if source_document:
-            query += " AND source_document = ?"
-            params.append(source_document)
-        if pii_type:
-            query += " AND pii_type = ?"
-            params.append(pii_type.value if isinstance(pii_type, PIIType) else str(pii_type))
-
-        query += " ORDER BY created_at DESC"
-        rows = self._conn.execute(query, params).fetchall()
+            query += " ORDER BY created_at DESC"
+            rows = self._conn.execute(query, params).fetchall()
 
         return [
             TokenMapping(
@@ -332,14 +338,14 @@ class TokenVault:
     def delete_token(self, token_id: str) -> bool:
         """Delete a token from the vault."""
         self._ensure_unlocked()
-        if self._conn is None:
-            raise RuntimeError("Vault database connection not open")
-
-        cursor = self._conn.execute(
-            "DELETE FROM tokens WHERE token_id = ?", (token_id,)
-        )
-        self._conn.commit()
-        return cursor.rowcount > 0
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("Vault database connection not open")
+            cursor = self._conn.execute(
+                "DELETE FROM tokens WHERE token_id = ?", (token_id,)
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
 
     # -----------------------------------------------------------------------
     # Document tracking
@@ -354,17 +360,17 @@ class TokenVault:
     ) -> None:
         """Register a processed document in the vault."""
         self._ensure_unlocked()
-        if self._conn is None:
-            raise RuntimeError("Vault database connection not open")
-
-        self._conn.execute(
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("Vault database connection not open")
+            self._conn.execute(
             """INSERT OR REPLACE INTO documents
                (doc_id, original_filename, anonymized_filename, processed_at, page_count)
                VALUES (?, ?, ?, ?, ?)""",
             (doc_id, original_filename, anonymized_filename,
-             datetime.now(timezone.utc).isoformat(), page_count),
-        )
-        self._conn.commit()
+                 datetime.now(timezone.utc).isoformat(), page_count),
+            )
+            self._conn.commit()
 
     # -----------------------------------------------------------------------
     # Stats
@@ -373,18 +379,18 @@ class TokenVault:
     def get_stats(self) -> dict:
         """Return vault statistics."""
         self._ensure_unlocked()
-        if self._conn is None:
-            raise RuntimeError("Vault database connection not open")
+        with self._lock:
+            if self._conn is None:
+                raise RuntimeError("Vault database connection not open")
+            token_count = self._conn.execute("SELECT COUNT(*) FROM tokens").fetchone()[0]
+            doc_count = self._conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+            db_size = os.path.getsize(self._db_path) if self._db_path.exists() else 0
 
-        token_count = self._conn.execute("SELECT COUNT(*) FROM tokens").fetchone()[0]
-        doc_count = self._conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-        db_size = os.path.getsize(self._db_path) if self._db_path.exists() else 0
-
-        return {
-            "total_tokens": token_count,
-            "total_documents": doc_count,
-            "vault_size_bytes": db_size,
-        }
+            return {
+                "total_tokens": token_count,
+                "total_documents": doc_count,
+                "vault_size_bytes": db_size,
+            }
 
     # -----------------------------------------------------------------------
     # Export / Import
@@ -451,11 +457,14 @@ class TokenVault:
                     created_at=datetime.fromisoformat(t["created_at"]),
                 )
                 # Skip if token_string already exists
-                if self._token_string_exists(mapping.token_string):
-                    skipped += 1
-                    continue
+                with self._lock:
+                    if self._token_string_exists(mapping.token_string):
+                        skipped += 1
+                        continue
                 self.store_token(mapping)
                 imported += 1
+            except sqlite3.IntegrityError:
+                skipped += 1  # token_id primary key collision
             except Exception as exc:
                 logger.warning("Failed to import token %s: %s", t.get("token_id", "?"), exc)
                 errors += 1
@@ -464,11 +473,12 @@ class TokenVault:
 
     def close(self) -> None:
         """Close the vault connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
-        self._fernet = None
-        self._is_unlocked = False
+        with self._lock:
+            if self._conn:
+                self._conn.close()
+                self._conn = None
+            self._fernet = None
+            self._is_unlocked = False
 
 
 # Singleton vault instance

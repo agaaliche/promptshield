@@ -25,6 +25,21 @@ store: Optional[DocumentStore] = None
 # In-memory detection progress tracker  (doc_id → progress dict)
 detection_progress: dict[str, dict] = {}
 
+# Maximum age (seconds) for completed/errored detection progress entries
+_PROGRESS_TTL = 300  # 5 minutes
+
+
+def cleanup_stale_progress() -> None:
+    """Remove completed/errored detection_progress entries older than TTL."""
+    now = _time.time()
+    stale = [
+        k for k, v in detection_progress.items()
+        if v.get("status") in ("complete", "error")
+        and now - v.get("_started_at", now) > _PROGRESS_TTL
+    ]
+    for k in stale:
+        detection_progress.pop(k, None)
+
 # Detection lock — prevents concurrent detection runs from racing on config
 _detection_lock = threading.Lock()
 
@@ -90,7 +105,7 @@ def release_detection_lock() -> None:
     try:
         _detection_lock.release()
     except RuntimeError:
-        pass  # already released
+        logger.warning("Detection lock was already released — possible double-release bug")
 
 
 @contextmanager

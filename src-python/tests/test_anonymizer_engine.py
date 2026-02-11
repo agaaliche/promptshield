@@ -283,10 +283,11 @@ class TestAnonymizeImage:
         assert result.regions_removed == 0
         assert Path(result.output_path).exists()
 
-        # Manifest should contain the token
-        manifest = json.loads(
-            (tmp_path / doc.doc_id / "output" / "token_manifest.json").read_text()
-        )
+        # Manifest should contain the token (encrypted since vault is active)
+        enc_path = tmp_path / doc.doc_id / "output" / "token_manifest.enc"
+        assert enc_path.exists(), "Encrypted manifest not found"
+        decrypted = vault._fernet.decrypt(enc_path.read_bytes())
+        manifest = json.loads(decrypted)
         assert len(manifest["tokens"]) == 1
         assert manifest["tokens"][0]["original_text"] == "acme@corp.com"
 

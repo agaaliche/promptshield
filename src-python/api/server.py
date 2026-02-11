@@ -116,6 +116,23 @@ async def lifespan(app: FastAPI):
     # Shutdown cleanup
     logger.info("Shutting down promptShield sidecar...")
 
+    # Close the vault SQLite connection
+    try:
+        from core.vault.store import vault
+        vault.close()
+        logger.info("Vault connection closed")
+    except Exception as e:
+        logger.warning(f"Failed to close vault: {e}")
+
+    # Clean up temp directory (stale bitmaps, output files)
+    try:
+        import shutil
+        if config.temp_dir.exists():
+            shutil.rmtree(config.temp_dir, ignore_errors=True)
+            logger.info(f"Cleaned temp directory: {config.temp_dir}")
+    except Exception as e:
+        logger.warning(f"Failed to clean temp dir: {e}")
+
 
 app = FastAPI(
     title="promptShield",

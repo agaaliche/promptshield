@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useAppStore } from "./store";
-import { checkHealth, getVaultStatus, getLLMStatus, listDocuments, getRegions, getDocument } from "./api";
+import { checkHealth, getVaultStatus, getLLMStatus, listDocuments, getRegions, getDocument, logError } from "./api";
 import { resolveAllOverlaps } from "./regionUtils";
 import Sidebar from "./components/Sidebar";
 import Snackbar from "./components/Snackbar";
@@ -41,8 +41,8 @@ function App() {
           // Load initial status
           getVaultStatus()
             .then((s) => setVaultUnlocked(s.unlocked))
-            .catch(() => {});
-          getLLMStatus().then(setLLMStatus).catch(() => {});
+            .catch(logError("vault-status"));
+          getLLMStatus().then(setLLMStatus).catch(logError("llm-status"));
 
           // Load persisted documents and sync Zustand state with backend
           try {

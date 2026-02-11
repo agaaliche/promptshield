@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import type { PIIRegion, RegionAction } from "../types";
+import { logError } from "../api";
 
 interface UseKeyboardShortcutsOptions {
   activePage: number;
@@ -129,7 +130,7 @@ export default function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) 
             pushUndo();
             const delIds = [...selectedRegionIds];
             delIds.forEach((id) => removeRegion(id));
-            batchDeleteRegions(activeDocId!, delIds).catch(() => {});
+            batchDeleteRegions(activeDocId!, delIds).catch(logError("delete-regions"));
           }
           break;
         case "Backspace":
@@ -163,7 +164,7 @@ export default function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) 
             pushUndo();
             const clearIds = [...selectedRegionIds];
             clearIds.forEach((id) => removeRegion(id));
-            batchDeleteRegions(activeDocId!, clearIds).catch(() => {});
+            batchDeleteRegions(activeDocId!, clearIds).catch(logError("clear-regions"));
           }
           break;
         case "v":

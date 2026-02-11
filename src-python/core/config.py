@@ -44,7 +44,9 @@ class AppConfig(BaseModel):
     # LLM — remote API (OpenAI-compatible)
     llm_provider: str = "local"                       # "local" | "remote"
     llm_api_url: str = ""                              # e.g. https://api.openai.com/v1
-    llm_api_key: str = ""                              # Bearer token
+    llm_api_key: str = Field(                          # Bearer token — prefer DOC_ANON_LLM_API_KEY env var
+        default_factory=lambda: os.environ.get("DOC_ANON_LLM_API_KEY", ""),
+    )
     llm_api_model: str = ""                            # e.g. gpt-4o-mini, claude-sonnet-4-20250514
 
     # PII Detection thresholds

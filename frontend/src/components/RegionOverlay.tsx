@@ -26,6 +26,43 @@ const HANDLE_CURSORS: Record<ResizeHandle, string> = {
   w: "ew-resize",
 };
 
+// ── Module-level caches for localStorage (avoids 300+ reads with many regions) ──
+let _cachedToolbarExpanded: boolean | null = null;
+let _cachedToolbarPos: { x: number; y: number } | null | undefined = undefined;
+let _cachedDialogPos: { x: number; y: number } | null = null;
+
+function getCachedToolbarExpanded(): boolean {
+  if (_cachedToolbarExpanded !== null) return _cachedToolbarExpanded;
+  try {
+    _cachedToolbarExpanded = localStorage.getItem('regionToolbarExpanded') === 'true';
+  } catch (_e) {
+    _cachedToolbarExpanded = false;
+  }
+  return _cachedToolbarExpanded;
+}
+
+function getCachedToolbarPos(): { x: number; y: number } | null {
+  if (_cachedToolbarPos !== undefined) return _cachedToolbarPos;
+  try {
+    const saved = localStorage.getItem('regionToolbarPos');
+    _cachedToolbarPos = saved ? JSON.parse(saved) : null;
+  } catch (_e) {
+    _cachedToolbarPos = null;
+  }
+  return _cachedToolbarPos;
+}
+
+function getCachedDialogPos(): { x: number; y: number } {
+  if (_cachedDialogPos !== null) return _cachedDialogPos;
+  try {
+    const saved = localStorage.getItem('regionDialogPos');
+    _cachedDialogPos = saved ? JSON.parse(saved) : { x: 300, y: 100 };
+  } catch (_e) {
+    _cachedDialogPos = { x: 300, y: 100 };
+  }
+  return _cachedDialogPos!;
+}
+
 interface Props {
   region: PIIRegion;
   pageWidth: number;
@@ -76,45 +113,21 @@ export default function RegionOverlay({
   cursorToolbarExpanded,
 }: Props) {
   const [showEditPanel, setShowEditPanel] = useState(false);
-  const [toolbarExpanded, setToolbarExpanded] = useState(() => {
-    try {
-      const saved = localStorage.getItem('regionToolbarExpanded');
-      return saved === 'true';
-    } catch (e) {
-      console.error('Failed to load toolbar expanded state:', e);
-    }
-    return false;
-  });
+  const [toolbarExpanded, setToolbarExpanded] = useState(getCachedToolbarExpanded);
   const [activeTab, setActiveTab] = useState<"label" | "content">("label");
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [isEditingText, setIsEditingText] = useState(false);
   const [editedText, setEditedText] = useState(region.text);
   
   // Toolbar position (viewport/fixed coordinates)
-  const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(() => {
-    try {
-      const saved = localStorage.getItem('regionToolbarPos');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return null; // null = auto-position next to region
-  });
+  const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(getCachedToolbarPos);
   const highlightRef = useRef<HTMLDivElement>(null);
   const [isDraggingToolbar, setIsDraggingToolbar] = useState(false);
   const toolbarDragStart = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
   const toolbarRef = useRef<HTMLDivElement>(null);
   
   // Edit dialog position (viewport coordinates)
-  const [dialogPos, setDialogPos] = useState(() => {
-    try {
-      const saved = localStorage.getItem('regionDialogPos');
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch (e) {
-      console.error('Failed to load dialog position:', e);
-    }
-    return { x: 300, y: 100 };
-  });
+  const [dialogPos, setDialogPos] = useState(getCachedDialogPos);
   const [isDraggingDialog, setIsDraggingDialog] = useState(false);
   const dialogDragStart = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
   
@@ -232,8 +245,9 @@ export default function RegionOverlay({
     };
   }, [isDraggingToolbar, portalTarget, imageContainerEl]);
 
-  // Save toolbar offset to localStorage
+  // Save toolbar offset to localStorage + module cache
   useEffect(() => {
+    _cachedToolbarPos = toolbarPos;
     try {
       localStorage.setItem('regionToolbarPos', JSON.stringify(toolbarPos));
     } catch (e) {
@@ -241,8 +255,9 @@ export default function RegionOverlay({
     }
   }, [toolbarPos]);
 
-  // Save toolbar expanded state to localStorage
+  // Save toolbar expanded state to localStorage + module cache
   useEffect(() => {
+    _cachedToolbarExpanded = toolbarExpanded;
     try {
       localStorage.setItem('regionToolbarExpanded', String(toolbarExpanded));
     } catch (e) {
@@ -275,8 +290,9 @@ export default function RegionOverlay({
     };
   }, [isDraggingDialog]);
 
-  // Save dialog position to localStorage
+  // Save dialog position to localStorage + module cache
   useEffect(() => {
+    _cachedDialogPos = dialogPos;
     try {
       localStorage.setItem('regionDialogPos', JSON.stringify(dialogPos));
     } catch (e) {

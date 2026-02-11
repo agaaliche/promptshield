@@ -36,6 +36,7 @@ import {
   setLLMProvider,
   getHardwareInfo,
 } from "../api";
+import { logError } from "../api";
 import type { HardwareInfo } from "../api";
 import type { VaultStats } from "../types";
 
@@ -90,9 +91,9 @@ export default function SettingsView() {
   // Load initial status
   useEffect(() => {
     if (!backendReady) return;
-    getVaultStatus().then((s) => setVaultUnlocked(s.unlocked)).catch(() => {});
-    listModels().then(setModels).catch(() => {});
-    getHardwareInfo().then(setHwInfo).catch(() => {});
+    getVaultStatus().then((s) => setVaultUnlocked(s.unlocked)).catch(logError("vault-status"));
+    listModels().then(setModels).catch(logError("list-models"));
+    getHardwareInfo().then(setHwInfo).catch(logError("hw-info"));
     // Hydrate settings + LLM status together so we can validate llm_detection_enabled
     Promise.all([getSettings(), getLLMStatus()])
       .then(([s, status]) => {
@@ -109,7 +110,7 @@ export default function SettingsView() {
         });
         // Persist the corrected value if it changed
         if (s.llm_detection_enabled && !hasValidLlm) {
-          updateSettings({ llm_detection_enabled: false }).catch(() => {});
+          updateSettings({ llm_detection_enabled: false }).catch(logError("update-settings"));
         }
         // Hydrate remote LLM fields from persisted settings
         if (s.llm_api_url) setRemoteApiUrl(s.llm_api_url as string);
@@ -117,12 +118,12 @@ export default function SettingsView() {
         // Never show the key — just indicate it's set
         if (s.llm_api_key) setRemoteApiKey("••••••••");
       })
-      .catch(() => {});
+      .catch(logError("load-settings"));
   }, [backendReady, setVaultUnlocked, setLLMStatus, setDetectionSettings]);
 
   useEffect(() => {
     if (vaultUnlocked) {
-      getVaultStats().then(setVaultStats).catch(() => {});
+      getVaultStats().then(setVaultStats).catch(logError("vault-stats"));
     }
   }, [vaultUnlocked]);
 
@@ -174,7 +175,7 @@ export default function SettingsView() {
   // Auto-unload local LLM if hardware is insufficient
   useEffect(() => {
     if (localLlmReady === false && llmStatus?.loaded && llmStatus.provider !== "remote") {
-      unloadLLM().then(() => getLLMStatus().then(setLLMStatus)).catch(() => {});
+      unloadLLM().then(() => getLLMStatus().then(setLLMStatus)).catch(logError("unload-llm"));
     }
   }, [localLlmReady, llmStatus?.loaded, llmStatus?.provider, setLLMStatus]);
 
@@ -288,7 +289,7 @@ export default function SettingsView() {
                         setImportFile(null);
                         setImportPass("");
                         // Refresh vault stats
-                        getVaultStats().then(setVaultStats).catch(() => {});
+                        getVaultStats().then(setVaultStats).catch(logError("vault-stats"));
                       } catch (e: any) {
                         setImportStatus(`Import failed: ${e.message}`);
                       } finally {
@@ -347,7 +348,7 @@ export default function SettingsView() {
               onChange={(e) => {
                 const v = e.target.checked;
                 setDetectionSettings({ regex_enabled: v });
-                updateSettings({ regex_enabled: v }).catch(() => {});
+                updateSettings({ regex_enabled: v }).catch(logError("update-settings"));
               }}
             />{" "}
             Pattern matching (finds IDs, emails, phone numbers, etc.)
@@ -359,7 +360,7 @@ export default function SettingsView() {
               onChange={(e) => {
                 const v = e.target.checked;
                 setDetectionSettings({ ner_enabled: v });
-                updateSettings({ ner_enabled: v }).catch(() => {});
+                updateSettings({ ner_enabled: v }).catch(logError("update-settings"));
               }}
             />{" "}
             AI recognition (finds names, organizations, locations)
@@ -511,7 +512,7 @@ export default function SettingsView() {
               onChange={(e) => {
                 const v = e.target.checked;
                 setDetectionSettings({ llm_detection_enabled: v });
-                updateSettings({ llm_detection_enabled: v }).catch(() => {});
+                updateSettings({ llm_detection_enabled: v }).catch(logError("update-settings"));
               }}
             />{" "}
             Deep analysis (uses an LLM for harder-to-find information)
@@ -605,7 +606,7 @@ export default function SettingsView() {
                 in the models directory.
                 <button
                   className="btn-ghost btn-sm"
-                  onClick={() => openModelsDir().catch(() => {})}
+                  onClick={() => openModelsDir().catch(logError("open-models-dir"))}
                   style={{ marginLeft: 4, display: "inline-flex", alignItems: "center", gap: 4, verticalAlign: "middle", fontSize: 11, padding: "2px 6px" }}
                   title="Open models directory"
                 >
@@ -788,7 +789,7 @@ export default function SettingsView() {
                         setRemoteError("");
                         if (detectionSettings.llm_detection_enabled && !status.loaded) {
                           setDetectionSettings({ llm_detection_enabled: false });
-                          updateSettings({ llm_detection_enabled: false }).catch(() => {});
+                          updateSettings({ llm_detection_enabled: false }).catch(logError("update-settings"));
                         }
                       } catch (e: any) {
                         setRemoteError(e.message || "Failed to remove connection");

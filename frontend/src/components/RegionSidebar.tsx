@@ -14,6 +14,7 @@ import {
   MoreVertical,
 } from "lucide-react";
 import { PII_COLORS, type PIIRegion, type RegionAction } from "../types";
+import { logError } from "../api";
 import { useAppStore } from "../store";
 
 type SidebarTab = "page" | "document";
@@ -337,7 +338,7 @@ export default function RegionSidebar({
                   const ids = activeRegions.map(r => r.id);
                   const newAction = allTokenized ? "PENDING" : "TOKENIZE";
                   ids.forEach(id => updateRegionAction(id, newAction));
-                  batchRegionAction(activeDocId, ids, newAction).catch(() => {});
+                  batchRegionAction(activeDocId, ids, newAction).catch(logError("batch-tokenize"));
                 }}
                 style={{
                   flex: 1,
@@ -369,7 +370,7 @@ export default function RegionSidebar({
                   const ids = activeRegions.map(r => r.id);
                   const newAction = allRemoved ? "PENDING" : "REMOVE";
                   ids.forEach(id => updateRegionAction(id, newAction));
-                  batchRegionAction(activeDocId, ids, newAction).catch(() => {});
+                  batchRegionAction(activeDocId, ids, newAction).catch(logError("batch-remove"));
                 }}
                 style={{
                   flex: 1,
@@ -403,7 +404,7 @@ export default function RegionSidebar({
                   if (skipConfirm) {
                     pushUndo();
                     ids.forEach(id => removeRegion(id));
-                    batchDeleteRegions(activeDocId, ids).catch(() => {});
+                    batchDeleteRegions(activeDocId, ids).catch(logError("batch-clear"));
                   } else {
                     clearConfirmRef.current.ids = ids;
                     setClearNeverAsk(false);
@@ -781,7 +782,7 @@ export default function RegionSidebar({
                   pushUndo();
                   const ids = clearConfirmRef.current.ids;
                   ids.forEach(id => removeRegion(id));
-                  batchDeleteRegions(activeDocId, ids).catch(() => {});
+                  batchDeleteRegions(activeDocId, ids).catch(logError("batch-clear"));
                 }}
                 style={{
                   padding: '6px 14px',

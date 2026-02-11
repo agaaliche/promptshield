@@ -6,8 +6,10 @@ import logging
 import os
 import platform
 import subprocess
+from typing import Optional
 
 from fastapi import APIRouter
+from pydantic import BaseModel, Field
 
 from core.config import config
 from api.deps import get_store
@@ -17,29 +19,47 @@ router = APIRouter(prefix="/api", tags=["settings"])
 
 
 # ---------------------------------------------------------------------------
+# Settings update schema — typed validation instead of raw dict
+# ---------------------------------------------------------------------------
+
+class SettingsUpdate(BaseModel):
+    """Validated partial settings update."""
+    regex_enabled: Optional[bool] = None
+    ner_enabled: Optional[bool] = None
+    llm_detection_enabled: Optional[bool] = None
+    confidence_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    ocr_language: Optional[str] = None
+    ocr_dpi: Optional[int] = Field(default=None, ge=72, le=1200)
+    render_dpi: Optional[int] = Field(default=None, ge=72, le=1200)
+    tesseract_cmd: Optional[str] = None
+    ner_backend: Optional[str] = None
+    ner_model_preference: Optional[str] = None
+    llm_provider: Optional[str] = None
+    llm_api_url: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_api_model: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
 # App settings
 # ---------------------------------------------------------------------------
 
 @router.get("/settings")
 async def get_settings():
-    """Get current app settings."""
-    return config.model_dump(mode="json")
+    """Get current app settings (masks API key)."""
+    data = config.model_dump(mode="json")
+    # Never expose the full API key over the wire
+    if data.get("llm_api_key"):
+        data["llm_api_key"] = "••••••••"
+    return data
 
 
 @router.patch("/settings")
-async def update_settings(updates: dict):
-    """Update app settings (partial update)."""
-    allowed = {
-        "regex_enabled", "ner_enabled", "llm_detection_enabled",
-        "confidence_threshold", "ocr_language", "ocr_dpi",
-        "render_dpi", "tesseract_cmd",
-        "ner_backend", "ner_model_preference",
-        "llm_provider", "llm_api_url", "llm_api_key", "llm_api_model",
-    }
+async def update_settings(body: SettingsUpdate):
+    """Update app settings (partial update with Pydantic validation)."""
+    updates = body.model_dump(exclude_none=True)
     applied = {}
     for key, value in updates.items():
-        if key not in allowed:
-            continue
         if hasattr(config, key):
             setattr(config, key, value)
             applied[key] = value

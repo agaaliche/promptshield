@@ -19,6 +19,9 @@ from api.deps import (
     get_active_llm_engine,
     get_doc,
     save_doc,
+    acquire_detection_lock,
+    release_detection_lock,
+    config_override,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,6 +56,9 @@ async def detect_pii(doc_id: str):
     import traceback
 
     doc = get_doc(doc_id)  # 404 before heavy imports
+
+    if not acquire_detection_lock(doc_id):
+        raise HTTPException(409, detail="Detection already in progress. Please wait.")
 
     try:
         from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages
@@ -127,6 +133,8 @@ async def detect_pii(doc_id: str):
             detection_progress[doc_id]["status"] = "error"
             detection_progress[doc_id]["error"] = str(e)
         raise HTTPException(500, detail="Detection failed. Check server logs for details.")
+    finally:
+        release_detection_lock()
 
 
 class RedetectRequest(_PydanticBaseModel):
@@ -155,22 +163,21 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
 
     doc = get_doc(doc_id)  # 404 before heavy imports
 
+    if not acquire_detection_lock(doc_id):
+        raise HTTPException(409, detail="Detection already in progress. Please wait.")
+
     try:
         from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages, _bbox_overlap_area, _bbox_area
 
-        # Temporarily override config thresholds for this detection run
-        original_threshold = config.confidence_threshold
-        original_regex = config.regex_enabled
-        original_ner = config.ner_enabled
-        original_llm = config.llm_detection_enabled
-        try:
-            config.confidence_threshold = body.confidence_threshold
-            config.regex_enabled = body.regex_enabled
-            config.ner_enabled = body.ner_enabled
-            config.llm_detection_enabled = body.llm_detection_enabled
-            config.regex_types = body.regex_types
-            config.ner_types = body.ner_types
-
+        # Thread-safe config override for this detection run
+        with config_override(
+            confidence_threshold=body.confidence_threshold,
+            regex_enabled=body.regex_enabled,
+            ner_enabled=body.ner_enabled,
+            llm_detection_enabled=body.llm_detection_enabled,
+            regex_types=body.regex_types,
+            ner_types=body.ner_types,
+        ):
             engine = get_active_llm_engine()
 
             # Determine which pages to scan
@@ -217,14 +224,6 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
                 return results
 
             new_regions = await asyncio.get_event_loop().run_in_executor(None, _run_redetection)
-
-        finally:
-            config.confidence_threshold = original_threshold
-            config.regex_enabled = original_regex
-            config.ner_enabled = original_ner
-            config.llm_detection_enabled = original_llm
-            config.regex_types = None
-            config.ner_types = None
 
         # ── Merge new detections into existing regions ──
         scanned_pages = {p.page_number for p in pages_to_scan}
@@ -346,6 +345,8 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
             detection_progress[doc_id]["status"] = "error"
             detection_progress[doc_id]["error"] = str(e)
         raise HTTPException(500, detail="Redetect failed. Check server logs for details.")
+    finally:
+        release_detection_lock()
 
 
 @router.get("/documents/{doc_id}/regions")

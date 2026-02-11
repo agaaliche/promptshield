@@ -13,7 +13,6 @@ import {
   ZoomOut,
   RotateCcw,
   Shield,
-  Lock,
   PenTool,
   Undo2,
   Redo2,
@@ -46,6 +45,7 @@ import {
   redetectPII,
   deleteRegion,
   batchDeleteRegions,
+  logError,
 } from "../api";
 import { PII_COLORS, getPIIColor, loadLabelConfig, cacheLabelConfig, ensureBuiltinLabels, type PIILabelEntry, type BBox, type PIIRegion, type PIIType, type RegionAction } from "../types";
 import { CURSOR_CROSSHAIR, CURSOR_GRAB, CURSOR_GRABBING } from "../cursors";
@@ -59,6 +59,8 @@ import PageNavigator from "./PageNavigator";
 import useDraggableToolbar from "../hooks/useDraggableToolbar";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useLabelConfig from "../hooks/useLabelConfig";
+import AutodetectPanel from "./AutodetectPanel";
+import VaultUnlockDialog from "./VaultUnlockDialog";
 
 export default function DocumentViewer() {
   const {
@@ -132,22 +134,6 @@ export default function DocumentViewer() {
 
   // ── Autodetect panel state ──
   const [showAutodetect, setShowAutodetect] = useState(false);
-  const [autodetectFuzziness, setAutodetectFuzziness] = useState(0.55);
-  const [autodetectScope, setAutodetectScope] = useState<"page" | "all">("page");
-  const [autodetectTab, setAutodetectTab] = useState<"patterns" | "ai" | "deep">("patterns");
-  const [showDataTypes, setShowDataTypes] = useState(false);
-  // Regex layer — per-type toggles
-  const [regexTypes, setRegexTypes] = useState<Record<string, boolean>>({
-    EMAIL: true, PHONE: true, SSN: true, CREDIT_CARD: true,
-    IBAN: true, DATE: true, IP_ADDRESS: true, PASSPORT: true,
-    DRIVER_LICENSE: true, ADDRESS: true,
-  });
-  // NER layer — per-type toggles
-  const [nerTypes, setNerTypes] = useState<Record<string, boolean>>({
-    PERSON: true, ORG: true, LOCATION: true, CUSTOM: false,
-  });
-  // LLM layer
-  const [autodetectLlm, setAutodetectLlm] = useState(false);
   // Progress dialog for redetection
   const [redetecting, setRedetecting] = useState(false);
 
@@ -491,27 +477,29 @@ export default function DocumentViewer() {
   });
 
   // ── Autodetect (redetect) ──
-  const autodetectRegex = Object.values(regexTypes).some(Boolean);
-  const autodetectNer = Object.values(nerTypes).some(Boolean);
-  const activeRegexTypes = Object.entries(regexTypes).filter(([, v]) => v).map(([k]) => k);
-  const activeNerTypes = Object.entries(nerTypes).filter(([, v]) => v).map(([k]) => k);
-
-  const handleAutodetect = useCallback(async () => {
+  const handleAutodetect = useCallback(async (opts: {
+    fuzziness: number;
+    scope: "page" | "all";
+    regexEnabled: boolean;
+    nerEnabled: boolean;
+    llmEnabled: boolean;
+    regexTypes: string[];
+    nerTypes: string[];
+  }) => {
     if (!activeDocId) return;
     setIsProcessing(true);
     setRedetecting(true);
     setStatusMessage("Running PII autodetection…");
-    setShowAutodetect(false);
     try {
       pushUndo();
       const result = await redetectPII(activeDocId, {
-        confidence_threshold: autodetectFuzziness,
-        page_number: autodetectScope === "page" ? activePage : undefined,
-        regex_enabled: autodetectRegex,
-        ner_enabled: autodetectNer,
-        llm_detection_enabled: autodetectLlm,
-        regex_types: autodetectRegex ? activeRegexTypes : null,
-        ner_types: autodetectNer ? activeNerTypes : null,
+        confidence_threshold: opts.fuzziness,
+        page_number: opts.scope === "page" ? activePage : undefined,
+        regex_enabled: opts.regexEnabled,
+        ner_enabled: opts.nerEnabled,
+        llm_detection_enabled: opts.llmEnabled,
+        regex_types: opts.regexEnabled ? opts.regexTypes : null,
+        ner_types: opts.nerEnabled ? opts.nerTypes : null,
       });
       setRegions(resolveAllOverlaps(result.regions));
       setStatusMessage(
@@ -523,7 +511,7 @@ export default function DocumentViewer() {
       setIsProcessing(false);
       setRedetecting(false);
     }
-  }, [activeDocId, activePage, autodetectFuzziness, autodetectScope, autodetectRegex, autodetectNer, autodetectLlm, activeRegexTypes, activeNerTypes, pushUndo, setRegions, setIsProcessing, setStatusMessage]);
+  }, [activeDocId, activePage, pushUndo, setRegions, setIsProcessing, setStatusMessage]);
 
   // ── Anonymize ──
   const handleAnonymize = useCallback(async () => {
@@ -1213,269 +1201,16 @@ export default function DocumentViewer() {
         </button>
 
         {showAutodetect && (
-            <div
-              style={{
-                position: "absolute",
-                top: "100%",
-                left: 0,
-                marginTop: 6,
-                background: "var(--bg-secondary)",
-                border: "1px solid var(--border-color)",
-                borderRadius: 8,
-                boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
-                zIndex: 9999,
-                width: 340,
-                display: "flex",
-                flexDirection: "column",
-                overflow: "hidden",
+            <AutodetectPanel
+              isProcessing={isProcessing}
+              activePage={activePage}
+              llmStatus={llmStatus}
+              onDetect={(opts) => {
+                setShowAutodetect(false);
+                handleAutodetect(opts);
               }}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              {/* ── Scope (top) ── */}
-              <div style={{
-                display: "flex",
-                borderBottom: "1px solid var(--border-color)",
-                background: "rgba(0,0,0,0.15)",
-                flexShrink: 0,
-              }}>
-                {([
-                  { key: "page" as const, label: `Current page` },
-                  { key: "all" as const, label: `All pages` },
-                ]).map(({ key, label }) => {
-                  const isActive = autodetectScope === key;
-                  return (
-                    <button
-                      key={key}
-                      onClick={() => setAutodetectScope(key)}
-                      style={{
-                        flex: 1,
-                        padding: "8px 0",
-                        fontSize: 12,
-                        fontWeight: isActive ? 600 : 400,
-                        color: isActive ? "var(--accent-primary)" : "var(--text-muted)",
-                        background: "transparent",
-                        border: "none",
-                        borderBottom: isActive ? "2px solid var(--accent-primary)" : "2px solid transparent",
-                        borderRadius: 0,
-                        cursor: "pointer",
-                        transition: "all 0.15s ease",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 6,
-                      }}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* ── Sensitivity slider ── */}
-              <div style={{ padding: "10px 14px 0" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-secondary)", marginBottom: 3 }}>
-                  <span>Sensitivity</span>
-                  <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{autodetectFuzziness.toFixed(2)}</span>
-                </div>
-                <input
-                  type="range" min={0.1} max={0.95} step={0.05}
-                  value={autodetectFuzziness}
-                  onChange={(e) => setAutodetectFuzziness(parseFloat(e.target.value))}
-                  style={{ width: "100%", accentColor: "var(--accent-primary)" }}
-                />
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-muted)", marginTop: 1 }}>
-                  <span>More results</span>
-                  <span>Fewer results</span>
-                </div>
-              </div>
-
-              {/* ── Choose data types toggle ── */}
-              <div style={{ padding: "8px 14px 0" }}>
-                <button
-                  className="btn-ghost btn-sm"
-                  onClick={() => setShowDataTypes(prev => !prev)}
-                  style={{ width: "auto", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 6, fontSize: 12, border: "1px solid transparent" }}
-                >
-                  <span style={{ transform: showDataTypes ? "rotate(45deg)" : "rotate(0deg)", transition: "transform 0.2s ease", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 600, width: 18, height: 18, marginTop: -1 }}>+</span>
-                  <span>Choose data types</span>
-                </button>
-              </div>
-
-              {/* ── Data types section (collapsible) ── */}
-              {showDataTypes && (<>
-                {/* Layer tabs */}
-                <div style={{ display: "flex", borderBottom: "1px solid var(--border-color)", flexShrink: 0, marginTop: 6 }}>
-                  {([
-                    { key: "patterns" as const, label: "Patterns", active: autodetectRegex },
-                    { key: "ai" as const, label: "AI Recognition", active: autodetectNer },
-                    { key: "deep" as const, label: "Deep Analysis", active: autodetectLlm },
-                  ]).map(({ key, label, active }) => {
-                    const isSel = autodetectTab === key;
-                    return (
-                      <button
-                        key={key}
-                        onClick={() => setAutodetectTab(key)}
-                        style={{
-                          flex: 1,
-                          padding: "9px 4px",
-                          fontSize: 11,
-                          fontWeight: isSel ? 600 : 400,
-                          color: isSel ? "var(--accent-primary)" : active ? "var(--text-secondary)" : "var(--text-muted)",
-                          background: "transparent",
-                          border: "none",
-                          borderBottom: isSel ? "2px solid var(--accent-primary)" : "2px solid transparent",
-                          borderRadius: 0,
-                          cursor: "pointer",
-                          transition: "all 0.15s ease",
-                          opacity: active ? 1 : 0.5,
-                        }}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Tab content */}
-                <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10, maxHeight: 300, overflowY: "auto" }}>
-
-                  {/* Patterns tab (regex) */}
-                  {autodetectTab === "patterns" && (<>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
-                      Select which data patterns to look for
-                    </div>
-                    {([
-                      { key: "EMAIL", icon: "✉", label: "Email addresses" },
-                      { key: "PHONE", icon: "📞", label: "Phone numbers" },
-                      { key: "SSN", icon: "🆔", label: "Social Security / National ID" },
-                      { key: "CREDIT_CARD", icon: "💳", label: "Credit card numbers" },
-                      { key: "IBAN", icon: "🏦", label: "Bank accounts (IBAN)" },
-                      { key: "DATE", icon: "📅", label: "Dates of birth" },
-                      { key: "IP_ADDRESS", icon: "🌐", label: "IP addresses" },
-                      { key: "PASSPORT", icon: "🛂", label: "Passport numbers" },
-                      { key: "DRIVER_LICENSE", icon: "🪪", label: "Driver license numbers" },
-                      { key: "ADDRESS", icon: "🏠", label: "Physical addresses" },
-                    ] as const).map(({ key, icon, label }) => (
-                      <label key={key} style={{
-                        display: "flex", alignItems: "center", gap: 8,
-                        fontSize: 13, color: "var(--text-primary)", cursor: "pointer",
-                        padding: "4px 0",
-                      }}>
-                        <input
-                          type="checkbox"
-                          checked={regexTypes[key]}
-                          onChange={(e) => setRegexTypes(prev => ({ ...prev, [key]: e.target.checked }))}
-                          style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
-                        />
-                        <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>{icon}</span>
-                        {label}
-                      </label>
-                    ))}
-                    <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
-                      <button className="btn-ghost btn-sm" style={{ fontSize: 11 }}
-                        onClick={() => setRegexTypes(prev => Object.fromEntries(Object.keys(prev).map(k => [k, true])))}
-                      >Select all</button>
-                      <button className="btn-ghost btn-sm" style={{ fontSize: 11 }}
-                        onClick={() => setRegexTypes(prev => Object.fromEntries(Object.keys(prev).map(k => [k, false])))}
-                      >Clear all</button>
-                    </div>
-                  </>)}
-
-                  {/* AI Recognition tab (NER) */}
-                  {autodetectTab === "ai" && (<>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
-                      AI-powered recognition of names and entities
-                    </div>
-                    {([
-                      { key: "PERSON", icon: "👤", label: "People's names" },
-                      { key: "ORG", icon: "🏢", label: "Organizations & companies" },
-                      { key: "LOCATION", icon: "📍", label: "Cities, countries & places" },
-                      { key: "CUSTOM", icon: "🔎", label: "Catch all (IDs, codes, misc. entities)" },
-                    ] as const).map(({ key, icon, label }) => (
-                      <label key={key} style={{
-                        display: "flex", alignItems: "center", gap: 8,
-                        fontSize: 13, color: "var(--text-primary)", cursor: "pointer",
-                        padding: "6px 0",
-                      }}>
-                        <input
-                          type="checkbox"
-                          checked={nerTypes[key]}
-                          onChange={(e) => setNerTypes(prev => ({ ...prev, [key]: e.target.checked }))}
-                          style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
-                        />
-                        <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>{icon}</span>
-                        {label}
-                      </label>
-                    ))}
-                    <div style={{
-                      marginTop: 4, padding: "8px 10px",
-                      background: "rgba(255,255,255,0.04)", borderRadius: 6,
-                      fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5,
-                    }}>
-                      Uses machine learning to find names, organizations and locations even when they don't follow a predictable format.
-                    </div>
-                  </>)}
-
-                  {/* Deep Analysis tab (LLM) */}
-                  {autodetectTab === "deep" && (<>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
-                      Context-aware analysis using a language model
-                    </div>
-                    {(() => {
-                      const llmReady = llmStatus?.loaded === true || (llmStatus?.provider === "remote" && !!llmStatus?.remote_api_url);
-                      return (<>
-                    <label style={{
-                      display: "flex", alignItems: "center", gap: 8,
-                      fontSize: 13, color: llmReady ? "var(--text-primary)" : "var(--text-muted)", cursor: llmReady ? "pointer" : "not-allowed",
-                      padding: "6px 0",
-                      opacity: llmReady ? 1 : 0.5,
-                    }}>
-                      <input
-                        type="checkbox"
-                        checked={autodetectLlm && llmReady}
-                        onChange={(e) => setAutodetectLlm(e.target.checked)}
-                        disabled={!llmReady}
-                        style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
-                      />
-                      <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>🧠</span>
-                      Enable deep analysis
-                    </label>
-                    {!llmReady && (
-                      <div style={{
-                        marginTop: 2, padding: "8px 10px",
-                        background: "rgba(255,180,0,0.08)", borderRadius: 6, border: "1px solid rgba(255,180,0,0.15)",
-                        fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5,
-                      }}>
-                        No LLM engine configured. Go to <strong style={{ color: "var(--text-secondary)" }}>Settings → LLM Engine</strong> to load a local model or connect a remote API.
-                      </div>
-                    )}
-                    <div style={{
-                      marginTop: 4, padding: "8px 10px",
-                      background: "rgba(255,255,255,0.04)", borderRadius: 6,
-                      fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5,
-                    }}>
-                      Reads the full text to understand context and catch PII that patterns and AI names might miss. <strong style={{ color: "var(--text-secondary)" }}>Slowest method</strong> — best used after reviewing faster layers.
-                    </div>
-                      </>);
-                    })()}
-                  </>)}
-
-                </div>
-              </>)}
-
-              {/* ── Run button (always visible) ── */}
-              <div style={{ padding: "10px 14px 14px" }}>
-                <button
-                  className="btn-primary"
-                  onClick={handleAutodetect}
-                  disabled={isProcessing || (!autodetectRegex && !autodetectNer && !autodetectLlm)}
-                  style={{ width: "100%" }}
-                >
-                  <ScanSearch size={14} />
-                  {isProcessing ? "Detecting…" : `Run on ${autodetectScope === "page" ? `page ${activePage}` : "all pages"}`}
-                </button>
-              </div>
-            </div>
+              onClose={() => setShowAutodetect(false)}
+            />
         )}
         </div>
         <button
@@ -1982,7 +1717,7 @@ export default function DocumentViewer() {
                 if (!activeDocId || selectedRegionIds.length === 0) return;
                 pushUndo();
                 const ids = [...selectedRegionIds];
-                batchDeleteRegions(activeDocId, ids).catch(() => {});
+                batchDeleteRegions(activeDocId, ids).catch(logError("batch-delete"));
                 ids.forEach(id => removeRegion(id));
               }}
               style={{
@@ -2016,7 +1751,7 @@ export default function DocumentViewer() {
                 if (!activeDocId || selectedRegionIds.length === 0) return;
                 pushUndo();
                 selectedRegionIds.forEach(id => {
-                  setRegionAction(activeDocId, id, "TOKENIZE").catch(() => {});
+                  setRegionAction(activeDocId, id, "TOKENIZE").catch(logError("set-tokenize"));
                   updateRegionAction(id, "TOKENIZE");
                 });
               }}
@@ -2048,7 +1783,7 @@ export default function DocumentViewer() {
                 if (!activeDocId || selectedRegionIds.length === 0) return;
                 pushUndo();
                 selectedRegionIds.forEach(id => {
-                  setRegionAction(activeDocId, id, "REMOVE").catch(() => {});
+                  setRegionAction(activeDocId, id, "REMOVE").catch(logError("set-remove"));
                   updateRegionAction(id, "REMOVE");
                 });
               }}
@@ -2124,7 +1859,7 @@ export default function DocumentViewer() {
                 pushUndo();
                 selectedRegionIds.forEach(id => {
                   updateRegion(id, { pii_type: multiSelectEditLabel });
-                  updateRegionLabel(activeDocId, id, multiSelectEditLabel).catch(() => {});
+                  updateRegionLabel(activeDocId, id, multiSelectEditLabel).catch(logError("update-label"));
                 });
                 setShowMultiSelectEdit(false);
               }}
@@ -2148,42 +1883,14 @@ export default function DocumentViewer() {
 
       {/* Vault unlock prompt overlay */}
       {showVaultPrompt && (
-        <div style={styles.overlay}>
-          <div style={styles.dialog}>
-            <Lock size={24} style={{ color: "var(--accent-warning)", marginBottom: 8 }} />
-            <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Unlock Vault</h3>
-            <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
-              Tokenization requires the vault to store reversible mappings.
-              Enter your passphrase to unlock or create the vault.
-            </p>
-            <div style={{ display: "flex", gap: 8, width: "100%" }}>
-              <input
-                type="password"
-                value={vaultPass}
-                onChange={(e) => setVaultPass(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleVaultUnlockAndAnonymize()}
-                placeholder="Vault passphrase"
-                autoFocus
-                style={{ flex: 1 }}
-              />
-              <button
-                className="btn-primary"
-                onClick={handleVaultUnlockAndAnonymize}
-                disabled={!vaultPass || isProcessing}
-              >
-                Unlock & Anonymize
-              </button>
-            </div>
-            {vaultError && <p style={{ color: "var(--accent-danger)", fontSize: 12, marginTop: 6 }}>{vaultError}</p>}
-            <button
-              className="btn-ghost btn-sm"
-              style={{ marginTop: 8 }}
-              onClick={() => { setShowVaultPrompt(false); setVaultPass(""); setVaultError(""); }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+        <VaultUnlockDialog
+          vaultPass={vaultPass}
+          vaultError={vaultError}
+          isProcessing={isProcessing}
+          onPassChange={setVaultPass}
+          onUnlock={handleVaultUnlockAndAnonymize}
+          onCancel={() => { setShowVaultPrompt(false); setVaultPass(""); setVaultError(""); }}
+        />
       )}
 
       {/* Canvas area */}

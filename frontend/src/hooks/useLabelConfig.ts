@@ -5,6 +5,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import type { PIILabelEntry, PIIRegion } from "../types";
 import { loadLabelConfig, cacheLabelConfig, ensureBuiltinLabels } from "../types";
+import { logError } from "../api";
 
 interface UseLabelConfigResult {
   labelConfig: PIILabelEntry[];
@@ -33,7 +34,7 @@ export default function useLabelConfig(regions: PIIRegion[]): UseLabelConfigResu
         setLabelConfig(merged);
         cacheLabelConfig(merged);
       })
-    ).catch(() => {}); // fall back to localStorage cache on error
+    ).catch(logError("fetch-labels")); // fall back to localStorage cache on error
   }, []);
 
   const visibleLabels = useMemo(() => labelConfig.filter((e) => !e.hidden), [labelConfig]);
@@ -51,7 +52,7 @@ export default function useLabelConfig(regions: PIIRegion[]): UseLabelConfigResu
       setLabelConfig((prev) => {
         const next = updater(prev);
         cacheLabelConfig(next);
-        import("../api").then(({ saveLabelConfigAPI }) => saveLabelConfigAPI(next)).catch(() => {});
+        import("../api").then(({ saveLabelConfigAPI }) => saveLabelConfigAPI(next)).catch(logError("save-labels"));
         return next;
       });
     },

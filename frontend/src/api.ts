@@ -25,13 +25,36 @@ export function setBaseUrl(url: string) {
   BASE_URL = url;
 }
 
+/** Fire-and-forget error handler — logs to console instead of silently swallowing. */
+export function logError(context: string) {
+  return (err: unknown) => {
+    if (err instanceof DOMException && err.name === "AbortError") return; // expected on cancel
+    console.error(`[${context}]`, err);
+  };
+}
+
+/** Global AbortController — cancel all in-flight requests. */
+let _globalAbort: AbortController | null = null;
+
+/** Cancel all pending API requests (e.g. on doc switch). */
+export function cancelAllRequests(): void {
+  if (_globalAbort) {
+    _globalAbort.abort();
+    _globalAbort = null;
+  }
+}
+
 async function request<T>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  /** Pass a custom signal to override the global one. */
+  signal?: AbortSignal,
 ): Promise<T> {
+  if (!_globalAbort) _globalAbort = new AbortController();
   const url = `${BASE_URL}${path}`;
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json", ...options.headers as Record<string, string> },
+    signal: signal ?? _globalAbort.signal,
     ...options,
   });
 
@@ -48,12 +71,14 @@ async function request<T>(
 // ──────────────────────────────────────────────
 
 export async function uploadDocument(file: File): Promise<UploadResponse> {
+  if (!_globalAbort) _globalAbort = new AbortController();
   const formData = new FormData();
   formData.append("file", file);
 
   const res = await fetch(`${BASE_URL}/api/documents/upload`, {
     method: "POST",
     body: formData,
+    signal: _globalAbort.signal,
   });
 
   if (!res.ok) {
@@ -251,13 +276,15 @@ export function getDownloadUrl(docId: string, fileType: "pdf" | "text"): string 
 
 /**
  * Batch-anonymize multiple documents.
- * Returns a download URL (blob) — single PDF if 1 doc, zip if multiple.
+ * Returns a blob URL — caller MUST call URL.revokeObjectURL() after use.
  */
 export async function batchAnonymize(docIds: string[]): Promise<string> {
+  if (!_globalAbort) _globalAbort = new AbortController();
   const resp = await fetch(`${BASE_URL}/api/documents/batch-anonymize`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ doc_ids: docIds }),
+    signal: _globalAbort.signal,
   });
   if (!resp.ok) {
     const text = await resp.text();
@@ -289,9 +316,11 @@ export async function detokenizeFile(file: File): Promise<DetokenizeFileResult> 
   const form = new FormData();
   form.append("file", file);
 
+  if (!_globalAbort) _globalAbort = new AbortController();
   const res = await fetch(`${BASE_URL}/api/detokenize/file`, {
     method: "POST",
     body: form,
+    signal: _globalAbort.signal,
   });
 
   if (!res.ok) {

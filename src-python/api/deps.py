@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time as _time
+from contextlib import contextmanager
 from typing import Optional
 
 from fastapi import HTTPException
@@ -22,6 +24,9 @@ store: Optional[DocumentStore] = None
 
 # In-memory detection progress tracker  (doc_id → progress dict)
 detection_progress: dict[str, dict] = {}
+
+# Detection lock — prevents concurrent detection runs from racing on config
+_detection_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -70,3 +75,37 @@ def get_active_llm_engine():
     if llm_engine.is_loaded():
         return llm_engine
     return None
+
+
+def acquire_detection_lock(doc_id: str) -> bool:
+    """Try to acquire the detection lock (non-blocking). Returns True if acquired."""
+    acquired = _detection_lock.acquire(blocking=False)
+    if not acquired:
+        logger.warning(f"Detection already running — rejecting request for {doc_id}")
+    return acquired
+
+
+def release_detection_lock() -> None:
+    """Release the detection lock."""
+    try:
+        _detection_lock.release()
+    except RuntimeError:
+        pass  # already released
+
+
+@contextmanager
+def config_override(**overrides):
+    """Temporarily override config attributes in a thread-safe manner.
+
+    Must be used inside the detection lock to prevent concurrent mutations.
+    """
+    originals = {}
+    for key, value in overrides.items():
+        if hasattr(config, key):
+            originals[key] = getattr(config, key)
+            setattr(config, key, value)
+    try:
+        yield
+    finally:
+        for key, value in originals.items():
+            setattr(config, key, value)

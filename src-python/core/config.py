@@ -8,6 +8,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -49,11 +51,14 @@ class AppConfig(BaseModel):
     regex_enabled: bool = True
     ner_enabled: bool = True
     llm_detection_enabled: bool = True
+    regex_types: Optional[list[str]] = None   # None = all; e.g. ["EMAIL", "SSN"]
+    ner_types: Optional[list[str]] = None     # None = all; e.g. ["PERSON", "ORG"]
     confidence_threshold: float = Field(default=0.55, ge=0.0, le=1.0)
 
-    # NER backend: "spacy" uses spaCy models, or set to a HuggingFace model id
+    # NER backend: "auto" auto-selects the best model per detected language,
+    # "spacy" uses spaCy models, or set to a HuggingFace model id
     # like "dslim/bert-base-NER" for BERT-based detection.
-    ner_backend: str = "spacy"
+    ner_backend: str = "auto"
 
     # When ner_backend == "spacy": which spaCy model to prefer (trf > lg > sm)
     ner_model_preference: str = "trf"                   # trf > lg > sm
@@ -61,7 +66,9 @@ class AppConfig(BaseModel):
     # Convenience alias — when ner_backend is a HF model id this mirrors it.
     @property
     def ner_hf_model(self) -> str:
-        return self.ner_backend if self.ner_backend != "spacy" else "dslim/bert-base-NER"
+        if self.ner_backend in ("spacy", "auto"):
+            return "dslim/bert-base-NER"
+        return self.ner_backend
 
     # Auto-load the first available GGUF model at startup
     auto_load_llm: bool = True

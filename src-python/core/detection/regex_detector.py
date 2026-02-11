@@ -113,6 +113,36 @@ def _is_valid_french_ssn(text: str) -> bool:
     return True
 
 
+def _is_valid_dutch_bsn(text: str) -> bool:
+    """Validate a Dutch BSN using the 11-check algorithm.
+
+    The BSN is 9 digits.  Multiply each digit by its position weight
+    (9, 8, 7, 6, 5, 4, 3, 2, -1), sum results, and check divisibility
+    by 11.
+    """
+    digits = re.sub(r"[\s.\-]", "", text)
+    if len(digits) != 9 or not digits.isdigit():
+        return False
+    weights = [9, 8, 7, 6, 5, 4, 3, 2, -1]
+    total = sum(int(d) * w for d, w in zip(digits, weights))
+    return total % 11 == 0 and total != 0
+
+
+def _is_valid_portuguese_nif(text: str) -> bool:
+    """Validate a Portuguese NIF (9 digits, mod-11 check digit)."""
+    digits = re.sub(r"[\s.\-]", "", text)
+    if len(digits) != 9 or not digits.isdigit():
+        return False
+    # First digit must be 1-3, 5, 6, 8, or 9
+    if digits[0] not in "12356789":
+        return False
+    weights = [9, 8, 7, 6, 5, 4, 3, 2]
+    total = sum(int(d) * w for d, w in zip(digits[:8], weights))
+    remainder = total % 11
+    check = 0 if remainder < 2 else 11 - remainder
+    return int(digits[8]) == check
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Context keyword proximity boost
 # ═══════════════════════════════════════════════════════════════════════════
@@ -128,6 +158,9 @@ _CONTEXT_KEYWORDS: dict[PIIType, list[str]] = {
         "nif", "dni", "nie", "codice fiscale", "fiscal",
         "rijksregisternummer", "bsn", "burgerservicenummer",
         "national insurance", "ni number", "nino",
+        "nif", "contribuinte", "número de contribuinte",
+        # Italian
+        "codice fiscale", "tessera sanitaria",
     ],
     PIIType.PHONE: [
         "phone", "tel", "téléphone", "telephone", "mobile", "cell",
@@ -184,6 +217,7 @@ _CONTEXT_KEYWORDS: dict[PIIType, list[str]] = {
         "anschrift", "straße", "strasse", "plz", "wohnort",
         # Spanish / Italian
         "dirección", "direccion", "calle", "indirizzo", "via",
+        "piazza", "corso", "viale", "cap", "domicilio", "residenza",
     ],
     PIIType.LOCATION: [
         "city", "town", "country", "state", "province", "region",
@@ -199,6 +233,7 @@ _CONTEXT_KEYWORDS: dict[PIIType, list[str]] = {
         # Spanish / Italian
         "ciudad", "país", "pais", "provincia", "comune",
         "nazione", "cittadinanza", "nacionalidad",
+        "regione", "città", "nato a", "nata a", "residente",
     ],
     PIIType.PASSPORT: [
         "passport", "passeport", "reisepass", "pasaporte", "passaporto",
@@ -208,6 +243,7 @@ _CONTEXT_KEYWORDS: dict[PIIType, list[str]] = {
         "driver", "license", "licence", "dl", "driving",
         "permis", "conduire", "führerschein", "fuhrerschein",
         "patente", "licencia", "rijbewijs",
+        "patente di guida", "carta di circolazione",
     ],
     PIIType.IP_ADDRESS: [
         "ip", "address", "server", "host", "endpoint",
@@ -263,6 +299,12 @@ _EXCLUDE_PATTERNS: list[re.Pattern] = [
     re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?\b", re.IGNORECASE),
     # Serial/invoice numbers with specific prefixes
     re.compile(r"\b(?:INV|PO|SO|REF|REQ|TKT|DOC|ID)[-#]?\d+\b", re.IGNORECASE),
+    # Accounting / financial line items: "Note 5", "Annexe 3"
+    re.compile(r"\b(?:note|annexe?|schedule|exhibit)\s+\d+", re.IGNORECASE),
+    # Year references in financial context: "FY2024", "exercice 2023"
+    re.compile(r"\b(?:FY|fiscal\s+year|exercice|année|annee)\s*\d{4}\b", re.IGNORECASE),
+    # Accounting codes / chart of accounts: "4-digit codes" like "1100", "2200"
+    re.compile(r"\b(?:compte|account|code)\s+\d{3,6}\b", re.IGNORECASE),
 ]
 
 
@@ -330,6 +372,12 @@ _PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # Belgian National Number — YY.MM.DD-XXX.CC
     (r"\b\d{2}\.\d{2}\.\d{2}[-]\d{3}\.\d{2}\b", PIIType.SSN, 0.60, _NOFLAGS),
 
+    # Dutch BSN — 9 digits (11-check validated post-match)
+    (r"\b\d{9}\b", PIIType.SSN, 0.25, _NOFLAGS),
+
+    # Portuguese NIF — 9 digits starting with 1-3, 5, 6, 8, 9 (mod-11 validated)
+    (r"\b[12356789]\d{8}\b", PIIType.SSN, 0.30, _NOFLAGS),
+
     # ──────────────────────────────────────────────────────────────────
     # PHONE — international coverage
     # ──────────────────────────────────────────────────────────────────
@@ -339,8 +387,8 @@ _PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # US/CA bare: 555-123-4567, 555.123.4567
     (r"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b", PIIType.PHONE, 0.55, _NOFLAGS),
 
-    # International with +  :  +33 6 12 34 56 78, +1-555-987-6543
-    (r"\+\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{2,4}[-.\s]?\d{2,4}(?:[-.\s]?\d{2,4})?",
+    # International with +  :  +33 6 12 34 56 78, +1-555-987-6543, (+33) 6 12 34 56 78
+    (r"\(?\+\d{1,3}\)?[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{2,4}[-.\s]?\d{2,4}(?:[-.\s]?\d{2,4})?",
      PIIType.PHONE, 0.88, _NOFLAGS),
 
     # French: 06 12 34 56 78, 06.12.34.56.78, 01-23-45-67-89
@@ -368,10 +416,12 @@ _PATTERNS: list[tuple[str, PIIType, float, int]] = [
 
     # ──────────────────────────────────────────────────────────────────
     # IBAN (with modulo-97 validation post-match)
+    # High base confidence since mod-97 check is extremely selective
+    # (only ~1 in 97 random strings pass).
     # ──────────────────────────────────────────────────────────────────
     # Standard: FR76 1234 5678 9012 3456 7890 123
     (r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,8}(?:\s?[A-Z0-9]{1,4})?\b",
-     PIIType.IBAN, 0.50, _NOFLAGS),
+     PIIType.IBAN, 0.85, _NOFLAGS),
 
     # ──────────────────────────────────────────────────────────────────
     # DATE — context-gated (low base confidence unless near keywords)
@@ -419,6 +469,22 @@ _PATTERNS: list[tuple[str, PIIType, float, int]] = [
         PIIType.DATE, 0.40, _IC,
     ),
 
+    # Italian month: "15 gennaio 2024"
+    (
+        r"\b\d{1,2}\s+(?:gennaio|febbraio|marzo|aprile|maggio|giugno|"
+        r"luglio|agosto|settembre|ottobre|novembre|dicembre)"
+        r"\s+\d{4}\b",
+        PIIType.DATE, 0.45, _IC,
+    ),
+
+    # Dutch month: "15 januari 2024"
+    (
+        r"\b\d{1,2}\s+(?:januari|februari|maart|april|mei|juni|"
+        r"juli|augustus|september|oktober|november|december)"
+        r"\s+\d{4}\b",
+        PIIType.DATE, 0.45, _IC,
+    ),
+
     # ──────────────────────────────────────────────────────────────────
     # IP ADDRESS
     # ──────────────────────────────────────────────────────────────────
@@ -436,8 +502,10 @@ _PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # ──────────────────────────────────────────────────────────────────
     # PASSPORT
     # ──────────────────────────────────────────────────────────────────
-    # Generic EU: 2 uppercase + 7 digits
-    (r"\b[A-Z]{2}\d{7}\b", PIIType.PASSPORT, 0.35, _NOFLAGS),
+    # Generic EU: 2 uppercase + 7 digits — exclude country-code-like prefixes
+    # that are also VAT/IBAN prefixes to reduce false positives on reference numbers.
+    (r"\b(?!(?:FR|DE|ES|IT|BE|NL|AT|PT|PL|SE|DK|FI|IE|LU|GB|CH|US|CA)\d)[A-Z]{2}\d{7}\b",
+     PIIType.PASSPORT, 0.35, _NOFLAGS),
     # German format: C01X00T47
     (r"\b[A-Z]\d{2}[A-Z]\d{2}[A-Z]\d{2}\b", PIIType.PASSPORT, 0.40, _NOFLAGS),
     # French: \d{2}[A-Z]{2}\d{5}
@@ -448,8 +516,9 @@ _PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # ──────────────────────────────────────────────────────────────────
     # US common: A123-4567-8901
     (r"\b[A-Z]\d{3}-\d{4}-\d{4}\b", PIIType.DRIVER_LICENSE, 0.75, _NOFLAGS),
-    # US: 1-2 letters + 6-8 digits (many states)
-    (r"\b[A-Z]{1,2}\d{6,8}\b", PIIType.DRIVER_LICENSE, 0.30, _NOFLAGS),
+    # US: 1-2 letters + 7-8 digits (many states) — raised minimum to 7 digits
+    # to reduce false positives on product codes / reference numbers.
+    (r"\b[A-Z]{1,2}\d{7,8}\b", PIIType.DRIVER_LICENSE, 0.30, _NOFLAGS),
 
     # ──────────────────────────────────────────────────────────────────
     # ADDRESS — street patterns (high structural precision)
@@ -480,8 +549,18 @@ _PATTERNS: list[tuple[str, PIIType, float, int]] = [
         PIIType.ADDRESS, 0.80, _IC,
     ),
 
-    # PO Box / BP / Postfach
-    (r"\b(?:P\.?O\.?\s*Box|BP|Bo[iî]te\s*postale|Postfach|Apartado)\s+\d+\b",
+    # Italian: "Via Roma 42", "Piazza Garibaldi, 1", "Corso Italia 15/A"
+    (
+        r"\b(?:Via|Viale|V\.le|Piazza|P\.zza|Piazzale|Corso|C\.so|"
+        r"Largo|Vicolo|Lungomare|Vico|Contrada|Traversa|Salita|Galleria)"
+        r"\s+[A-ZÀ-Ü][a-zà-ü\-']+(?:\s+(?:di|del|della|dei|delle|dello|d[ae]l))?\s*"
+        r"(?:[A-ZÀ-Ü][a-zà-ü\-']+\s*){0,3}"
+        r"(?:[,]?\s*\d{1,5}[/a-zA-Z]?)?\b",
+        PIIType.ADDRESS, 0.82, _IC,
+    ),
+
+    # PO Box / BP / Postfach / Casella Postale / Casella Postale
+    (r"\b(?:P\.?O\.?\s*Box|BP|Bo[iî]te\s*postale|Postfach|Apartado|Casella\s+[Pp]ostale|C\.?P\.?)\s+\d+\b",
      PIIType.ADDRESS, 0.75, _IC),
 
     # ──────────────────────────────────────────────────────────────────
@@ -489,36 +568,42 @@ _PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # ──────────────────────────────────────────────────────────────────
     # French postal code (5 digits, starts with 0-9, NOT years 1900-2099)
     (r"\b(?<!\d)(?:0[1-9]|[1-9]\d)\d{3}(?!\d)\b"
-     r"(?=\s+[A-ZÀ-Ü])",   # must be followed by a town name
+     r"(?=[ \t]+[A-ZÀ-Ü])",   # must be followed (same line) by a town name
      PIIType.ADDRESS, 0.70, _NOFLAGS),
     # French: "75008 Paris", "13100 Aix-en-Provence", "F-75001 Paris"
-    (r"\b(?:F-?\s*)?(?:0[1-9]|[1-9]\d)\d{3}\s+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,4}\b",
+    (r"\b(?:F-?\s*)?(?:0[1-9]|[1-9]\d)\d{3}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,4}\b",
      PIIType.ADDRESS, 0.82, _NOFLAGS),
     # French with CEDEX
-    (r"\b(?:0[1-9]|[1-9]\d)\d{3}\s+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\s+[Cc][Ee][Dd][Ee][Xx](?:\s+\d{1,2})?\b",
+    (r"\b(?:0[1-9]|[1-9]\d)\d{3}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\s+[Cc][Ee][Dd][Ee][Xx](?:\s+\d{1,2})?\b",
      PIIType.ADDRESS, 0.85, _NOFLAGS),
     # German postal code: 5 digits (01000-99999) + city
-    (r"\b(?:D-?\s*)?\d{5}\s+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+    (r"\b(?:D-?\s*)?\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
      PIIType.ADDRESS, 0.75, _NOFLAGS),
     # UK postcode: "SW1A 1AA", "EC2R 8AH", "M1 1AA"
     (r"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b",
      PIIType.ADDRESS, 0.80, _IC),
-    # US ZIP: 5 digits or ZIP+4
-    (r"\b\d{5}(?:-\d{4})?\b", PIIType.ADDRESS, 0.30, _NOFLAGS),
-    # Belgian postal code (4 digits) + city
-    (r"\b(?:B-?\s*)?\d{4}\s+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
-     PIIType.ADDRESS, 0.72, _NOFLAGS),
+    # US ZIP+4 only — the bare 5-digit form matches too many non-PII numbers.
+    # Bare 5-digit ZIP is covered by the US state+ZIP label-value pattern below.
+    (r"\b\d{5}-\d{4}\b", PIIType.ADDRESS, 0.70, _NOFLAGS),
+    # Belgian postal code (4 digits) + city — require B- prefix or leading context
+    (r"\bB-?\s*\d{4}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+     PIIType.ADDRESS, 0.75, _NOFLAGS),
     # Dutch postal code: "1234 AB"
     (r"\b\d{4}\s?[A-Z]{2}\b", PIIType.ADDRESS, 0.75, _IC),
-    # Swiss postal code (4 digits) + city: "CH-8001 Zürich"
-    (r"\b(?:CH-?\s*)?\d{4}\s+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
-     PIIType.ADDRESS, 0.72, _NOFLAGS),
-    # Italian CAP (5 digits) + city
-    (r"\b(?:I-?\s*)?\d{5}\s+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
-     PIIType.ADDRESS, 0.72, _NOFLAGS),
-    # Spanish postal code (5 digits) + city
-    (r"\b(?:E-?\s*)?\d{5}\s+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
-     PIIType.ADDRESS, 0.72, _NOFLAGS),
+    # Swiss postal code (4 digits) + city: "CH-8001 Zürich" — require CH- prefix
+    (r"\bCH-?\s*\d{4}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+     PIIType.ADDRESS, 0.75, _NOFLAGS),
+    # Italian CAP (5 digits) + city — allow optional I- prefix
+    # Italian CAP first digits: 0-9 for all provinces (00-99),
+    # e.g. 00100 Roma, 20121 Milano, 80100 Napoli, 50121 Firenze
+    (r"\b(?:I-?\s*)?\d{5}[ \t]+(?:Roma|Milano|Napoli|Torino|Firenze|Venezia|Bologna|Genova|Palermo|Catania|Bari|Verona|Padova|Trieste|Brescia|Parma|Modena|Reggio|Perugia|Livorno|Cagliari|Foggia|Salerno|Ferrara|Rimini|Siracusa|Sassari|Monza|Bergamo|Taranto|Vicenza|Treviso|Novara|Piacenza|Ancona|Andria|Udine|Arezzo|Lecce|Pesaro|Alessandria|Pisa)\b(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,2}",
+     PIIType.ADDRESS, 0.80, _NOFLAGS),
+    # Italian CAP with I- prefix (any city)
+    (r"\bI-?\s*\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+     PIIType.ADDRESS, 0.75, _NOFLAGS),
+    # Spanish postal code (5 digits) + city — require E- prefix to avoid overlap with FR/DE
+    (r"\bE-?\s*\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+     PIIType.ADDRESS, 0.75, _NOFLAGS),
     # Canadian: "K1A 0B1"
     (r"\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b", PIIType.ADDRESS, 0.80, _IC),
 
@@ -622,11 +707,11 @@ _PATTERNS: list[tuple[str, PIIType, float, int]] = [
         PIIType.ORG, 0.90, _NOFLAGS,
     ),
 
-    # English legal: "ACME Inc.", "Globex Corp.", "Initech LLC"
+    # English/Spanish/German legal: "ACME Inc.", "Empresa S.L.", "Müller GmbH"
     (
-        r"\b[A-Z][a-zA-Z&\-']{1,30}"
-        r"(?:[ \t]+[A-Z][a-zA-Z&\-']{1,30}){0,4}"
-        r"[ \t]+(?:Inc|Corp|LLC|Ltd|LLP|PLC|Co|GmbH|AG|BV|NV)\b\.?",
+        r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}){0,4}"
+        r"[ \t]+(?:Inc|Corp|LLC|Ltd|LLP|PLC|Co|GmbH|AG|KG|OHG|e\.?K\.?|UG|BV|NV|S\.?A\.?R?\.?L?\.?|S\.?L\.?|S\.?C\.?|S\.?R\.?L\.?)\b\.?",
         PIIType.ORG, 0.88, _IC,
     ),
 
@@ -636,6 +721,15 @@ _PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r"[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}"
         r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}){0,3}\b",
         PIIType.ORG, 0.85, _NOFLAGS,
+    ),
+
+    # Numbered companies (Quebec/Canada style): "9124356 Québec Inc", "12345678 Canada Inc."
+    # Also covers Spanish (S\.L\., S\.A\.) and German (GmbH, AG, KG, OHG, e\.K\.)
+    (
+        r"\b\d{5,10}"
+        r"[ \t]+(?:[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,20}[ \t]+){0,3}"
+        r"(?:Inc|Corp|LLC|Ltd|LLP|Co|S\.?A\.?R?\.?L?\.?|S\.?L\.?|GmbH|AG|KG|OHG|e\.?K\.?|UG|S\.?C\.?|S\.?R\.?L\.?)\b\.?",
+        PIIType.ORG, 0.90, _IC,
     ),
 
     # ──────────────────────────────────────────────────────────────────
@@ -694,9 +788,24 @@ _LABEL_NAME_PATTERNS: list[tuple[re.Pattern, PIIType, float]] = [
         r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}){0,3})",
     ), PIIType.PERSON, 0.85),
 
+    # Italian: "Nome: Giovanni", "Cognome: Rossi"
+    (re.compile(
+        r"(?:Nome|Cognome|Nome\s+completo|Nominativo|Intestatario)"
+        r"[ \t]*[:][ \t]*([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}){0,3})",
+    ), PIIType.PERSON, 0.85),
+    # Italian: "Paziente: Mario Rossi", "Assistito: Luca Bianchi"
+    (re.compile(
+        r"(?:Paziente|Assistito|Assicurato|Inquilino|Proprietario|Richiedente|"
+        r"Imputato|Attore|Convenuto|Testimone|Acquirente|Venditore)"
+        r"[ \t]*[:][ \t]*([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}){0,3})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.85),
+
     # ── Passport after label ──
     (re.compile(
-        r"(?:Passport|Passeport|Reisepass)"
+        r"(?:Passport|Passeport|Reisepass|Passaporto|Pasaporte)"
         r"[ \t]*(?:No\.?|Number|Num[ée]ro|#|N°)?[ \t]*[:]?[ \t]*([A-Z0-9]{6,9})",
         re.IGNORECASE,
     ), PIIType.PASSPORT, 0.88),
@@ -704,7 +813,7 @@ _LABEL_NAME_PATTERNS: list[tuple[re.Pattern, PIIType, float]] = [
     # ── Driver's license after label ──
     (re.compile(
         r"(?:Driver'?s?\s*Licen[cs]e|DL|Permis\s*(?:de\s*)?conduire|"
-        r"F[üu]hrerschein)"
+        r"F[üu]hrerschein|Patente(?:\s*di\s*guida)?|Licencia(?:\s*de\s*conducir)?)"
         r"[ \t]*(?:No\.?|Number|Num[ée]ro|#|N°)?[ \t]*[:]?[ \t]*([A-Z0-9\-]{6,15})",
         re.IGNORECASE,
     ), PIIType.DRIVER_LICENSE, 0.88),
@@ -732,24 +841,47 @@ _LABEL_NAME_PATTERNS: list[tuple[re.Pattern, PIIType, float]] = [
         re.IGNORECASE,
     ), PIIType.SSN, 0.92),
 
+    # Dutch BSN after label
+    (re.compile(
+        r"(?:BSN|Burgerservicenummer|Sofinummer)"
+        r"[ \t]*(?:No\.?|Number|#|N°)?[ \t]*[:]?[ \t]*(\d{9})",
+        re.IGNORECASE,
+    ), PIIType.SSN, 0.92),
+
+    # Portuguese NIF after label
+    (re.compile(
+        r"(?:NIF|Contribuinte|Número\s*(?:de\s*)?(?:contribuinte|fiscal))"
+        r"[ \t]*[:]?[ \t]*([12356789]\d{8})",
+        re.IGNORECASE,
+    ), PIIType.SSN, 0.90),
+
+    # Italian Codice Fiscale after label
+    (re.compile(
+        r"(?:Codice\s*[Ff]iscale|C\.?F\.?)"
+        r"[ \t]*[:]?[ \t]*([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])",
+        re.IGNORECASE,
+    ), PIIType.SSN, 0.92),
+
     # ── IBAN after label ──
     (re.compile(
-        r"(?:IBAN|RIB|Compte\s*bancaire|Bankverbindung|Bank\s*[Aa]ccount)"
+        r"(?:IBAN|RIB|Compte\s*bancaire|Bankverbindung|Bank\s*[Aa]ccount|Conto\s*corrente)"
         r"[ \t]*[:]?[ \t]*([A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,8}(?:\s?[A-Z0-9]{1,4})?)",
         re.IGNORECASE,
     ), PIIType.IBAN, 0.90),
 
     # ── VAT after label ──
     (re.compile(
-        r"(?:TVA|VAT|Tax\s*ID|N°\s*TVA|Num[ée]ro\s*(?:de\s*)?TVA|USt-IdNr|NIF|SIREN|SIRET)"
+        r"(?:TVA|VAT|Tax\s*ID|N°\s*TVA|Num[ée]ro\s*(?:de\s*)?TVA|USt-IdNr|NIF|SIREN|SIRET|Partita\s*IVA|P\.?IVA)"
         r"[ \t]*[:]?[ \t]*([A-Z]{0,2}[A-Z0-9]{8,14})",
         re.IGNORECASE,
     ), PIIType.CUSTOM, 0.88),
 
     # ── Address after label ──
+    # Capture until end-of-line or next label (stop at newlines, common
+    # delimiters, and very long runs to avoid capturing garbage).
     (re.compile(
-        r"(?:Address|Adresse|Anschrift|Direcci[oó]n|Indirizzo|Domicile)"
-        r"[ \t]*[:][ \t]*(.{10,80})",
+        r"(?:Address|Adresse|Anschrift|Direcci[oó]n|Indirizzo|Domicile|Domicilio|Residenza)"
+        r"[ \t]*[:][ \t]*([^\n\r]{10,80}?)(?=\s*(?:\n|\r|$|(?:Phone|Tel|Email|Fax|Date|Name|Nom|Nome|Cognome)\b))",
         re.IGNORECASE,
     ), PIIType.ADDRESS, 0.80),
 
@@ -825,20 +957,41 @@ def _validate_match(text: str, matched_text: str, pii_type: PIIType,
             if not _is_valid_french_ssn(matched_text):
                 return 0.0
 
+    # Dutch BSN / Portuguese NIF: only validate bare 9-digit numbers.
+    # Do NOT apply to US SSN (has hyphens/spaces), Spanish DNI (has letter),
+    # or other formatted SSN patterns.
+    if pii_type == PIIType.SSN:
+        clean = matched_text.strip()
+        if re.match(r"^\d{9}$", clean):
+            is_valid_bsn = _is_valid_dutch_bsn(clean)
+            is_valid_nif = (
+                clean[0] in "12356789" and _is_valid_portuguese_nif(clean)
+            )
+            if not is_valid_bsn and not is_valid_nif:
+                return 0.0
+
     return -1.0  # no adjustment
 
 
-def detect_regex(text: str) -> list[RegexMatch]:
+def detect_regex(text: str, allowed_types: list[str] | None = None) -> list[RegexMatch]:
     """
     Scan text with all regex patterns and return matches.
+
+    Args:
+        text: The text to scan.
+        allowed_types: Optional list of PIIType values to include (e.g. ["EMAIL", "SSN"]).
+                       If None, all types are included.
 
     Applies validation, context-keyword boosting, and exclusion
     filtering to reduce false positives. Returns non-overlapping
     matches sorted by position.
     """
+    _allowed = set(allowed_types) if allowed_types else None
     all_matches: list[RegexMatch] = []
 
     for compiled_re, pii_type, base_confidence in _COMPILED_PATTERNS:
+        if _allowed and pii_type.value not in _allowed:
+            continue
         for m in compiled_re.finditer(text):
             matched_text = m.group()
 
@@ -866,6 +1019,8 @@ def detect_regex(text: str) -> list[RegexMatch]:
 
     # ── Label-value patterns (capture-group extraction) ──
     for compiled_re, pii_type, base_confidence in _LABEL_NAME_PATTERNS:
+        if _allowed and pii_type.value not in _allowed:
+            continue
         for m in compiled_re.finditer(text):
             value_text = m.group(1)
             if not value_text or len(value_text.strip()) < 3:
@@ -891,16 +1046,42 @@ def detect_regex(text: str) -> list[RegexMatch]:
             ))
 
     # Sort by start position, remove overlaps (keep higher confidence)
+    # Special handling for containment: prefer longer spans when one
+    # match is fully inside another.
     all_matches.sort(key=lambda x: (x.start, -x.confidence))
     filtered: list[RegexMatch] = []
-    last_end = -1
 
     for match in all_matches:
-        if match.start >= last_end:
+        if not filtered:
             filtered.append(match)
-            last_end = match.end
+            continue
+
+        last = filtered[-1]
+        if match.start < last.end:
+            # Overlap detected
+            last_len = last.end - last.start
+            match_len = match.end - match.start
+
+            # Containment: if new match is fully inside existing, skip it
+            # unless it has much higher confidence (>0.20 diff)
+            if match.start >= last.start and match.end <= last.end:
+                if match.confidence > last.confidence + 0.20:
+                    filtered[-1] = match
+                # else: skip — existing longer match is better
+                continue
+
+            # Containment: existing is fully inside new match
+            if last.start >= match.start and last.end <= match.end:
+                if last.confidence <= match.confidence + 0.20:
+                    filtered[-1] = match
+                continue
+
+            # Partial overlap — keep the one with higher confidence
+            if match.confidence > last.confidence:
+                filtered[-1] = match
+            elif match.confidence == last.confidence and match_len > last_len:
+                filtered[-1] = match
         else:
-            # Overlap — keep existing (already highest confidence due to sort)
-            pass
+            filtered.append(match)
 
     return filtered

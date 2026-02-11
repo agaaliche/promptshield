@@ -17,6 +17,7 @@ from typing import NamedTuple
 
 from spacy.lang.en.stop_words import STOP_WORDS as _EN_STOP_WORDS
 from spacy.lang.fr.stop_words import STOP_WORDS as _FR_STOP_WORDS
+from spacy.lang.it.stop_words import STOP_WORDS as _IT_STOP_WORDS
 
 from models.schemas import PIIType
 
@@ -29,9 +30,11 @@ logger = logging.getLogger(__name__)
 
 _EN_STOP_LOWER: set[str] = {w.lower() for w in _EN_STOP_WORDS}
 _FR_STOP_LOWER: set[str] = {w.lower() for w in _FR_STOP_WORDS}
+_IT_STOP_LOWER: set[str] = {w.lower() for w in _IT_STOP_WORDS}
 _LANG_SAMPLE_SIZE = 2000  # characters to sample for language check
 _ENGLISH_STOPWORD_THRESHOLD = 0.15  # 15% — English text typically 25-40%
 _FRENCH_STOPWORD_THRESHOLD = 0.12   # 12% — French text typically 20-35%
+_ITALIAN_STOPWORD_THRESHOLD = 0.12  # 12% — Italian text typically 20-35%
 
 
 def _is_english_text(text: str) -> bool:
@@ -74,6 +77,25 @@ def _is_french_text(text: str) -> bool:
         stop_count, len(words), ratio * 100,
     )
     return ratio >= _FRENCH_STOPWORD_THRESHOLD
+
+
+def _is_italian_text(text: str) -> bool:
+    """Quick heuristic: is *text* likely Italian?
+
+    Same approach as ``_is_english_text`` but using Italian stop words.
+    """
+    sample = text[:_LANG_SAMPLE_SIZE]
+    words = [w.lower().strip(".,;:!?()[]{}\"'") for w in sample.split()]
+    words = [w for w in words if len(w) >= 2]
+    if len(words) < 20:
+        return False  # too short to judge
+    stop_count = sum(1 for w in words if w in _IT_STOP_LOWER)
+    ratio = stop_count / len(words)
+    logger.debug(
+        "Italian language check: %d/%d words (%.1f%%) are Italian stop words",
+        stop_count, len(words), ratio * 100,
+    )
+    return ratio >= _ITALIAN_STOPWORD_THRESHOLD
 
 
 class NERMatch(NamedTuple):
@@ -161,6 +183,10 @@ _active_model_name: str = ""
 _nlp_fr = None
 _active_fr_model_name: str = ""
 
+# Italian spaCy model (lazy-loaded separately)
+_nlp_it = None
+_active_it_model_name: str = ""
+
 # Model cascade order depending on user preference
 _MODEL_CASCADE: dict[str, list[str]] = {
     "trf": ["en_core_web_trf", "en_core_web_lg", "en_core_web_sm"],
@@ -173,6 +199,13 @@ _FR_MODEL_CASCADE: list[str] = [
     "fr_core_news_lg",
     "fr_core_news_md",
     "fr_core_news_sm",
+]
+
+# Italian model cascade (best available → smallest fallback)
+_IT_MODEL_CASCADE: list[str] = [
+    "it_core_news_lg",
+    "it_core_news_md",
+    "it_core_news_sm",
 ]
 
 # Chunking parameters (in characters)
@@ -595,6 +628,236 @@ def detect_ner_french(text: str) -> list[NERMatch]:
         end = min(offset + _CHUNK_SIZE, len(text))
         chunk = text[offset:end]
         chunk_matches = _process_chunk_fr(nlp, chunk, global_offset=offset)
+        all_matches.extend(chunk_matches)
+        offset += _CHUNK_SIZE - _CHUNK_OVERLAP
+        if end == len(text):
+            break
+
+    return _deduplicate_matches(all_matches)
+
+
+# ---------------------------------------------------------------------------
+# Italian spaCy NER
+# ---------------------------------------------------------------------------
+# Italian spaCy models use PER (not PERSON), ORG, LOC — same as French.
+
+_SPACY_IT_LABEL_MAP: dict[str, PIIType] = {
+    "PER": PIIType.PERSON,
+    "ORG": PIIType.ORG,
+    "LOC": PIIType.LOCATION,
+    # MISC intentionally omitted — too noisy (adjectives, demonyms, etc.)
+}
+
+# Italian-specific false-positive filters
+_IT_PERSON_STOPWORDS: set[str] = {
+    "signor", "signore", "signora", "signorina", "sig", "dott", "avv",
+    "il", "lo", "la", "le", "gli", "un", "uno", "una",
+    "di", "del", "della", "dei", "delle", "dello",
+    "questo", "questa", "suo", "sua", "loro", "nostro", "nostra",
+    "lui", "lei", "noi", "voi", "essi", "esse",
+    "pagina", "sezione", "tabella", "figura", "capitolo", "allegato",
+    "totale", "importo", "saldo", "data", "numero", "tipo",
+    "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+    "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre",
+    "lunedì", "lunedi", "martedì", "martedi", "mercoledì", "mercoledi",
+    "giovedì", "giovedi", "venerdì", "venerdi", "sabato", "domenica",
+}
+
+_IT_ORG_STOPWORDS: set[str] = {
+    "dipartimento", "servizio", "ufficio", "direzione",
+    "sezione", "divisione", "commissione", "comitato",
+    "articolo", "clausola", "allegato",
+    "tabella", "figura", "grafico",
+    "legge", "decreto", "ordinanza", "regolamento",
+    "contratto", "accordo", "convenzione", "rapporto", "relazione",
+}
+
+
+def _load_italian_model():
+    """Lazy-load the best available Italian spaCy model.
+
+    Tries it_core_news_lg → it_core_news_md → it_core_news_sm.
+    If none are installed, attempts to download it_core_news_sm.
+    Returns None if no Italian model can be loaded.
+    """
+    global _nlp_it, _active_it_model_name
+    if _nlp_it is not None:
+        return _nlp_it
+
+    import spacy
+
+    for model_name in _IT_MODEL_CASCADE:
+        try:
+            _nlp_it = spacy.load(model_name)
+            _active_it_model_name = model_name
+            logger.info(f"Loaded Italian spaCy model '{model_name}'")
+            return _nlp_it
+        except OSError:
+            logger.info(f"Italian spaCy model '{model_name}' not installed — trying next")
+
+    # Nothing installed — attempt to download it_core_news_sm
+    logger.warning("No Italian spaCy model found. Downloading it_core_news_sm…")
+    try:
+        spacy.cli.download("it_core_news_sm")
+        _nlp_it = spacy.load("it_core_news_sm")
+        _active_it_model_name = "it_core_news_sm"
+        logger.info("Using fallback Italian model 'it_core_news_sm'")
+        return _nlp_it
+    except (Exception, SystemExit) as e:
+        logger.warning(f"Failed to load any Italian spaCy model: {e}")
+        return None
+
+
+def is_italian_ner_available() -> bool:
+    """Check whether an Italian NER model can be loaded."""
+    try:
+        return _load_italian_model() is not None
+    except BaseException:
+        return False
+
+
+def _is_false_positive_person_it(text: str) -> bool:
+    """Return True if an Italian PERSON entity is likely a false positive."""
+    clean = text.strip().lower()
+    if clean in _IT_PERSON_STOPWORDS:
+        return True
+    if text.isupper() and len(text) <= 5:
+        return True
+    if text.strip() and text.strip()[0].isdigit():
+        return True
+    words = text.strip().split()
+    if len(words) == 1 and len(words[0]) <= 3:
+        return True
+    return False
+
+
+def _is_false_positive_org_it(text: str) -> bool:
+    """Return True if an Italian ORG entity is likely a false positive."""
+    clean = text.strip().lower()
+    if clean in _IT_ORG_STOPWORDS:
+        return True
+    if clean in _GENERIC_STOPWORDS:
+        return True
+    if len(clean) <= 2:
+        return True
+    if text.isupper() and len(text.strip()) <= 4:
+        return True
+    return False
+
+
+def _process_chunk_it(nlp, text: str, global_offset: int) -> list[NERMatch]:
+    """Run Italian NER on a single text chunk, adjusting offsets."""
+    doc = nlp(text)
+    matches: list[NERMatch] = []
+
+    for ent in doc.ents:
+        pii_type = _SPACY_IT_LABEL_MAP.get(ent.label_)
+        if pii_type is None:
+            continue
+
+        raw_text = ent.text
+        nl_idx = raw_text.find("\n")
+        if nl_idx > 0:
+            raw_text = raw_text[:nl_idx]
+        cleaned = raw_text.strip()
+
+        # Strip leading Italian articles
+        for prefix in ("il ", "Il ", "lo ", "Lo ", "la ", "La ", "l'", "L'",
+                       "le ", "Le ", "gli ", "Gli ", "i ", "I ",
+                       "un ", "Un ", "uno ", "Uno ", "una ", "Una "):
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip()
+                break
+
+        min_len = _MIN_ENTITY_LENGTH.get(pii_type, 2)
+        if len(cleaned) < min_len:
+            continue
+
+        if pii_type == PIIType.PERSON and _is_false_positive_person_it(cleaned):
+            continue
+        if pii_type == PIIType.ORG and _is_false_positive_org_it(cleaned):
+            continue
+        if cleaned.isupper() and len(cleaned) <= 5:
+            continue
+        if cleaned.isdigit():
+            continue
+
+        end_char = ent.start_char + len(raw_text.rstrip())
+        confidence = _estimate_confidence_it(ent, pii_type)
+        matches.append(NERMatch(
+            start=global_offset + ent.start_char,
+            end=global_offset + end_char,
+            text=cleaned,
+            pii_type=pii_type,
+            confidence=confidence,
+        ))
+
+    return matches
+
+
+def _estimate_confidence_it(ent, pii_type: PIIType) -> float:
+    """Estimate confidence for an Italian spaCy entity."""
+    base_confidence = {
+        PIIType.PERSON: 0.78,
+        PIIType.ORG: 0.55,
+        PIIType.LOCATION: 0.40,
+    }
+    conf = base_confidence.get(pii_type, 0.40)
+
+    text = ent.text.strip()
+    word_count = len(text.split())
+
+    if word_count >= 2 and pii_type == PIIType.PERSON:
+        conf = min(conf + 0.08, 0.92)
+    if word_count >= 2 and pii_type == PIIType.ORG:
+        conf = min(conf + 0.15, 0.80)
+    if word_count >= 3 and pii_type == PIIType.ORG:
+        conf = min(conf + 0.05, 0.85)
+
+    # Single-word entities — reduce confidence
+    if pii_type == PIIType.PERSON and word_count == 1:
+        conf = max(conf - 0.18, 0.40)
+    if pii_type == PIIType.ORG and word_count == 1:
+        conf = max(conf - 0.15, 0.30)
+    if pii_type == PIIType.LOCATION and word_count == 1:
+        conf = max(conf - 0.10, 0.30)
+
+    # Boost for larger Italian models
+    if _active_it_model_name.endswith("_lg"):
+        conf = min(conf + 0.05, 0.95)
+    elif _active_it_model_name.endswith("_md"):
+        conf = min(conf + 0.03, 0.92)
+
+    return round(conf, 4)
+
+
+def detect_ner_italian(text: str) -> list[NERMatch]:
+    """
+    Run Italian spaCy NER on text.
+
+    Only runs if the text appears to be Italian.  Handles chunking
+    for long texts the same way as the English/French detectors.
+    """
+    if not _is_italian_text(text):
+        logger.info("Text does not appear to be Italian — skipping Italian NER")
+        return []
+
+    nlp = _load_italian_model()
+    if nlp is None:
+        logger.info("No Italian spaCy model available — skipping Italian NER")
+        return []
+
+    # Short texts — single pass
+    if len(text) <= _CHUNK_SIZE:
+        return _process_chunk_it(nlp, text[:1_000_000], global_offset=0)
+
+    # Long texts — overlapping sliding-window
+    all_matches: list[NERMatch] = []
+    offset = 0
+    while offset < len(text):
+        end = min(offset + _CHUNK_SIZE, len(text))
+        chunk = text[offset:end]
+        chunk_matches = _process_chunk_it(nlp, chunk, global_offset=offset)
         all_matches.extend(chunk_matches)
         offset += _CHUNK_SIZE - _CHUNK_OVERLAP
         if end == len(text):

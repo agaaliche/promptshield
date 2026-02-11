@@ -183,9 +183,13 @@ def _load_pipeline(model_id: str | None = None):
     """Lazy-load a Hugging Face token-classification pipeline."""
     global _pipeline, _active_model_id, _label_map
 
-    if model_id is None:
+    if model_id is None or model_id == "auto":
         from core.config import config
-        model_id = config.ner_hf_model
+        if config.ner_backend not in ("spacy", "auto"):
+            model_id = config.ner_backend
+        else:
+            # Default fallback — auto mode should resolve before calling here
+            model_id = "Isotonic/distilbert_finetuned_ai4privacy_v2"
 
     if _pipeline is not None and _active_model_id == model_id:
         return _pipeline

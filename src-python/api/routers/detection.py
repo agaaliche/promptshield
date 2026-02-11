@@ -136,6 +136,8 @@ class RedetectRequest(_PydanticBaseModel):
     regex_enabled: bool = True
     ner_enabled: bool = True
     llm_detection_enabled: bool = True
+    regex_types: Optional[list[str]] = None   # None = all types; e.g. ["EMAIL", "SSN"]
+    ner_types: Optional[list[str]] = None     # None = all types; e.g. ["PERSON", "ORG"]
 
 
 @router.post("/documents/{doc_id}/redetect")
@@ -166,6 +168,8 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
             config.regex_enabled = body.regex_enabled
             config.ner_enabled = body.ner_enabled
             config.llm_detection_enabled = body.llm_detection_enabled
+            config.regex_types = body.regex_types
+            config.ner_types = body.ner_types
 
             engine = get_active_llm_engine()
 
@@ -176,11 +180,40 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
                 if not pages_to_scan:
                     raise HTTPException(404, detail=f"Page {body.page_number} not found")
 
+            total_pages = len(pages_to_scan)
+
+            # Initialize progress tracker (same format as initial detect)
+            detection_progress[doc_id] = {
+                "doc_id": doc_id,
+                "status": "running",
+                "current_page": 0,
+                "total_pages": total_pages,
+                "pages_done": 0,
+                "regions_found": 0,
+                "elapsed_seconds": 0.0,
+                "page_statuses": [
+                    {"page": p.page_number, "status": "pending", "regions": 0}
+                    for p in pages_to_scan
+                ],
+                "_started_at": _time.time(),
+            }
+
             def _run_redetection():
                 results: list[PIIRegion] = []
-                for page in pages_to_scan:
+                progress = detection_progress[doc_id]
+                for idx, page in enumerate(pages_to_scan):
+                    progress["current_page"] = page.page_number
+                    progress["page_statuses"][idx]["status"] = "running"
+                    progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
+
                     detected = detect_pii_on_page(page, llm_engine=engine)
                     results.extend(detected)
+
+                    progress["page_statuses"][idx]["status"] = "done"
+                    progress["page_statuses"][idx]["regions"] = len(detected)
+                    progress["pages_done"] = idx + 1
+                    progress["regions_found"] = len(results)
+                    progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
                 return results
 
             new_regions = await asyncio.get_event_loop().run_in_executor(None, _run_redetection)
@@ -190,11 +223,35 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
             config.regex_enabled = original_regex
             config.ner_enabled = original_ner
             config.llm_detection_enabled = original_llm
+            config.regex_types = None
+            config.ner_types = None
 
         # ── Merge new detections into existing regions ──
         scanned_pages = {p.page_number for p in pages_to_scan}
         existing_on_scanned = [r for r in doc.regions if r.page_number in scanned_pages]
         existing_other = [r for r in doc.regions if r.page_number not in scanned_pages]
+
+        # Build set of PII types that were explicitly excluded by the user
+        # so we can remove stale regions of those types from previous runs.
+        _regex_tab_types = {"EMAIL", "PHONE", "SSN", "CREDIT_CARD", "IBAN", "DATE",
+                            "IP_ADDRESS", "PASSPORT", "DRIVER_LICENSE", "ADDRESS"}
+        _ner_tab_types = {"PERSON", "ORG", "LOCATION", "CUSTOM"}
+        excluded_types: set[str] = set()
+        if body.regex_enabled and body.regex_types is not None:
+            excluded_types |= _regex_tab_types - set(body.regex_types)
+        if not body.regex_enabled:
+            excluded_types |= _regex_tab_types
+        if body.ner_enabled and body.ner_types is not None:
+            excluded_types |= _ner_tab_types - set(body.ner_types)
+        if not body.ner_enabled:
+            excluded_types |= _ner_tab_types
+
+        # Drop existing regions whose type was explicitly excluded
+        if excluded_types:
+            existing_on_scanned = [
+                r for r in existing_on_scanned
+                if (r.pii_type.value if hasattr(r.pii_type, 'value') else str(r.pii_type)) not in excluded_types
+            ]
 
         OVERLAP_THRESHOLD = 0.50
         matched_existing_ids: set[str] = set()
@@ -242,10 +299,29 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
         merged_regions = existing_other + existing_on_scanned
 
         # Propagate newly detected text across all pages
-        doc.regions = propagate_regions_across_pages(merged_regions, doc.pages)
+        all_regions = propagate_regions_across_pages(merged_regions, doc.pages)
+
+        # Post-propagation: strip excluded types from the scanned pages
+        # (propagation may re-create them from templates on other pages)
+        if excluded_types:
+            all_regions = [
+                r for r in all_regions
+                if r.page_number not in scanned_pages
+                or (r.pii_type.value if hasattr(r.pii_type, 'value') else str(r.pii_type)) not in excluded_types
+            ]
+
+        doc.regions = all_regions
 
         doc.status = DocumentStatus.REVIEWING
         save_doc(doc)
+
+        # Mark progress as complete
+        if doc_id in detection_progress:
+            detection_progress[doc_id]["status"] = "complete"
+            detection_progress[doc_id]["regions_found"] = len(doc.regions)
+            detection_progress[doc_id]["elapsed_seconds"] = (
+                _time.time() - detection_progress[doc_id].get("_started_at", _time.time())
+            )
 
         logger.info(
             f"Redetect for '{doc.original_filename}' "
@@ -266,6 +342,9 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
     except Exception as e:
         tb = traceback.format_exc()
         logger.error(f"Redetect failed: {e}\n{tb}")
+        if doc_id in detection_progress:
+            detection_progress[doc_id]["status"] = "error"
+            detection_progress[doc_id]["error"] = str(e)
         raise HTTPException(500, detail="Redetect failed. Check server logs for details.")
 
 

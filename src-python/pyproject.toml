@@ -22,6 +22,7 @@ dependencies = [
     "onnxruntime>=1.17.0",
     "sentencepiece>=0.2.0",
     "PyMuPDF>=1.24.0",
+    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]

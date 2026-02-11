@@ -16,8 +16,11 @@ from core.detection.ner_detector import (
     detect_names_heuristic,
     _is_english_text,
     _is_french_text,
+    _is_italian_text,
     detect_ner_french,
     is_french_ner_available,
+    detect_ner_italian,
+    is_italian_ner_available,
 )
 from core.detection.gliner_detector import GLiNERMatch, detect_gliner, is_gliner_available
 from core.detection.bert_detector import (
@@ -25,6 +28,7 @@ from core.detection.bert_detector import (
     detect_bert_ner,
     is_bert_ner_available,
 )
+from core.detection.language import resolve_auto_model, SUPPORTED_LANGUAGES
 from core.detection.llm_detector import LLMMatch, detect_llm
 from models.schemas import (
     BBox,
@@ -283,6 +287,50 @@ def _char_offset_to_bbox(
     return BBox(x0=x0, y0=y0, x1=x1, y1=y1)
 
 
+def _char_offsets_to_line_bboxes(
+    char_start: int,
+    char_end: int,
+    block_offsets: list[tuple[int, int, TextBlock]],
+) -> list[BBox]:
+    """Map character offsets to one bounding box **per visual line**.
+
+    If a matched span covers blocks on multiple lines, this returns one
+    tight bbox per line instead of a single tall rectangle.  Regions that
+    span more than one line are almost always false positives from the
+    union of unrelated blocks; splitting keeps highlights line-height.
+    """
+    if not block_offsets:
+        return []
+
+    # Gather overlapping blocks
+    overlapping: list[TextBlock] = []
+    for bstart, bend, block in block_offsets:
+        if bstart < char_end and bend > char_start:
+            overlapping.append(block)
+
+    if not overlapping:
+        closest = min(
+            block_offsets,
+            key=lambda x: min(abs(x[0] - char_start), abs(x[1] - char_end)),
+        )
+        overlapping = [closest[2]]
+
+    # Cluster overlapping blocks into visual lines (same logic as ingestion)
+    from core.ingestion.loader import _cluster_into_lines
+
+    lines = _cluster_into_lines(overlapping)
+
+    bboxes: list[BBox] = []
+    for line_blocks in lines:
+        x0 = min(b.bbox.x0 for b in line_blocks)
+        y0 = min(b.bbox.y0 for b in line_blocks)
+        x1 = max(b.bbox.x1 for b in line_blocks)
+        y1 = max(b.bbox.y1 for b in line_blocks)
+        bboxes.append(BBox(x0=x0, y0=y0, x1=x1, y1=y1))
+
+    return bboxes
+
+
 def _merge_detections(
     regex_matches: list[RegexMatch],
     ner_matches: list[NERMatch],
@@ -308,16 +356,25 @@ def _merge_detections(
         PIIType.CREDIT_CARD, PIIType.IBAN, PIIType.IP_ADDRESS,
         PIIType.DATE,
     }
+    # Semi-structured: regex patterns are precise but NER/GLiNER also strong
+    # — give them equal priority so confidence decides overlaps.
+    semi_structured_types = {PIIType.ORG, PIIType.ADDRESS}
 
     # Convert all to common intermediate format
     candidates: list[dict] = []
 
     for m in regex_matches:
+        if m.pii_type in structured_types:
+            prio = 3
+        elif m.pii_type in semi_structured_types:
+            prio = 2  # same as NER/GLiNER — confidence breaks ties
+        else:
+            prio = 1
         candidates.append({
             "start": m.start, "end": m.end, "text": m.text,
             "pii_type": m.pii_type, "confidence": m.confidence,
             "source": DetectionSource.REGEX,
-            "priority": 3 if m.pii_type in structured_types else 1,
+            "priority": prio,
         })
 
     for m in ner_matches:
@@ -406,31 +463,36 @@ def _merge_detections(
         page_data.text_blocks, page_data.full_text,
     )
 
-    # Convert to PIIRegion with bounding boxes
+    # Convert to PIIRegion with bounding boxes — one region per visual line
     regions: list[PIIRegion] = []
     for item in merged:
         # Filter by confidence threshold
         if item["confidence"] < config.confidence_threshold:
             continue
 
-        bbox = _char_offset_to_bbox(
+        line_bboxes = _char_offsets_to_line_bboxes(
             item["start"], item["end"],
             block_offsets,
         )
-        if bbox is None:
-            continue
+        if not line_bboxes:
+            # Fallback to single bbox via legacy function
+            bbox = _char_offset_to_bbox(item["start"], item["end"], block_offsets)
+            if bbox is None:
+                continue
+            line_bboxes = [bbox]
 
-        regions.append(PIIRegion(
-            id=uuid.uuid4().hex[:12],
-            page_number=page_data.page_number,
-            bbox=bbox,
-            text=item["text"],
-            pii_type=item["pii_type"],
-            confidence=item["confidence"],
-            source=item["source"],
-            char_start=item["start"],
-            char_end=item["end"],
-        ))
+        for bbox in line_bboxes:
+            regions.append(PIIRegion(
+                id=uuid.uuid4().hex[:12],
+                page_number=page_data.page_number,
+                bbox=bbox,
+                text=item["text"],
+                pii_type=item["pii_type"],
+                confidence=item["confidence"],
+                source=item["source"],
+                char_start=item["start"],
+                char_end=item["end"],
+            ))
 
     # Resolve any remaining bounding-box overlaps
     regions = _resolve_bbox_overlaps(regions)
@@ -519,27 +581,33 @@ def propagate_regions_across_pages(
                 if already:
                     continue
 
-                # Compute bbox for this occurrence
+                # Compute bbox(es) for this occurrence — one per visual line
                 block_offsets = _compute_block_offsets(
                     page_data.text_blocks, full_text,
                 )
-                bbox = _char_offset_to_bbox(char_start, char_end, block_offsets)
-                if bbox is None:
-                    continue
-
-                new_region = PIIRegion(
-                    id=uuid.uuid4().hex[:12],
-                    page_number=page_data.page_number,
-                    bbox=bbox,
-                    text=pii_text,
-                    pii_type=template.pii_type,
-                    confidence=template.confidence,
-                    source=template.source,
-                    char_start=char_start,
-                    char_end=char_end,
-                    action=template.action,
+                line_bboxes = _char_offsets_to_line_bboxes(
+                    char_start, char_end, block_offsets,
                 )
-                propagated.append(new_region)
+                if not line_bboxes:
+                    bbox = _char_offset_to_bbox(char_start, char_end, block_offsets)
+                    if bbox is None:
+                        continue
+                    line_bboxes = [bbox]
+
+                for bbox in line_bboxes:
+                    new_region = PIIRegion(
+                        id=uuid.uuid4().hex[:12],
+                        page_number=page_data.page_number,
+                        bbox=bbox,
+                        text=pii_text,
+                        pii_type=template.pii_type,
+                        confidence=template.confidence,
+                        source=template.source,
+                        char_start=char_start,
+                        char_end=char_end,
+                        action=template.action,
+                    )
+                    propagated.append(new_region)
                 covered.add((page_data.page_number, char_start, char_end))
 
     if propagated:
@@ -598,31 +666,53 @@ def detect_pii_on_page(
     regex_matches: list[RegexMatch] = []
     if config.regex_enabled:
         t0 = time.perf_counter()
-        regex_matches = detect_regex(text)
+        # Build effective allowed types: merge regex-tab types with any
+        # NER-tab types that regex patterns also produce (e.g. ORG from
+        # numbered-company patterns, ADDRESS from structured patterns).
+        # This avoids silently dropping regex matches whose PIIType lives
+        # under the NER toggle in the UI.
+        effective_regex_types = None
+        if config.regex_types is not None:
+            effective_regex_types = list(set(config.regex_types))
+            if config.ner_types is not None:
+                # Add NER-tab types that are enabled — regex patterns that
+                # emit these types should still fire.
+                effective_regex_types = list(
+                    set(effective_regex_types) | set(config.ner_types)
+                )
+            else:
+                # NER types unfiltered — allow all NER-tab types through regex
+                effective_regex_types = None
+        regex_matches = detect_regex(text, allowed_types=effective_regex_types)
         timings["regex"] = (time.perf_counter() - t0) * 1000
         logger.info(
             f"Page {page_data.page_number}: Regex found {len(regex_matches)} matches"
         )
 
-    # Layer 2: NER (spaCy or HuggingFace BERT, depending on config)
+    # Layer 2: NER (spaCy, HuggingFace BERT, or auto-select)
     # Always supplements with heuristic name detection for coverage.
     ner_matches: list[NERMatch] = []
     if config.ner_enabled:
         t0 = time.perf_counter()
-        # Try BERT first if configured — but only on English text
-        # (BERT models are English-only; non-English text produces garbage)
-        if config.ner_backend != "spacy" and is_bert_ner_available() and _is_english_text(text):
+
+        if config.ner_backend == "auto" and is_bert_ner_available():
+            # Auto mode: detect language and pick the best model
+            auto_model, detected_lang = resolve_auto_model(text)
+            bert_results = detect_bert_ner(text, model_id=auto_model)
+            ner_matches = [NERMatch(*m) for m in bert_results]
+            logger.info(
+                f"Page {page_data.page_number}: Auto NER — lang={detected_lang}, "
+                f"model={auto_model}, found {len(ner_matches)} matches"
+            )
+        elif config.ner_backend not in ("spacy", "auto") and is_bert_ner_available():
+            # Specific BERT model selected — use it directly
             bert_results = detect_bert_ner(text)
             ner_matches = [NERMatch(*m) for m in bert_results]
             logger.info(
                 f"Page {page_data.page_number}: BERT NER ({config.ner_backend}) "
                 f"found {len(ner_matches)} matches"
             )
-        elif config.ner_backend != "spacy" and is_bert_ner_available() and not _is_english_text(text):
-            logger.info(
-                f"Page {page_data.page_number}: Skipping BERT NER — text is not English"
-            )
-        # Fall back to spaCy (even if config says BERT, if BERT unavailable)
+        # Fall back to spaCy (when spaCy selected, or BERT unavailable)
         elif is_ner_available():
             ner_matches = detect_ner(text)
             logger.info(
@@ -676,6 +766,32 @@ def detect_pii_on_page(
                 logger.error(f"French NER detection failed: {e}")
             timings["french_ner"] = (time.perf_counter() - t0) * 1000
 
+        # Italian NER — runs alongside GLiNER to provide cross-layer boost
+        if not _is_english_text(text) and _is_italian_text(text) and is_italian_ner_available():
+            t0 = time.perf_counter()
+            try:
+                it_matches = detect_ner_italian(text)
+                if it_matches:
+                    # Merge Italian NER results, skipping overlaps with existing
+                    existing_spans = {(m.start, m.end) for m in ner_matches}
+                    added = 0
+                    for im in it_matches:
+                        overlaps = any(
+                            im.start < e_end and im.end > e_start
+                            for e_start, e_end in existing_spans
+                        )
+                        if not overlaps:
+                            ner_matches.append(im)
+                            existing_spans.add((im.start, im.end))
+                            added += 1
+                    logger.info(
+                        f"Page {page_data.page_number}: Italian NER found "
+                        f"{len(it_matches)} matches, added {added} non-overlapping"
+                    )
+            except Exception as e:
+                logger.error(f"Italian NER detection failed: {e}")
+            timings["italian_ner"] = (time.perf_counter() - t0) * 1000
+
     # Layer 2b: GLiNER (multilingual NER — runs on ALL languages)
     gliner_matches: list[GLiNERMatch] = []
     if config.ner_enabled and is_gliner_available():
@@ -698,6 +814,26 @@ def detect_pii_on_page(
         logger.info(
             f"Page {page_data.page_number}: LLM found {len(llm_matches)} matches"
         )
+
+    # ── Per-type filtering for NER / GLiNER ──
+    if config.ner_types:
+        _allowed_ner = set(config.ner_types)
+        ner_matches = [m for m in ner_matches if (m.pii_type.value if hasattr(m.pii_type, 'value') else str(m.pii_type)) in _allowed_ner]
+        gliner_matches = [m for m in gliner_matches if (m.pii_type.value if hasattr(m.pii_type, 'value') else str(m.pii_type)) in _allowed_ner]
+
+    # ── Cross-layer filtering: if regex_types is set, NER/GLiNER/LLM must
+    #    not produce types that belong to the regex tab but were disabled ──
+    if config.regex_types is not None:
+        _regex_tab_types = {"EMAIL", "PHONE", "SSN", "CREDIT_CARD", "IBAN", "DATE",
+                            "IP_ADDRESS", "PASSPORT", "DRIVER_LICENSE", "ADDRESS"}
+        _excluded_regex = _regex_tab_types - set(config.regex_types)
+        if _excluded_regex:
+            def _not_excluded(m):
+                t = m.pii_type.value if hasattr(m.pii_type, 'value') else str(m.pii_type)
+                return t not in _excluded_regex
+            ner_matches = [m for m in ner_matches if _not_excluded(m)]
+            gliner_matches = [m for m in gliner_matches if _not_excluded(m)]
+            llm_matches = [m for m in llm_matches if _not_excluded(m)]
 
     # Merge all layers
     t0 = time.perf_counter()
@@ -745,7 +881,11 @@ def reanalyze_bbox(
 
     ner_matches: list[NERMatch] = []
     if config.ner_enabled:
-        if config.ner_backend != "spacy" and is_bert_ner_available() and _is_english_text(text):
+        if config.ner_backend == "auto" and is_bert_ner_available():
+            auto_model, _ = resolve_auto_model(text)
+            bert_results = detect_bert_ner(text, model_id=auto_model)
+            ner_matches = [NERMatch(*m) for m in bert_results]
+        elif config.ner_backend not in ("spacy", "auto") and is_bert_ner_available():
             bert_results = detect_bert_ner(text)
             ner_matches = [NERMatch(*m) for m in bert_results]
         elif is_ner_available():
@@ -766,6 +906,17 @@ def reanalyze_bbox(
                 for fm in fr_matches:
                     if not any(fm.start < ee and fm.end > es for es, ee in existing_spans):
                         ner_matches.append(fm)
+            except Exception:
+                pass
+
+        # Italian NER supplement
+        if not _is_english_text(text) and _is_italian_text(text) and is_italian_ner_available():
+            try:
+                it_matches = detect_ner_italian(text)
+                existing_spans = {(m.start, m.end) for m in ner_matches}
+                for im in it_matches:
+                    if not any(im.start < ee and im.end > es for es, ee in existing_spans):
+                        ner_matches.append(im)
             except Exception:
                 pass
 

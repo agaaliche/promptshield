@@ -1,8 +1,11 @@
-"""Application settings and PII label configuration."""
+"""Application settings, PII label configuration, and system hardware info."""
 
 from __future__ import annotations
 
 import logging
+import os
+import platform
+import subprocess
 
 from fastapi import APIRouter
 
@@ -107,3 +110,66 @@ async def save_label_config(labels: list[dict]):
     store = get_store()
     store.save_label_config(labels)
     return {"status": "ok", "count": len(labels)}
+
+
+# ---------------------------------------------------------------------------
+# System hardware info
+# ---------------------------------------------------------------------------
+
+def _get_gpu_info() -> list[dict]:
+    """Detect NVIDIA GPUs via nvidia-smi."""
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,memory.free,driver_version",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return []
+        gpus = []
+        for line in result.stdout.strip().splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 4:
+                gpus.append({
+                    "name": parts[0],
+                    "vram_total_mb": int(float(parts[1])),
+                    "vram_free_mb": int(float(parts[2])),
+                    "driver_version": parts[3],
+                })
+        return gpus
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+        return []
+
+
+@router.get("/system/hardware")
+async def get_hardware_info():
+    """Return system hardware summary: CPU, RAM, GPU(s)."""
+    import psutil
+
+    cpu_name = platform.processor() or "Unknown"
+    cpu_count_logical = os.cpu_count() or 0
+    cpu_count_physical = psutil.cpu_count(logical=False) or 0
+
+    mem = psutil.virtual_memory()
+    ram_total_gb = round(mem.total / (1024 ** 3), 1)
+    ram_available_gb = round(mem.available / (1024 ** 3), 1)
+
+    gpus = _get_gpu_info()
+
+    return {
+        "cpu": {
+            "name": cpu_name,
+            "cores_physical": cpu_count_physical,
+            "cores_logical": cpu_count_logical,
+        },
+        "ram": {
+            "total_gb": ram_total_gb,
+            "available_gb": ram_available_gb,
+        },
+        "gpus": gpus,
+    }

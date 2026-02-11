@@ -54,7 +54,7 @@ _LABEL_TO_PII: dict[str, PIIType] = {
     "organization": PIIType.ORG,
     "phone number": PIIType.PHONE,
     "email": PIIType.EMAIL,
-    "passport number": PIIType.CUSTOM,
+    "passport number": PIIType.PASSPORT,
     "credit card number": PIIType.CREDIT_CARD,
     "social security number": PIIType.SSN,
     "address": PIIType.ADDRESS,

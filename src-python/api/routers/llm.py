@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import platform
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -90,6 +93,21 @@ async def configure_remote_llm(body: _RemoteLLMConfig):
     return {"status": "ok", "model": body.model, "provider": "remote"}
 
 
+@router.post("/llm/remote/disconnect")
+async def disconnect_remote_llm():
+    """Remove remote LLM configuration."""
+    from core.llm.remote_engine import remote_llm_engine
+
+    remote_llm_engine.configure("", "", "")
+    config.llm_api_url = ""
+    config.llm_api_key = ""
+    config.llm_api_model = ""
+    if config.llm_provider == "remote":
+        config.llm_provider = "local"
+    config.save_user_settings()
+    return {"status": "ok"}
+
+
 @router.post("/llm/remote/test")
 async def test_remote_llm():
     """Test the remote LLM connection with a minimal ping."""
@@ -112,3 +130,21 @@ async def set_llm_provider(provider: str):
     config.llm_provider = provider
     config.save_user_settings()
     return {"status": "ok", "provider": provider}
+
+
+@router.post("/llm/open-models-dir")
+async def open_models_dir():
+    """Open the models directory in the system file explorer."""
+    models_dir = config.models_dir
+    models_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        system = platform.system()
+        if system == "Windows":
+            os.startfile(str(models_dir))  # type: ignore[attr-defined]
+        elif system == "Darwin":
+            subprocess.Popen(["open", str(models_dir)])
+        else:
+            subprocess.Popen(["xdg-open", str(models_dir)])
+        return {"status": "ok", "path": str(models_dir)}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to open directory: {e}")

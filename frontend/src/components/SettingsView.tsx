@@ -1,6 +1,6 @@
 /** Settings panel — vault, LLM, detection, and app settings. */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Lock,
   Unlock,
@@ -12,6 +12,9 @@ import {
   Upload,
   Globe,
   Zap,
+  FolderOpen,
+  Trash2,
+  ChevronDown,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import {
@@ -22,15 +25,29 @@ import {
   loadLLM,
   unloadLLM,
   listModels,
+  openModelsDir,
   getSettings,
   updateSettings,
   exportVault,
   importVault,
   configureRemoteLLM,
+  disconnectRemoteLLM,
   testRemoteLLM,
   setLLMProvider,
+  getHardwareInfo,
 } from "../api";
+import type { HardwareInfo } from "../api";
 import type { VaultStats } from "../types";
+
+const NER_MODELS = [
+  { value: "auto", label: "Auto — best model per language (recommended)", lang: "Auto", languages: "English, Spanish, French, German, Italian, Dutch" },
+  { value: "spacy", label: "Default — fast, works offline, no download", lang: "English" },
+  { value: "dslim/bert-base-NER", label: "General purpose — good all-around", lang: "English" },
+  { value: "StanfordAIMI/stanford-deidentifier-base", label: "Medical & clinical — healthcare documents", lang: "English" },
+  { value: "lakshyakh93/deberta_finetuned_pii", label: "Personal info — names, emails, phones, addresses", lang: "English" },
+  { value: "iiiorg/piiranha-v1-detect-personal-information", label: "Multilingual — 6 languages, high accuracy", lang: "Multilingual", languages: "English, German, French, Spanish, Italian, Dutch" },
+  { value: "Isotonic/distilbert_finetuned_ai4privacy_v2", label: "Comprehensive — 54 data types, very fast", lang: "English", languages: "Covers 54 PII types including names, financial, identity, addresses, and more" },
+] as const;
 
 export default function SettingsView() {
   const {
@@ -58,6 +75,8 @@ export default function SettingsView() {
   const [pendingNerBackend, setPendingNerBackend] = useState<string | null>(null);
   const [nerApplyStatus, setNerApplyStatus] = useState<"" | "saving" | "saved" | "error">("")
   const [nerApplyError, setNerApplyError] = useState("");
+  const [nerDropOpen, setNerDropOpen] = useState(false);
+  const nerDropRef = useRef<HTMLDivElement>(null);
 
   // Remote LLM state
   const [remoteApiUrl, setRemoteApiUrl] = useState("");
@@ -66,22 +85,32 @@ export default function SettingsView() {
   const [remoteStatus, setRemoteStatus] = useState<"" | "saving" | "testing" | "ok" | "error">("");
   const [remoteError, setRemoteError] = useState("");
   const [remoteLatency, setRemoteLatency] = useState<number | null>(null);
+  const [hwInfo, setHwInfo] = useState<HardwareInfo | null>(null);
 
   // Load initial status
   useEffect(() => {
     if (!backendReady) return;
     getVaultStatus().then((s) => setVaultUnlocked(s.unlocked)).catch(() => {});
-    getLLMStatus().then(setLLMStatus).catch(() => {});
     listModels().then(setModels).catch(() => {});
-    // Hydrate detection settings from backend so persisted values are shown
-    getSettings()
-      .then((s) => {
+    getHardwareInfo().then(setHwInfo).catch(() => {});
+    // Hydrate settings + LLM status together so we can validate llm_detection_enabled
+    Promise.all([getSettings(), getLLMStatus()])
+      .then(([s, status]) => {
+        setLLMStatus(status);
+        const hasValidLlm =
+          status.loaded ||
+          (status.provider === "remote" && !!status.remote_api_url && !!status.remote_model);
+        const llmEnabled = (s.llm_detection_enabled as boolean) && hasValidLlm;
         setDetectionSettings({
           regex_enabled: s.regex_enabled as boolean,
           ner_enabled: s.ner_enabled as boolean,
-          llm_detection_enabled: s.llm_detection_enabled as boolean,
+          llm_detection_enabled: llmEnabled,
           ner_backend: s.ner_backend as string,
         });
+        // Persist the corrected value if it changed
+        if (s.llm_detection_enabled && !hasValidLlm) {
+          updateSettings({ llm_detection_enabled: false }).catch(() => {});
+        }
         // Hydrate remote LLM fields from persisted settings
         if (s.llm_api_url) setRemoteApiUrl(s.llm_api_url as string);
         if (s.llm_api_model) setRemoteModel(s.llm_api_model as string);
@@ -136,6 +165,18 @@ export default function SettingsView() {
       setLlmError(e.message);
     }
   }, [setLLMStatus]);
+
+  // Minimum hardware for local LLM: GPU with 4+ GB VRAM required
+  const localLlmReady = hwInfo
+    ? hwInfo.gpus.length > 0 && Math.max(...hwInfo.gpus.map(g => g.vram_total_mb)) >= 4096
+    : null; // null = still loading, don't block yet
+
+  // Auto-unload local LLM if hardware is insufficient
+  useEffect(() => {
+    if (localLlmReady === false && llmStatus?.loaded && llmStatus.provider !== "remote") {
+      unloadLLM().then(() => getLLMStatus().then(setLLMStatus)).catch(() => {});
+    }
+  }, [localLlmReady, llmStatus?.loaded, llmStatus?.provider, setLLMStatus]);
 
   return (
     <div style={styles.container}>
@@ -293,8 +334,211 @@ export default function SettingsView() {
         )}
       </Section>
 
-      {/* ── LLM ── */}
+      {/* ── Detection settings ── */}
+      <Section title="Detection" icon={<span>🔍</span>}>
+        <p style={styles.hint}>
+          Choose which methods are used to find personal information in your documents.
+        </p>
+        <div style={styles.checkboxGroup}>
+          <label style={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={detectionSettings.regex_enabled}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setDetectionSettings({ regex_enabled: v });
+                updateSettings({ regex_enabled: v }).catch(() => {});
+              }}
+            />{" "}
+            Pattern matching (finds IDs, emails, phone numbers, etc.)
+          </label>
+          <label style={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={detectionSettings.ner_enabled}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setDetectionSettings({ ner_enabled: v });
+                updateSettings({ ner_enabled: v }).catch(() => {});
+              }}
+            />{" "}
+            AI recognition (finds names, organizations, locations)
+          </label>
+
+          {detectionSettings.ner_enabled && (
+            <div style={{ marginLeft: 24, marginTop: 4, marginBottom: 8 }}>
+              <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>
+                AI recognition model
+              </label>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div ref={nerDropRef} style={{ flex: 1, position: "relative" }}>
+                  {/* Custom dropdown trigger */}
+                  <button
+                    type="button"
+                    onClick={() => setNerDropOpen(!nerDropOpen)}
+                    onBlur={(e) => {
+                      if (!nerDropRef.current?.contains(e.relatedTarget as Node)) setNerDropOpen(false);
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: "1px solid #444",
+                      background: "#1e1e1e",
+                      color: "#eee",
+                      fontSize: 13,
+                      textAlign: "left",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {(NER_MODELS.find(m => m.value === (pendingNerBackend ?? detectionSettings.ner_backend)) ?? NER_MODELS[0]).label}
+                    </span>
+                    {(() => {
+                      const sel = NER_MODELS.find(m => m.value === (pendingNerBackend ?? detectionSettings.ner_backend)) ?? NER_MODELS[0];
+                      const isAuto = sel.lang === "Auto";
+                      const isMulti = sel.lang === "Multilingual";
+                      return (
+                        <span style={{
+                          fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4, flexShrink: 0,
+                          ...(isAuto ? { background: "rgba(76,175,80,0.15)", color: "#66bb6a" } : isMulti ? { background: "rgba(74,158,255,0.12)", color: "var(--accent-primary)" } : { background: "rgba(255,255,255,0.06)", color: "var(--text-muted)" }),
+                        }}>{sel.lang}</span>
+                      );
+                    })()}
+                    <ChevronDown size={14} style={{ flexShrink: 0, color: "#888", transition: "transform 0.15s", transform: nerDropOpen ? "rotate(180deg)" : "none" }} />
+                  </button>
+                  {/* Dropdown list */}
+                  {nerDropOpen && (
+                    <div style={{
+                      position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
+                      background: "#1e1e1e", border: "1px solid #444", borderRadius: 6,
+                      zIndex: 50, maxHeight: 260, overflowY: "auto",
+                      boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+                    }}>
+                      {NER_MODELS.map((m) => {
+                        const selected = m.value === (pendingNerBackend ?? detectionSettings.ner_backend);
+                        const isAuto = m.lang === "Auto";
+                        const isMulti = m.lang === "Multilingual";
+                        return (
+                          <button
+                            key={m.value}
+                            type="button"
+                            onClick={() => { setPendingNerBackend(m.value); setNerApplyStatus(""); setNerDropOpen(false); }}
+                            style={{
+                              width: "100%", padding: "8px 10px",
+                              background: selected ? "rgba(74,158,255,0.1)" : "transparent",
+                              border: "none", color: "#eee", fontSize: 13, textAlign: "left",
+                              cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+                              borderBottom: m.value === "auto" ? "1px solid rgba(255,255,255,0.10)" : "1px solid rgba(255,255,255,0.04)",
+                            }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = selected ? "rgba(74,158,255,0.15)" : "rgba(255,255,255,0.05)"; }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = selected ? "rgba(74,158,255,0.1)" : "transparent"; }}
+                          >
+                            <span style={{ flex: 1 }}>{m.label}</span>
+                            <span style={{
+                              fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4, flexShrink: 0,
+                              ...(isAuto ? { background: "rgba(76,175,80,0.15)", color: "#66bb6a" } : isMulti ? { background: "rgba(74,158,255,0.12)", color: "var(--accent-primary)" } : { background: "rgba(255,255,255,0.06)", color: "var(--text-muted)" }),
+                            }}>{m.lang}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <button
+                  className="btn-primary btn-sm"
+                  disabled={
+                    !pendingNerBackend ||
+                    pendingNerBackend === detectionSettings.ner_backend ||
+                    nerApplyStatus === "saving"
+                  }
+                  onClick={async () => {
+                    if (!pendingNerBackend) return;
+                    setNerApplyStatus("saving");
+                    setNerApplyError("");
+                    try {
+                      await updateSettings({ ner_backend: pendingNerBackend });
+                      setDetectionSettings({ ner_backend: pendingNerBackend });
+                      setPendingNerBackend(null);
+                      setNerApplyStatus("saved");
+                      setTimeout(() => setNerApplyStatus(""), 3000);
+                    } catch (e: any) {
+                      setNerApplyStatus("error");
+                      setNerApplyError(e.message || "Failed to update NER backend");
+                    }
+                  }}
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  {nerApplyStatus === "saving" ? "Applying..." : "Apply"}
+                </button>
+              </div>
+              {(() => {
+                const sel = pendingNerBackend ?? detectionSettings.ner_backend;
+                const model = NER_MODELS.find(m => m.value === sel);
+                if (sel === "auto") {
+                  return (
+                    <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
+                      🧠 Detects document language automatically and picks the best model.
+                      <br />🌐 Supported: English, Spanish, French, German, Italian, Dutch
+                    </p>
+                  );
+                }
+                return model && "languages" in model ? (
+                  <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
+                    🌐 {model.languages}
+                  </p>
+                ) : null;
+              })()}
+              {nerApplyStatus === "saved" && (
+                <p style={{ fontSize: 12, color: "var(--accent-success)", marginTop: 4 }}>
+                  Model updated — takes effect on next scan.
+                </p>
+              )}
+              {nerApplyStatus === "error" && (
+                <p style={{ fontSize: 12, color: "var(--accent-danger)", marginTop: 4 }}>
+                  {nerApplyError}
+                </p>
+              )}
+            </div>
+          )}
+          <label style={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={detectionSettings.llm_detection_enabled}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setDetectionSettings({ llm_detection_enabled: v });
+                updateSettings({ llm_detection_enabled: v }).catch(() => {});
+              }}
+            />{" "}
+            Deep analysis (uses an LLM for harder-to-find information)
+          </label>
+        </div>
+      </Section>
+
+      {/* ── LLM Engine ── */}
+      {detectionSettings.llm_detection_enabled && (
       <Section title="LLM Engine" icon={<Brain size={18} />}>
+        {/* Hardware info */}
+        {hwInfo && (
+          <div style={{ marginBottom: 16, padding: "10px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 6, border: "1px solid var(--border-color)", fontSize: 12, lineHeight: 1.6 }}>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", color: "var(--text-secondary)" }}>
+              <span title={hwInfo.cpu.name}><Cpu size={13} style={{ verticalAlign: -2, marginRight: 4 }} />{hwInfo.cpu.cores_physical}c/{hwInfo.cpu.cores_logical}t</span>
+              <span>RAM {hwInfo.ram.total_gb} GB</span>
+              {hwInfo.gpus.length > 0 ? hwInfo.gpus.map((gpu, i) => (
+                <span key={i} style={{ color: "var(--accent-success)" }} title={`${gpu.name} — Driver ${gpu.driver_version}`}>
+                  <Zap size={13} style={{ verticalAlign: -2, marginRight: 3 }} />
+                  {gpu.name} — {Math.round(gpu.vram_total_mb / 1024)} GB VRAM ({Math.round(gpu.vram_free_mb / 1024)} GB free)
+                </span>
+              )) : (
+                <span style={{ color: "var(--text-muted)" }}>No GPU detected — CPU only</span>
+              )}
+            </div>
+          </div>
+        )}
         {/* Provider toggle */}
         <div style={{ display: "flex", gap: 0, marginBottom: 16, borderRadius: 6, overflow: "hidden", border: "1px solid var(--border-color)" }}>
           <button
@@ -347,22 +591,39 @@ export default function SettingsView() {
           </div>
         ) : (
           <div>
-            <p style={styles.hint}>
-              Load a GGUF model for enhanced PII detection. Place model files
-              in the models directory.
-            </p>
-            <p style={{ ...styles.hint, fontSize: 11, color: "var(--text-muted)", marginTop: -4, marginBottom: 12 }}>
-              For fast local inference, an NVIDIA GPU with 6+ GB VRAM
-              (RTX 3060 or better) is recommended. CPU-only is very slow.
-            </p>
+            {localLlmReady === false ? (
+              <div style={{ padding: "10px 12px", marginBottom: 12, background: "rgba(244,67,54,0.08)", borderRadius: 6, border: "1px solid rgba(244,67,54,0.2)", fontSize: 12, color: "#f44336", lineHeight: 1.6 }}>
+                <strong>Local LLM disabled</strong> — minimum hardware requirements not met.
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                  Requires an NVIDIA GPU with 4+ GB VRAM, or at least 16 GB RAM.
+                  Use <strong style={{ color: "var(--text-secondary)" }}>Remote API</strong> instead to connect to an external LLM service.
+                </div>
+              </div>
+            ) : (
+              <p style={styles.hint}>
+                Load a GGUF model for enhanced PII detection. Place model files
+                in the models directory.
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={() => openModelsDir().catch(() => {})}
+                  style={{ marginLeft: 4, display: "inline-flex", alignItems: "center", gap: 4, verticalAlign: "middle", fontSize: 11, padding: "2px 6px" }}
+                  title="Open models directory"
+                >
+                  <FolderOpen size={12} /> Open
+                </button>
+              </p>
+            )}
+
             {models.length > 0 ? (
               <div style={styles.modelList}>
                 {models.map((m) => {
                   const isActive = llmStatus?.loaded && llmStatus.provider !== "remote" && llmStatus.model_path === m.path;
+                  const disabled = localLlmReady === false;
                   return (
                   <div key={m.path} style={{
                     ...styles.modelItem,
                     ...(isActive ? { border: "1px solid var(--accent-primary)", background: "rgba(74, 158, 255, 0.08)" } : {}),
+                    ...(disabled ? { opacity: 0.45 } : {}),
                   }}>
                     <div>
                       <span style={{ fontWeight: 500 }}>{m.name}</span>
@@ -381,7 +642,7 @@ export default function SettingsView() {
                     <button
                       className="btn-primary btn-sm"
                       onClick={() => handleLoadModel(m.path)}
-                      disabled={llmLoading !== null}
+                      disabled={llmLoading !== null || disabled}
                     >
                       {llmLoading === m.path ? "Loading..." : "Load"}
                     </button>
@@ -390,12 +651,12 @@ export default function SettingsView() {
                   );
                 })}
               </div>
-            ) : (
+            ) : localLlmReady !== false ? (
               <p style={styles.hint}>
                 No models found. Place .gguf files in the models directory and
                 click refresh.
               </p>
-            )}
+            ) : null}
             <button
               className="btn-ghost btn-sm"
               onClick={() => listModels().then(setModels)}
@@ -457,7 +718,7 @@ export default function SettingsView() {
                 </p>
               </div>
 
-              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <div style={{ display: "flex", gap: 8, marginTop: 4, alignItems: "center" }}>
                 <button
                   className="btn-primary btn-sm"
                   disabled={!remoteApiUrl || !remoteApiKey || !remoteModel || remoteStatus === "saving"}
@@ -510,6 +771,33 @@ export default function SettingsView() {
                 >
                   <Zap size={12} /> {remoteStatus === "testing" ? "Testing..." : "Test connection"}
                 </button>
+                {llmStatus?.remote_api_url && (
+                  <button
+                    className="btn-ghost btn-sm"
+                    style={{ marginLeft: "auto", color: "var(--accent-danger)", padding: 4, lineHeight: 1 }}
+                    title="Remove connection"
+                    onClick={async () => {
+                      try {
+                        await disconnectRemoteLLM();
+                        const status = await getLLMStatus();
+                        setLLMStatus(status);
+                        setRemoteApiUrl("");
+                        setRemoteApiKey("");
+                        setRemoteModel("");
+                        setRemoteStatus("");
+                        setRemoteError("");
+                        if (detectionSettings.llm_detection_enabled && !status.loaded) {
+                          setDetectionSettings({ llm_detection_enabled: false });
+                          updateSettings({ llm_detection_enabled: false }).catch(() => {});
+                        }
+                      } catch (e: any) {
+                        setRemoteError(e.message || "Failed to remove connection");
+                      }
+                    }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
               </div>
 
               {remoteStatus === "ok" && (
@@ -532,122 +820,7 @@ export default function SettingsView() {
           </div>
         )}
       </Section>
-
-      {/* ── Detection settings ── */}
-      <Section title="Detection" icon={<span>🔍</span>}>
-        <p style={styles.hint}>
-          Detection uses a 3-layer hybrid pipeline: Regex patterns → NER (spaCy or BERT) → LLM ({llmStatus?.provider === "remote" ? "Remote API" : "Local"}).
-          The LLM layer is optional and requires a loaded model or configured remote API.
-        </p>
-        <div style={styles.checkboxGroup}>
-          <label style={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={detectionSettings.regex_enabled}
-              onChange={(e) => {
-                const v = e.target.checked;
-                setDetectionSettings({ regex_enabled: v });
-                updateSettings({ regex_enabled: v }).catch(() => {});
-              }}
-            />{" "}
-            Regex patterns (SSN, email, phone, etc.)
-          </label>
-          <label style={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={detectionSettings.ner_enabled}
-              onChange={(e) => {
-                const v = e.target.checked;
-                setDetectionSettings({ ner_enabled: v });
-                updateSettings({ ner_enabled: v }).catch(() => {});
-              }}
-            />{" "}
-            NER model (names, organizations, locations)
-          </label>
-
-          {detectionSettings.ner_enabled && (
-            <div style={{ marginLeft: 24, marginTop: 4, marginBottom: 8 }}>
-              <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>
-                NER backend
-              </label>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <select
-                  value={pendingNerBackend ?? detectionSettings.ner_backend}
-                  onChange={(e) => {
-                    setPendingNerBackend(e.target.value);
-                    setNerApplyStatus("");
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: "6px 8px",
-                    borderRadius: 6,
-                    border: "1px solid #444",
-                    background: "#1e1e1e",
-                    color: "#eee",
-                    fontSize: 13,
-                  }}
-                >
-                  <option value="spacy">spaCy (local, no download required)</option>
-                  <option value="dslim/bert-base-NER">BERT-base NER — general entities</option>
-                  <option value="StanfordAIMI/stanford-deidentifier-base">Stanford De-identifier — clinical / medical</option>
-                  <option value="lakshyakh93/deberta_finetuned_pii">DeBERTa PII — names, emails, phones, addresses</option>
-                  <option value="iiiorg/piiranha-v1-detect-personal-information">Piiranha — multilingual PII (93% F1, 6 languages)</option>
-                  <option value="Isotonic/distilbert_finetuned_ai4privacy_v2">DistilBERT AI4Privacy — fast PII (95% F1, 54 types)</option>
-                </select>
-                <button
-                  className="btn-primary btn-sm"
-                  disabled={
-                    !pendingNerBackend ||
-                    pendingNerBackend === detectionSettings.ner_backend ||
-                    nerApplyStatus === "saving"
-                  }
-                  onClick={async () => {
-                    if (!pendingNerBackend) return;
-                    setNerApplyStatus("saving");
-                    setNerApplyError("");
-                    try {
-                      await updateSettings({ ner_backend: pendingNerBackend });
-                      setDetectionSettings({ ner_backend: pendingNerBackend });
-                      setPendingNerBackend(null);
-                      setNerApplyStatus("saved");
-                      setTimeout(() => setNerApplyStatus(""), 3000);
-                    } catch (e: any) {
-                      setNerApplyStatus("error");
-                      setNerApplyError(e.message || "Failed to update NER backend");
-                    }
-                  }}
-                  style={{ whiteSpace: "nowrap" }}
-                >
-                  {nerApplyStatus === "saving" ? "Applying..." : "Apply"}
-                </button>
-              </div>
-              {nerApplyStatus === "saved" && (
-                <p style={{ fontSize: 12, color: "var(--accent-success)", marginTop: 4 }}>
-                  NER backend updated — active for the next detection run.
-                </p>
-              )}
-              {nerApplyStatus === "error" && (
-                <p style={{ fontSize: 12, color: "var(--accent-danger)", marginTop: 4 }}>
-                  {nerApplyError}
-                </p>
-              )}
-            </div>
-          )}
-          <label style={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={detectionSettings.llm_detection_enabled}
-              disabled={!llmStatus?.loaded}
-              onChange={(e) => {
-                const v = e.target.checked;
-                setDetectionSettings({ llm_detection_enabled: v });
-                updateSettings({ llm_detection_enabled: v }).catch(() => {});
-              }}
-            />{" "}
-            LLM contextual analysis {!llmStatus?.loaded && "(configure LLM first)"}
-          </label>
-        </div>
-      </Section>
+      )}
     </div>
   );
 }

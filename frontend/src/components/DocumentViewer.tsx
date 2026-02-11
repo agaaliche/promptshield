@@ -55,6 +55,7 @@ import ExportDialog from "./ExportDialog";
 import DetectionProgressDialog from "./DetectionProgressDialog";
 import PIITypePicker from "./PIITypePicker";
 import RegionSidebar from "./RegionSidebar";
+import PageNavigator from "./PageNavigator";
 import useDraggableToolbar from "../hooks/useDraggableToolbar";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useLabelConfig from "../hooks/useLabelConfig";
@@ -94,6 +95,7 @@ export default function DocumentViewer() {
     docDetecting,
     rightSidebarWidth,
     setRightSidebarWidth,
+    llmStatus,
   } = useAppStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -131,9 +133,22 @@ export default function DocumentViewer() {
   const [showAutodetect, setShowAutodetect] = useState(false);
   const [autodetectFuzziness, setAutodetectFuzziness] = useState(0.55);
   const [autodetectScope, setAutodetectScope] = useState<"page" | "all">("page");
-  const [autodetectRegex, setAutodetectRegex] = useState(true);
-  const [autodetectNer, setAutodetectNer] = useState(true);
-  const [autodetectLlm, setAutodetectLlm] = useState(true);
+  const [autodetectTab, setAutodetectTab] = useState<"patterns" | "ai" | "deep">("patterns");
+  const [showDataTypes, setShowDataTypes] = useState(false);
+  // Regex layer — per-type toggles
+  const [regexTypes, setRegexTypes] = useState<Record<string, boolean>>({
+    EMAIL: true, PHONE: true, SSN: true, CREDIT_CARD: true,
+    IBAN: true, DATE: true, IP_ADDRESS: true, PASSPORT: true,
+    DRIVER_LICENSE: true, ADDRESS: true,
+  });
+  // NER layer — per-type toggles
+  const [nerTypes, setNerTypes] = useState<Record<string, boolean>>({
+    PERSON: true, ORG: true, LOCATION: true, CUSTOM: false,
+  });
+  // LLM layer
+  const [autodetectLlm, setAutodetectLlm] = useState(false);
+  // Progress dialog for redetection
+  const [redetecting, setRedetecting] = useState(false);
 
   // ── Move / resize interaction state ──
   const interactionRef = useRef<{
@@ -147,6 +162,8 @@ export default function DocumentViewer() {
   } | null>(null);
   const [isInteracting, setIsInteracting] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarTypeFilter, setSidebarTypeFilter] = useState<Set<string> | null>(null); // null = all types
+  const [pageNavCollapsed, setPageNavCollapsed] = useState(false);
 
   // ── Cursor tool mode ──
   type CursorTool = "pointer" | "lasso" | "draw";
@@ -232,9 +249,14 @@ export default function DocumentViewer() {
 
   // Auto-select first region on page change (only on activePage change)
   const prevPageRef = useRef(activePage);
+  const skipAutoSelectRef = useRef(false);
   useEffect(() => {
     if (activePage !== prevPageRef.current) {
       prevPageRef.current = activePage;
+      if (skipAutoSelectRef.current) {
+        skipAutoSelectRef.current = false;
+        return;
+      }
       const pRegions = regions.filter((r) => r.page_number === activePage);
       if (pRegions.length > 0) {
         setSelectedRegionIds([pRegions[0].id]);
@@ -458,37 +480,6 @@ export default function DocumentViewer() {
     };
   }, []);
 
-  // ── Scroll wheel page navigation ──
-  const wheelCooldown = useRef(false);
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      // Only change page on vertical scroll when not holding Ctrl (Ctrl+scroll = browser zoom)
-      if (e.ctrlKey || e.metaKey) return;
-      if (wheelCooldown.current) return;
-      const threshold = 30; // minimum delta to trigger
-      if (Math.abs(e.deltaY) < threshold) return;
-
-      e.preventDefault();
-      wheelCooldown.current = true;
-      setTimeout(() => { wheelCooldown.current = false; }, 1000); // 1 second cooldown
-
-      if (e.deltaY > 0) {
-        // Scroll down → next page
-        setActivePage(Math.min(pageCount, activePage + 1));
-      } else {
-        // Scroll up → prev page
-        setActivePage(Math.max(1, activePage - 1));
-      }
-      
-      // Scroll to top of container after page change
-      el.scrollTop = 0;
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [activePage, pageCount, setActivePage]);
-
   useKeyboardShortcuts({
     activePage, pageCount, zoom, regions, pageRegions, selectedRegionIds,
     copiedRegions, activeDocId: activeDocId ?? null, cursorTool, showTypePicker,
@@ -499,9 +490,15 @@ export default function DocumentViewer() {
   });
 
   // ── Autodetect (redetect) ──
+  const autodetectRegex = Object.values(regexTypes).some(Boolean);
+  const autodetectNer = Object.values(nerTypes).some(Boolean);
+  const activeRegexTypes = Object.entries(regexTypes).filter(([, v]) => v).map(([k]) => k);
+  const activeNerTypes = Object.entries(nerTypes).filter(([, v]) => v).map(([k]) => k);
+
   const handleAutodetect = useCallback(async () => {
     if (!activeDocId) return;
     setIsProcessing(true);
+    setRedetecting(true);
     setStatusMessage("Running PII autodetection…");
     setShowAutodetect(false);
     try {
@@ -512,6 +509,8 @@ export default function DocumentViewer() {
         regex_enabled: autodetectRegex,
         ner_enabled: autodetectNer,
         llm_detection_enabled: autodetectLlm,
+        regex_types: autodetectRegex ? activeRegexTypes : null,
+        ner_types: autodetectNer ? activeNerTypes : null,
       });
       setRegions(resolveAllOverlaps(result.regions));
       setStatusMessage(
@@ -521,8 +520,9 @@ export default function DocumentViewer() {
       setStatusMessage(`Autodetect failed: ${err}`);
     } finally {
       setIsProcessing(false);
+      setRedetecting(false);
     }
-  }, [activeDocId, activePage, autodetectFuzziness, autodetectScope, autodetectRegex, autodetectNer, autodetectLlm, pushUndo, setRegions, setIsProcessing, setStatusMessage]);
+  }, [activeDocId, activePage, autodetectFuzziness, autodetectScope, autodetectRegex, autodetectNer, autodetectLlm, activeRegexTypes, activeNerTypes, pushUndo, setRegions, setIsProcessing, setStatusMessage]);
 
   // ── Anonymize ──
   const handleAnonymize = useCallback(async () => {
@@ -1176,6 +1176,15 @@ export default function DocumentViewer() {
   return (
     <div style={styles.wrapper}>
 
+      {/* Re-detection progress overlay */}
+      {redetecting && activeDocId && (
+        <DetectionProgressDialog
+          docId={activeDocId}
+          docName={doc.original_filename}
+          visible
+        />
+      )}
+
       {/* Toolbar */}
       <div ref={topToolbarRef} style={styles.toolbar}>
         <div style={{ position: "relative" }}>
@@ -1206,88 +1215,259 @@ export default function DocumentViewer() {
                 background: "var(--bg-secondary)",
                 border: "1px solid var(--border-color)",
                 borderRadius: 8,
-                padding: 16,
                 boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
                 zIndex: 9999,
-                width: 300,
+                width: 340,
                 display: "flex",
                 flexDirection: "column",
-                gap: 12,
+                overflow: "hidden",
               }}
               onMouseDown={(e) => e.stopPropagation()}
             >
+              {/* ── Scope (top) ── */}
+              <div style={{
+                display: "flex",
+                borderBottom: "1px solid var(--border-color)",
+                background: "rgba(0,0,0,0.15)",
+                flexShrink: 0,
+              }}>
+                {([
+                  { key: "page" as const, label: `Current page` },
+                  { key: "all" as const, label: `All pages` },
+                ]).map(({ key, label }) => {
+                  const isActive = autodetectScope === key;
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => setAutodetectScope(key)}
+                      style={{
+                        flex: 1,
+                        padding: "8px 0",
+                        fontSize: 12,
+                        fontWeight: isActive ? 600 : 400,
+                        color: isActive ? "var(--accent-primary)" : "var(--text-muted)",
+                        background: "transparent",
+                        border: "none",
+                        borderBottom: isActive ? "2px solid var(--accent-primary)" : "2px solid transparent",
+                        borderRadius: 0,
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 6,
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
 
-              {/* Fuzziness slider */}
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>
-                  <span>Sensitivity (confidence threshold)</span>
+              {/* ── Sensitivity slider ── */}
+              <div style={{ padding: "10px 14px 0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-secondary)", marginBottom: 3 }}>
+                  <span>Sensitivity</span>
                   <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{autodetectFuzziness.toFixed(2)}</span>
                 </div>
                 <input
-                  type="range"
-                  min={0.1}
-                  max={0.95}
-                  step={0.05}
+                  type="range" min={0.1} max={0.95} step={0.05}
                   value={autodetectFuzziness}
                   onChange={(e) => setAutodetectFuzziness(parseFloat(e.target.value))}
                   style={{ width: "100%", accentColor: "var(--accent-primary)" }}
                 />
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-secondary)", marginTop: 2 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-muted)", marginTop: 1 }}>
                   <span>More results</span>
                   <span>Fewer results</span>
                 </div>
               </div>
 
-              {/* Scope */}
-              <div>
-                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Scope</div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button
-                    className={autodetectScope === "page" ? "btn-primary btn-sm" : "btn-ghost btn-sm"}
-                    onClick={() => setAutodetectScope("page")}
-                    style={{ flex: 1 }}
-                  >
-                    Current Page
-                  </button>
-                  <button
-                    className={autodetectScope === "all" ? "btn-primary btn-sm" : "btn-ghost btn-sm"}
-                    onClick={() => setAutodetectScope("all")}
-                    style={{ flex: 1 }}
-                  >
-                    All Pages
-                  </button>
-                </div>
+              {/* ── Choose data types toggle ── */}
+              <div style={{ padding: "8px 14px 0" }}>
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={() => setShowDataTypes(prev => !prev)}
+                  style={{ width: "auto", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 6, fontSize: 12, border: "1px solid transparent" }}
+                >
+                  <span style={{ transform: showDataTypes ? "rotate(45deg)" : "rotate(0deg)", transition: "transform 0.2s ease", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 600, width: 18, height: 18, marginTop: -1 }}>+</span>
+                  <span>Choose data types</span>
+                </button>
               </div>
 
-              {/* Detection layers */}
-              <div>
-                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Detection layers</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-primary)", cursor: "pointer" }}>
-                    <input type="checkbox" checked={autodetectRegex} onChange={(e) => setAutodetectRegex(e.target.checked)} style={{ accentColor: "var(--accent-primary)" }} />
-                    SSN, email, phone, etc.
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-primary)", cursor: "pointer" }}>
-                    <input type="checkbox" checked={autodetectNer} onChange={(e) => setAutodetectNer(e.target.checked)} style={{ accentColor: "var(--accent-primary)" }} />
-                    Names, orgs, locations
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-primary)", cursor: "pointer" }}>
-                    <input type="checkbox" checked={autodetectLlm} onChange={(e) => setAutodetectLlm(e.target.checked)} style={{ accentColor: "var(--accent-primary)" }} />
-                    Contextual (slowest)
-                  </label>
+              {/* ── Data types section (collapsible) ── */}
+              {showDataTypes && (<>
+                {/* Layer tabs */}
+                <div style={{ display: "flex", borderBottom: "1px solid var(--border-color)", flexShrink: 0, marginTop: 6 }}>
+                  {([
+                    { key: "patterns" as const, label: "Patterns", active: autodetectRegex },
+                    { key: "ai" as const, label: "AI Recognition", active: autodetectNer },
+                    { key: "deep" as const, label: "Deep Analysis", active: autodetectLlm },
+                  ]).map(({ key, label, active }) => {
+                    const isSel = autodetectTab === key;
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => setAutodetectTab(key)}
+                        style={{
+                          flex: 1,
+                          padding: "9px 4px",
+                          fontSize: 11,
+                          fontWeight: isSel ? 600 : 400,
+                          color: isSel ? "var(--accent-primary)" : active ? "var(--text-secondary)" : "var(--text-muted)",
+                          background: "transparent",
+                          border: "none",
+                          borderBottom: isSel ? "2px solid var(--accent-primary)" : "2px solid transparent",
+                          borderRadius: 0,
+                          cursor: "pointer",
+                          transition: "all 0.15s ease",
+                          opacity: active ? 1 : 0.5,
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
-              </div>
 
-              {/* Run button */}
-              <button
-                className="btn-primary"
-                onClick={handleAutodetect}
-                disabled={isProcessing || (!autodetectRegex && !autodetectNer && !autodetectLlm)}
-                style={{ width: "100%" }}
-              >
-                <ScanSearch size={14} />
-                {isProcessing ? "Detecting…" : `Run on ${autodetectScope === "page" ? `Page ${activePage}` : "All Pages"}`}
-              </button>
+                {/* Tab content */}
+                <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10, maxHeight: 300, overflowY: "auto" }}>
+
+                  {/* Patterns tab (regex) */}
+                  {autodetectTab === "patterns" && (<>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
+                      Select which data patterns to look for
+                    </div>
+                    {([
+                      { key: "EMAIL", icon: "✉", label: "Email addresses" },
+                      { key: "PHONE", icon: "📞", label: "Phone numbers" },
+                      { key: "SSN", icon: "🆔", label: "Social Security / National ID" },
+                      { key: "CREDIT_CARD", icon: "💳", label: "Credit card numbers" },
+                      { key: "IBAN", icon: "🏦", label: "Bank accounts (IBAN)" },
+                      { key: "DATE", icon: "📅", label: "Dates of birth" },
+                      { key: "IP_ADDRESS", icon: "🌐", label: "IP addresses" },
+                      { key: "PASSPORT", icon: "🛂", label: "Passport numbers" },
+                      { key: "DRIVER_LICENSE", icon: "🪪", label: "Driver license numbers" },
+                      { key: "ADDRESS", icon: "🏠", label: "Physical addresses" },
+                    ] as const).map(({ key, icon, label }) => (
+                      <label key={key} style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        fontSize: 13, color: "var(--text-primary)", cursor: "pointer",
+                        padding: "4px 0",
+                      }}>
+                        <input
+                          type="checkbox"
+                          checked={regexTypes[key]}
+                          onChange={(e) => setRegexTypes(prev => ({ ...prev, [key]: e.target.checked }))}
+                          style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
+                        />
+                        <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>{icon}</span>
+                        {label}
+                      </label>
+                    ))}
+                    <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+                      <button className="btn-ghost btn-sm" style={{ fontSize: 11 }}
+                        onClick={() => setRegexTypes(prev => Object.fromEntries(Object.keys(prev).map(k => [k, true])))}
+                      >Select all</button>
+                      <button className="btn-ghost btn-sm" style={{ fontSize: 11 }}
+                        onClick={() => setRegexTypes(prev => Object.fromEntries(Object.keys(prev).map(k => [k, false])))}
+                      >Clear all</button>
+                    </div>
+                  </>)}
+
+                  {/* AI Recognition tab (NER) */}
+                  {autodetectTab === "ai" && (<>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
+                      AI-powered recognition of names and entities
+                    </div>
+                    {([
+                      { key: "PERSON", icon: "👤", label: "People's names" },
+                      { key: "ORG", icon: "🏢", label: "Organizations & companies" },
+                      { key: "LOCATION", icon: "📍", label: "Cities, countries & places" },
+                      { key: "CUSTOM", icon: "🔎", label: "Catch all (IDs, codes, misc. entities)" },
+                    ] as const).map(({ key, icon, label }) => (
+                      <label key={key} style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        fontSize: 13, color: "var(--text-primary)", cursor: "pointer",
+                        padding: "6px 0",
+                      }}>
+                        <input
+                          type="checkbox"
+                          checked={nerTypes[key]}
+                          onChange={(e) => setNerTypes(prev => ({ ...prev, [key]: e.target.checked }))}
+                          style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
+                        />
+                        <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>{icon}</span>
+                        {label}
+                      </label>
+                    ))}
+                    <div style={{
+                      marginTop: 4, padding: "8px 10px",
+                      background: "rgba(255,255,255,0.04)", borderRadius: 6,
+                      fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5,
+                    }}>
+                      Uses machine learning to find names, organizations and locations even when they don't follow a predictable format.
+                    </div>
+                  </>)}
+
+                  {/* Deep Analysis tab (LLM) */}
+                  {autodetectTab === "deep" && (<>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
+                      Context-aware analysis using a language model
+                    </div>
+                    {(() => {
+                      const llmReady = llmStatus?.loaded === true || (llmStatus?.provider === "remote" && !!llmStatus?.remote_api_url);
+                      return (<>
+                    <label style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      fontSize: 13, color: llmReady ? "var(--text-primary)" : "var(--text-muted)", cursor: llmReady ? "pointer" : "not-allowed",
+                      padding: "6px 0",
+                      opacity: llmReady ? 1 : 0.5,
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={autodetectLlm && llmReady}
+                        onChange={(e) => setAutodetectLlm(e.target.checked)}
+                        disabled={!llmReady}
+                        style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
+                      />
+                      <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>🧠</span>
+                      Enable deep analysis
+                    </label>
+                    {!llmReady && (
+                      <div style={{
+                        marginTop: 2, padding: "8px 10px",
+                        background: "rgba(255,180,0,0.08)", borderRadius: 6, border: "1px solid rgba(255,180,0,0.15)",
+                        fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5,
+                      }}>
+                        No LLM engine configured. Go to <strong style={{ color: "var(--text-secondary)" }}>Settings → LLM Engine</strong> to load a local model or connect a remote API.
+                      </div>
+                    )}
+                    <div style={{
+                      marginTop: 4, padding: "8px 10px",
+                      background: "rgba(255,255,255,0.04)", borderRadius: 6,
+                      fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5,
+                    }}>
+                      Reads the full text to understand context and catch PII that patterns and AI names might miss. <strong style={{ color: "var(--text-secondary)" }}>Slowest method</strong> — best used after reviewing faster layers.
+                    </div>
+                      </>);
+                    })()}
+                  </>)}
+
+                </div>
+              </>)}
+
+              {/* ── Run button (always visible) ── */}
+              <div style={{ padding: "10px 14px 14px" }}>
+                <button
+                  className="btn-primary"
+                  onClick={handleAutodetect}
+                  disabled={isProcessing || (!autodetectRegex && !autodetectNer && !autodetectLlm)}
+                  style={{ width: "100%" }}
+                >
+                  <ScanSearch size={14} />
+                  {isProcessing ? "Detecting…" : `Run on ${autodetectScope === "page" ? `page ${activePage}` : "all pages"}`}
+                </button>
+              </div>
             </div>
         )}
         </div>
@@ -1296,6 +1476,7 @@ export default function DocumentViewer() {
           onClick={() => setShowExportDialog(true)}
           disabled={
             isProcessing ||
+            pendingCount > 0 ||
             (removeCount === 0 && tokenizeCount === 0)
           }
         >
@@ -2001,7 +2182,7 @@ export default function DocumentViewer() {
       {/* Canvas area */}
       <div ref={containerRef} style={{
         ...styles.canvasArea,
-        paddingRight: sidebarCollapsed ? 60 : rightSidebarWidth,
+        paddingRight: (sidebarCollapsed ? 60 : rightSidebarWidth) + (pageCount > 1 ? (pageNavCollapsed ? 28 : 120) : 0),
         transition: 'padding-right 0.2s ease',
       }}>
         <div
@@ -2072,7 +2253,9 @@ export default function DocumentViewer() {
             {/* PII Region overlays */}
             {imgLoaded &&
               pageData &&
-              pageRegions.map((region) => {
+              pageRegions
+                .filter(region => !sidebarTypeFilter || sidebarTypeFilter.has(region.pii_type))
+                .map((region) => {
                 const isInSelection = selectedRegionIds.includes(region.id);
                 const isMulti = selectedRegionIds.length > 1;
                 return (
@@ -2183,6 +2366,7 @@ export default function DocumentViewer() {
         width={rightSidebarWidth}
         onWidthChange={setRightSidebarWidth}
         pageRegions={pageRegions}
+        allRegions={regions}
         selectedRegionIds={selectedRegionIds}
         activeDocId={activeDocId ?? null}
         pendingCount={pendingCount}
@@ -2194,11 +2378,43 @@ export default function DocumentViewer() {
         onHighlightAll={handleHighlightAll}
         onToggleSelect={toggleSelectedRegionId}
         onSelect={setSelectedRegionIds}
+        onNavigateToRegion={(region) => {
+          // Switch page if needed
+          if (region.page_number !== activePage) {
+            skipAutoSelectRef.current = true;
+            setActivePage(region.page_number);
+          }
+          // Scroll to the region overlay after page renders
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              const el = contentAreaRef.current?.querySelector(
+                `[data-region-id="${region.id}"]`
+              ) as HTMLElement | null;
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+              }
+            }, region.page_number !== activePage ? 150 : 0);
+          });
+        }}
         pushUndo={pushUndo}
         removeRegion={removeRegion}
         updateRegionAction={updateRegionAction}
         batchRegionAction={batchRegionAction}
         batchDeleteRegions={batchDeleteRegions}
+        onTypeFilterChange={setSidebarTypeFilter}
+        hideResizeHandle={pageCount > 1}
+      />
+      <PageNavigator
+        docId={activeDocId}
+        pageCount={pageCount}
+        activePage={activePage}
+        onPageSelect={setActivePage}
+        rightOffset={sidebarCollapsed ? 60 : rightSidebarWidth}
+        collapsed={pageNavCollapsed}
+        onCollapsedChange={setPageNavCollapsed}
+        regions={regions}
+        sidebarWidth={rightSidebarWidth}
+        onSidebarWidthChange={setRightSidebarWidth}
       />
       </div>{/* end contentArea */}
     </div>

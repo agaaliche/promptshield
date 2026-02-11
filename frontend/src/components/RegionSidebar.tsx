@@ -11,8 +11,11 @@ import {
   Type,
   Search,
   Edit3,
+  MoreVertical,
 } from "lucide-react";
 import { PII_COLORS, type PIIRegion, type RegionAction } from "../types";
+
+type SidebarTab = "page" | "document";
 
 interface RegionSidebarProps {
   sidebarRef: React.RefObject<HTMLDivElement | null>;
@@ -21,6 +24,7 @@ interface RegionSidebarProps {
   width: number;
   onWidthChange: (w: number) => void;
   pageRegions: PIIRegion[];
+  allRegions: PIIRegion[];
   selectedRegionIds: string[];
   activeDocId: string | null;
   pendingCount: number;
@@ -32,11 +36,14 @@ interface RegionSidebarProps {
   onHighlightAll: (id: string) => void;
   onToggleSelect: (id: string, multi: boolean) => void;
   onSelect: (ids: string[]) => void;
+  onNavigateToRegion: (region: PIIRegion) => void;
   pushUndo: () => void;
   removeRegion: (id: string) => void;
   updateRegionAction: (id: string, action: RegionAction) => void;
   batchRegionAction: (docId: string, ids: string[], action: RegionAction) => Promise<any>;
   batchDeleteRegions: (docId: string, ids: string[]) => Promise<any>;
+  onTypeFilterChange?: (enabledTypes: Set<string> | null) => void;
+  hideResizeHandle?: boolean;
 }
 
 const RIGHT_MIN_WIDTH = 200;
@@ -47,8 +54,10 @@ export default function RegionSidebar({
   collapsed,
   setCollapsed,
   width,
+  hideResizeHandle,
   onWidthChange,
   pageRegions,
+  allRegions,
   selectedRegionIds,
   activeDocId,
   pendingCount,
@@ -60,12 +69,78 @@ export default function RegionSidebar({
   onHighlightAll,
   onToggleSelect,
   onSelect,
+  onNavigateToRegion,
   pushUndo,
   removeRegion,
   updateRegionAction,
   batchRegionAction,
   batchDeleteRegions,
+  onTypeFilterChange,
 }: RegionSidebarProps) {
+  const [activeTab, setActiveTab] = React.useState<SidebarTab>("page");
+  const [typeFilterOpen, setTypeFilterOpen] = React.useState(false);
+  const [enabledTypes, setEnabledTypes] = React.useState<Set<string> | null>(null); // null = all
+  const filterRef = React.useRef<HTMLDivElement>(null);
+  const lastClickedIndexRef = React.useRef<number | null>(null);
+  const [clearConfirmOpen, setClearConfirmOpen] = React.useState(false);
+  const [clearNeverAsk, setClearNeverAsk] = React.useState(false);
+  const clearConfirmRef = React.useRef<{ ids: string[] }>({ ids: [] });
+
+  // Close dropdown on outside click
+  React.useEffect(() => {
+    if (!typeFilterOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
+        setTypeFilterOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [typeFilterOpen]);
+
+  const tabRegions = activeTab === "page" ? pageRegions : allRegions;
+  // Collect all unique types present in current tab regions
+  const availableTypes = React.useMemo(() => {
+    const types = new Set<string>();
+    tabRegions.forEach(r => types.add(r.pii_type));
+    return Array.from(types).sort();
+  }, [tabRegions]);
+
+  // Filter displayed regions by enabled types
+  const displayedRegions = React.useMemo(() => {
+    if (!enabledTypes) return tabRegions; // null = show all
+    return tabRegions.filter(r => enabledTypes.has(r.pii_type));
+  }, [tabRegions, enabledTypes]);
+
+  // Notify parent of type filter changes so overlays stay in sync
+  React.useEffect(() => {
+    onTypeFilterChange?.(enabledTypes);
+  }, [enabledTypes, onTypeFilterChange]);
+
+  const toggleType = (type: string) => {
+    setEnabledTypes(prev => {
+      // If null (all), start from all available minus the toggled one
+      if (!prev) {
+        const next = new Set(availableTypes);
+        next.delete(type);
+        return next;
+      }
+      const next = new Set(prev);
+      if (next.has(type)) {
+        // Prevent unchecking the last remaining type
+        if (next.size <= 1) return prev;
+        next.delete(type);
+      } else {
+        next.add(type);
+      }
+      // If all types re-enabled, reset to null
+      if (next.size === availableTypes.length) return null;
+      return next;
+    });
+  };
+
+  const allTypesEnabled = enabledTypes === null || enabledTypes.size === availableTypes.length;
+
   const isDragging = React.useRef(false);
   const startX = React.useRef(0);
   const startWidth = React.useRef(width);
@@ -108,7 +183,7 @@ export default function RegionSidebar({
       transition: isDragging.current ? 'none' : 'width 0.2s ease',
     }}>
       {/* Resize handle */}
-      {!collapsed && (
+      {!collapsed && !hideResizeHandle && (
         <div
           onMouseDown={onResizeMouseDown}
           style={{
@@ -165,17 +240,43 @@ export default function RegionSidebar({
         </div>
       ) : (
         <>
+          {/* Tab bar */}
           <div style={{
-            ...styles.sidebarTitle,
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
+            borderBottom: '1px solid var(--border-color)',
             background: 'rgba(0,0,0,0.15)',
+            flexShrink: 0,
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Shield size={18} color="var(--text-secondary)" />
-              <span>Detected ({pageRegions.length})</span>
-            </div>
+            {(["page", "document"] as const).map((tab) => {
+              const isActive = activeTab === tab;
+              const count = tab === "page" ? pageRegions.length : allRegions.length;
+              const label = tab === "page" ? `This page (${count})` : `Document (${count})`;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  style={{
+                    flex: 1,
+                    padding: '8px 0',
+                    fontSize: 12,
+                    fontWeight: isActive ? 600 : 400,
+                    color: isActive ? 'var(--accent-primary)' : 'var(--text-muted)',
+                    background: 'transparent',
+                    border: 'none',
+                    borderBottom: isActive ? '2px solid var(--accent-primary)' : '2px solid transparent',
+                    borderRadius: 0,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
             <button
               onClick={() => setCollapsed(true)}
               style={{
@@ -183,10 +284,11 @@ export default function RegionSidebar({
                 border: 'none',
                 color: 'var(--text-secondary)',
                 cursor: 'pointer',
-                padding: 4,
+                padding: '4px 8px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                flexShrink: 0,
               }}
               title="Collapse sidebar"
             >
@@ -194,8 +296,13 @@ export default function RegionSidebar({
             </button>
           </div>
           {/* Bulk actions toolbar */}
-          {pageRegions.length > 0 && (() => {
-            const activeRegions = pageRegions.filter(r => r.action !== "CANCEL");
+          {displayedRegions.length > 0 && (() => {
+            // If items are selected, scope actions to selected visible items; otherwise all visible
+            const hasSelection = selectedRegionIds.length > 0;
+            const targetRegions = hasSelection
+              ? displayedRegions.filter(r => selectedRegionIds.includes(r.id))
+              : displayedRegions;
+            const activeRegions = targetRegions.filter(r => r.action !== "CANCEL");
             const allTokenized = activeRegions.length > 0 && activeRegions.every(r => r.action === "TOKENIZE");
             const allRemoved = activeRegions.length > 0 && activeRegions.every(r => r.action === "REMOVE");
             return (
@@ -234,10 +341,10 @@ export default function RegionSidebar({
                   textShadow: "none",
                   transition: "all 0.15s ease",
                 }}
-                title={allTokenized ? "Undo tokenize all" : "Tokenize all regions on this page"}
+                title={allTokenized ? "Undo tokenize" : "Tokenize regions"}
               >
                 <Key size={13} />
-                Tokenize all
+                Tokenize
               </button>
               <button
                 onClick={() => {
@@ -266,18 +373,26 @@ export default function RegionSidebar({
                   textShadow: "none",
                   transition: "all 0.15s ease",
                 }}
-                title={allRemoved ? "Undo remove all" : "Remove all regions on this page"}
+                title={allRemoved ? "Undo remove" : "Remove regions"}
               >
                 <Trash2 size={13} />
-                Remove all
+                Remove
               </button>
               <button
                 onClick={() => {
                   if (!activeDocId) return;
-                  pushUndo();
                   const ids = activeRegions.map(r => r.id);
-                  ids.forEach(id => removeRegion(id));
-                  batchDeleteRegions(activeDocId, ids).catch(() => {});
+                  // Check if user wants to skip confirmation
+                  const skipConfirm = localStorage.getItem('clearRegionsNeverAsk') === 'true';
+                  if (skipConfirm) {
+                    pushUndo();
+                    ids.forEach(id => removeRegion(id));
+                    batchDeleteRegions(activeDocId, ids).catch(() => {});
+                  } else {
+                    clearConfirmRef.current.ids = ids;
+                    setClearNeverAsk(false);
+                    setClearConfirmOpen(true);
+                  }
                 }}
                 style={{
                   flex: 1,
@@ -295,17 +410,85 @@ export default function RegionSidebar({
                   color: "var(--text-secondary)",
                   transition: "all 0.15s ease",
                 }}
-                title="Clear all regions from this page"
+                title="Clear regions"
               >
                 <X size={13} />
-                Clear all
+                Clear
               </button>
+              {/* Filter by type — ellipsis button */}
+              <div ref={filterRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <button
+                  onClick={() => setTypeFilterOpen(v => !v)}
+                  style={{
+                    padding: '5px 4px',
+                    fontSize: 11,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    border: !allTypesEnabled ? '1px solid var(--accent-primary)' : '1px solid transparent',
+                    background: !allTypesEnabled ? 'rgba(100,181,246,0.12)' : 'transparent',
+                    color: 'var(--text-secondary)',
+                    transition: 'all 0.15s ease',
+                    flexShrink: 0,
+                  }}
+                  title="Filter by PII type"
+                >
+                  <MoreVertical size={14} />
+                </button>
+                {typeFilterOpen && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: 0,
+                    marginTop: 4,
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 6,
+                    padding: '6px 0',
+                    minWidth: 170,
+                    zIndex: 50,
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+                    maxHeight: 260,
+                    overflowY: 'auto',
+                  }}>
+                    {availableTypes.map(type => {
+                      const checked = enabledTypes === null || enabledTypes.has(type);
+                      return (
+                        <label
+                          key={type}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            padding: '3px 12px',
+                            fontSize: 11,
+                            color: 'var(--text-primary)',
+                            cursor: 'pointer',
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.05)')}
+                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleType(type)}
+                            style={{ accentColor: PII_COLORS[type] || '#888' }}
+                          />
+                          {type}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
               </div>
             </div>
             );
           })()}
           <div style={styles.regionList}>
-        {pageRegions.map((r) => (
+        {displayedRegions.map((r) => (
           <div
             key={r.id}
             style={{
@@ -316,7 +499,23 @@ export default function RegionSidebar({
                   ? "var(--bg-tertiary)"
                   : "var(--bg-surface)",
             }}
-            onClick={(e) => onToggleSelect(r.id, e.ctrlKey || e.metaKey)}
+            onClick={(e) => {
+              const idx = displayedRegions.indexOf(r);
+              if (e.shiftKey && lastClickedIndexRef.current !== null) {
+                // Shift-click: range select without page change or scroll
+                const start = Math.min(lastClickedIndexRef.current, idx);
+                const end = Math.max(lastClickedIndexRef.current, idx);
+                const rangeIds = displayedRegions.slice(start, end + 1).map(reg => reg.id);
+                onSelect(rangeIds);
+              } else {
+                // Normal or ctrl click
+                if (!e.ctrlKey && !e.metaKey) {
+                  onNavigateToRegion(r);
+                }
+                onToggleSelect(r.id, e.ctrlKey || e.metaKey);
+                lastClickedIndexRef.current = idx;
+              }
+            }}
           >
             {/* Clear — top-right close button */}
             <button
@@ -439,11 +638,23 @@ export default function RegionSidebar({
                 {r.action === "CANCEL" ? "✕ Dismissed" : `✓ ${r.action}`}
               </div>
             )}
+            {activeTab === "document" && (
+              <div style={{
+                position: "absolute",
+                bottom: 4,
+                right: 8,
+                fontSize: 10,
+                color: "var(--text-muted)",
+                opacity: 0.7,
+              }}>
+                page {r.page_number}
+              </div>
+            )}
           </div>
         ))}
-        {pageRegions.length === 0 && (
+        {displayedRegions.length === 0 && (
           <p style={{ color: "var(--text-muted)", padding: 12, fontSize: 13 }}>
-            No PII detected on this page.
+            {activeTab === "page" ? "No PII detected on this page." : "No PII detected in this document."}
           </p>
         )}
           </div>
@@ -467,6 +678,95 @@ export default function RegionSidebar({
             </span>
           </div>
         </>
+      )}
+
+      {/* Clear confirmation dialog */}
+      {clearConfirmOpen && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'rgba(0,0,0,0.5)',
+          zIndex: 100,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+          <div style={{
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 8,
+            padding: '20px 24px',
+            width: '85%',
+            maxWidth: 280,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+          }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>
+              Clear all regions?
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.5 }}>
+              This will remove {clearConfirmRef.current.ids.length} region{clearConfirmRef.current.ids.length !== 1 ? 's' : ''} from the list. You can still <strong>undo</strong> this action.
+            </p>
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 11,
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              marginBottom: 16,
+            }}>
+              <input
+                type="checkbox"
+                checked={clearNeverAsk}
+                onChange={e => setClearNeverAsk(e.target.checked)}
+                style={{ accentColor: 'var(--accent-primary)' }}
+              />
+              Never show this message again
+            </label>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setClearConfirmOpen(false)}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  borderRadius: 4,
+                  border: '1px solid var(--border-color)',
+                  background: 'transparent',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (clearNeverAsk) {
+                    localStorage.setItem('clearRegionsNeverAsk', 'true');
+                  }
+                  setClearConfirmOpen(false);
+                  if (!activeDocId) return;
+                  pushUndo();
+                  const ids = clearConfirmRef.current.ids;
+                  ids.forEach(id => removeRegion(id));
+                  batchDeleteRegions(activeDocId, ids).catch(() => {});
+                }}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  borderRadius: 4,
+                  border: 'none',
+                  background: '#f44336',
+                  color: 'white',
+                  cursor: 'pointer',
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

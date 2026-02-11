@@ -102,6 +102,8 @@ export async function redetectPII(
     regex_enabled?: boolean;
     ner_enabled?: boolean;
     llm_detection_enabled?: boolean;
+    regex_types?: string[] | null;
+    ner_types?: string[] | null;
   } = {}
 ): Promise<RedetectResult> {
   return request<RedetectResult>(`/api/documents/${docId}/redetect`, {
@@ -368,6 +370,10 @@ export async function configureRemoteLLM(
   });
 }
 
+export async function disconnectRemoteLLM(): Promise<void> {
+  await request("/api/llm/remote/disconnect", { method: "POST" });
+}
+
 export async function testRemoteLLM(): Promise<{
   ok: boolean;
   latency_ms?: number;
@@ -388,6 +394,29 @@ export async function listModels(): Promise<
   Array<{ name: string; path: string; size_gb: number }>
 > {
   return request("/api/llm/models");
+}
+
+export async function openModelsDir(): Promise<{ status: string; path: string }> {
+  return request("/api/llm/open-models-dir", { method: "POST" });
+}
+
+// ──────────────────────────────────────────────
+// System hardware
+// ──────────────────────────────────────────────
+
+export interface HardwareInfo {
+  cpu: { name: string; cores_physical: number; cores_logical: number };
+  ram: { total_gb: number; available_gb: number };
+  gpus: Array<{
+    name: string;
+    vram_total_mb: number;
+    vram_free_mb: number;
+    driver_version: string;
+  }>;
+}
+
+export async function getHardwareInfo(): Promise<HardwareInfo> {
+  return request("/api/system/hardware");
 }
 
 // ──────────────────────────────────────────────

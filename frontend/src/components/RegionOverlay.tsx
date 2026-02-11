@@ -385,6 +385,7 @@ export default function RegionOverlay({
       {/* Highlight rectangle — drag body to move */}
       <div
         ref={highlightRef}
+        data-region-id={region.id}
         style={{
           position: "absolute",
           left,

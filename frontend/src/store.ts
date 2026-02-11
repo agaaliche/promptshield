@@ -11,9 +11,22 @@ import type {
   LLMStatus,
   UploadItem,
   SnackbarItem,
+  LicenseStatus,
+  AuthTokens,
+  UserInfo,
 } from "./types";
 
 interface AppState {
+  // ── License / Auth ──
+  licenseStatus: LicenseStatus | null;
+  setLicenseStatus: (s: LicenseStatus | null) => void;
+  authTokens: AuthTokens | null;
+  setAuthTokens: (t: AuthTokens | null) => void;
+  userInfo: UserInfo | null;
+  setUserInfo: (u: UserInfo | null) => void;
+  licenseChecked: boolean;
+  setLicenseChecked: (v: boolean) => void;
+
   // ── Connection ──
   backendReady: boolean;
   setBackendReady: (v: boolean) => void;
@@ -121,6 +134,25 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>()(devtools((set) => ({
+  // License / Auth
+  licenseStatus: null,
+  setLicenseStatus: (s) => set({ licenseStatus: s }),
+  authTokens: (() => {
+    try {
+      const raw = localStorage.getItem("ps_auth_tokens");
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  })(),
+  setAuthTokens: (t) => {
+    if (t) localStorage.setItem("ps_auth_tokens", JSON.stringify(t));
+    else localStorage.removeItem("ps_auth_tokens");
+    set({ authTokens: t });
+  },
+  userInfo: null,
+  setUserInfo: (u) => set({ userInfo: u }),
+  licenseChecked: false,
+  setLicenseChecked: (v) => set({ licenseChecked: v }),
+
   // Connection
   backendReady: false,
   setBackendReady: (v) => set({ backendReady: v }),
@@ -361,4 +393,17 @@ export const useUIStore = () =>
     setZoom: s.setZoom,
     drawMode: s.drawMode,
     setDrawMode: s.setDrawMode,
+  })));
+
+/** License/auth-related selectors. */
+export const useLicenseStore = () =>
+  useAppStore(useShallow((s) => ({
+    licenseStatus: s.licenseStatus,
+    setLicenseStatus: s.setLicenseStatus,
+    authTokens: s.authTokens,
+    setAuthTokens: s.setAuthTokens,
+    userInfo: s.userInfo,
+    setUserInfo: s.setUserInfo,
+    licenseChecked: s.licenseChecked,
+    setLicenseChecked: s.setLicenseChecked,
   })));

@@ -240,3 +240,54 @@ export interface SnackbarItem {
   type: "success" | "error" | "info";
   createdAt: number;
 }
+
+// ── Licensing types ──────────────────────────────────────────────
+
+export interface LicensePayload {
+  email: string;
+  plan: string;
+  seats: number;
+  machine_id: string;
+  issued: string;
+  expires: string;
+  v: number;
+}
+
+export interface LicenseStatus {
+  valid: boolean;
+  payload: LicensePayload | null;
+  error: string | null;
+  days_remaining: number | null;
+}
+
+export interface AuthTokens {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+}
+
+export interface UserInfo {
+  id: string;
+  email: string;
+  trial_used: boolean;
+  created_at: string;
+}
+
+export interface LicenseResponse {
+  license_blob: string;
+  expires_at: string;
+  plan: string;
+  seats: number;
+  machine_fingerprint: string;
+}
+
+export interface SubscriptionInfo {
+  id: string;
+  plan: string;
+  status: string;
+  seats: number;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  trial_end: string | null;
+  created_at: string;
+}

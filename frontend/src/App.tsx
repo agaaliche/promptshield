@@ -1,8 +1,10 @@
 /** Root application component. */
 
-import { useEffect, Component } from "react";
+import { useEffect, useState, Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import { useAppStore } from "./store";
+import { validateLocalLicense, startBackend, getMe } from "./licenseApi";
+import type { LicenseStatus as LicenseStatusType } from "./types";
 
 // ── Error Boundary ──────────────────────────────────────────────
 interface EBProps { children: ReactNode }
@@ -44,7 +46,7 @@ class ErrorBoundary extends Component<EBProps, EBState> {
     return this.props.children;
   }
 }
-import { checkHealth, getVaultStatus, getLLMStatus, listDocuments, getRegions, getDocument, logError } from "./api";
+import { checkHealth, getVaultStatus, getLLMStatus, listDocuments, getRegions, getDocument, logError, setBaseUrl } from "./api";
 import { resolveAllOverlaps } from "./regionUtils";
 import Sidebar from "./components/Sidebar";
 import Snackbar from "./components/Snackbar";
@@ -52,6 +54,8 @@ import UploadView from "./components/UploadView";
 import DocumentViewer from "./components/DocumentViewer";
 import DetokenizeView from "./components/DetokenizeView";
 import SettingsView from "./components/SettingsView";
+import AuthScreen from "./components/AuthScreen";
+import RevalidationDialog from "./components/RevalidationDialog";
 
 function App() {
   const {
@@ -68,53 +72,81 @@ function App() {
     setActiveDocId,
     setDocLoading,
     setDocLoadingMessage,
+    licenseStatus,
+    setLicenseStatus,
+    licenseChecked,
+    setLicenseChecked,
+    authTokens,
+    addSnackbar,
   } = useAppStore();
 
-  // Poll for backend readiness on startup
+  const [showRevalidation, setShowRevalidation] = useState(false);
+  const [backendStarting, setBackendStarting] = useState(false);
+
+  // ── Step 1: Check license on mount ──────────────────────────
   useEffect(() => {
     let cancelled = false;
-    let attempts = 0;
 
-    const poll = async () => {
-      while (!cancelled && attempts < 60) {
+    const checkLicense = async () => {
+      try {
+        const status: LicenseStatusType = await validateLocalLicense();
+        if (cancelled) return;
+        setLicenseStatus(status);
+        setLicenseChecked(true);
+
+        // If license is valid but expiring soon, prompt revalidation
+        if (status.valid && status.days_remaining !== null && status.days_remaining <= 7) {
+          setShowRevalidation(true);
+        }
+      } catch {
+        // Not running in Tauri (browser dev) — skip license check
+        if (!cancelled) {
+          setLicenseStatus({ valid: true, payload: null, error: null, days_remaining: null });
+          setLicenseChecked(true);
+        }
+      }
+    };
+
+    checkLicense();
+    return () => { cancelled = true; };
+  }, [setLicenseStatus, setLicenseChecked]);
+
+  // Restore user info from saved tokens
+  useEffect(() => {
+    if (authTokens && licenseStatus?.valid) {
+      getMe().catch(() => {});
+    }
+  }, [authTokens, licenseStatus?.valid]);
+
+  // ── Step 2: Start backend once license is valid ─────────────
+  useEffect(() => {
+    if (!licenseChecked || !licenseStatus?.valid) return;
+    let cancelled = false;
+
+    const launch = async () => {
+      setBackendStarting(true);
+      try {
+        const port = await startBackend();
+        if (cancelled) return;
+        // Set the API base URL to the sidecar port
+        setBaseUrl(`http://127.0.0.1:${port}`);
+        setBackendReady(true);
+      } catch (err: any) {
+        if (cancelled) return;
+        // Fallback: try polling for existing backend
+        console.warn("startBackend failed, falling back to polling:", err.message);
+        pollForBackend(cancelled);
+      } finally {
+        if (!cancelled) setBackendStarting(false);
+      }
+    };
+
+    const pollForBackend = async (wasCancelled: boolean) => {
+      let attempts = 0;
+      while (!wasCancelled && attempts < 60) {
         const ok = await checkHealth();
-        if (ok && !cancelled) {
+        if (ok && !wasCancelled) {
           setBackendReady(true);
-          // Load initial status
-          getVaultStatus()
-            .then((s) => setVaultUnlocked(s.unlocked))
-            .catch(logError("vault-status"));
-          getLLMStatus().then(setLLMStatus).catch(logError("llm-status"));
-
-          // Load persisted documents and sync Zustand state with backend
-          try {
-            const docs = await listDocuments();
-            if (cancelled) return;
-
-            const backendDocIds = new Set(docs.map((d) => d.doc_id));
-            const state = useAppStore.getState();
-
-            if (docs.length > 0) {
-              setDocuments(docs);
-              // If activeDocId is stale (not on backend), reset it
-              if (state.activeDocId && !backendDocIds.has(state.activeDocId)) {
-                setActiveDocId(docs[0].doc_id);
-              } else if (!state.activeDocId) {
-                setActiveDocId(docs[0].doc_id);
-              }
-              setCurrentView("viewer");
-            } else {
-              // Backend has no documents — clear any stale HMR state
-              setDocuments([]);
-              if (state.activeDocId) {
-                setActiveDocId(null);
-                setRegions([]);
-              }
-              setCurrentView("upload");
-            }
-          } catch {
-            // Storage may be empty — that's fine
-          }
           return;
         }
         attempts++;
@@ -122,9 +154,52 @@ function App() {
       }
     };
 
-    poll();
+    launch();
     return () => { cancelled = true; };
-  }, [setBackendReady, setVaultUnlocked, setLLMStatus, setDocuments, setActiveDocId, setCurrentView, setRegions]);
+  }, [licenseChecked, licenseStatus?.valid, setBackendReady]);
+
+  // ── Step 3: Load initial data once backend is ready ─────────
+  useEffect(() => {
+    if (!backendReady) return;
+    let cancelled = false;
+
+    const init = async () => {
+      getVaultStatus()
+        .then((s) => setVaultUnlocked(s.unlocked))
+        .catch(logError("vault-status"));
+      getLLMStatus().then(setLLMStatus).catch(logError("llm-status"));
+
+      try {
+        const docs = await listDocuments();
+        if (cancelled) return;
+
+        const backendDocIds = new Set(docs.map((d) => d.doc_id));
+        const state = useAppStore.getState();
+
+        if (docs.length > 0) {
+          setDocuments(docs);
+          if (state.activeDocId && !backendDocIds.has(state.activeDocId)) {
+            setActiveDocId(docs[0].doc_id);
+          } else if (!state.activeDocId) {
+            setActiveDocId(docs[0].doc_id);
+          }
+          setCurrentView("viewer");
+        } else {
+          setDocuments([]);
+          if (state.activeDocId) {
+            setActiveDocId(null);
+            setRegions([]);
+          }
+          setCurrentView("upload");
+        }
+      } catch {
+        // Storage may be empty — that's fine
+      }
+    };
+
+    init();
+    return () => { cancelled = true; };
+  }, [backendReady, setVaultUnlocked, setLLMStatus, setDocuments, setActiveDocId, setCurrentView, setRegions]);
 
   // Load full document data + regions when the active document changes
   useEffect(() => {
@@ -177,6 +252,20 @@ function App() {
     return () => { cancelled = true; };
   }, [activeDocId, setRegions, updateDocument, setDocLoading, setDocLoadingMessage, setDocuments, setActiveDocId, setCurrentView]);
 
+  // ── Auth gate: show AuthScreen if no valid license ──────────
+  if (!licenseChecked) {
+    return (
+      <div style={styles.connecting}>
+        <div style={styles.spinner} />
+        <p>Checking license...</p>
+      </div>
+    );
+  }
+
+  if (!licenseStatus?.valid) {
+    return <AuthScreen />;
+  }
+
   const renderView = () => {
     switch (currentView) {
       case "upload":
@@ -193,12 +282,18 @@ function App() {
   return (
     <div style={{ display: "flex", height: "100vh", width: "100vw" }}>
       <Snackbar />
+      {showRevalidation && (
+        <RevalidationDialog
+          daysRemaining={licenseStatus.days_remaining}
+          onDismiss={() => setShowRevalidation(false)}
+        />
+      )}
       <Sidebar />
       <main style={{ flex: 1, overflow: "hidden", position: "relative", minHeight: 0, height: "100%" }}>
         {!backendReady ? (
           <div style={styles.connecting}>
             <div style={styles.spinner} />
-            <p>Connecting to local database...</p>
+            <p>{backendStarting ? "Starting backend..." : "Connecting to local database..."}</p>
             <p style={styles.hint}>
               Make sure the Python sidecar is running on port 8910
             </p>

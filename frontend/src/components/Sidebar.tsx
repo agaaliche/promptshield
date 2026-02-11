@@ -22,6 +22,7 @@ import {
 import { useAppStore } from "../store";
 import { deleteDocument } from "../api";
 import { useDocumentUpload, ACCEPTED_FILE_TYPES } from "../hooks/useDocumentUpload";
+import LicenseStatus from "./LicenseStatus";
 
 type View = "upload" | "viewer" | "detokenize" | "settings";
 
@@ -396,6 +397,9 @@ export default function Sidebar() {
           </button>
         ))}
       </nav>
+
+      {/* License info */}
+      <LicenseStatus />
 
       {/* Status */}
       <div style={sidebarStyles.statusArea}>

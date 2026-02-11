@@ -118,14 +118,18 @@ export default function RegionOverlay({
   const [isDraggingDialog, setIsDraggingDialog] = useState(false);
   const dialogDragStart = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
   
-  // Convert page coordinates → pixel coordinates on the displayed image
-  const sx = imgWidth / pageWidth;
-  const sy = imgHeight / pageHeight;
+  // Convert page coordinates → CSS percentage coordinates on the displayed image.
+  // Using percentages keeps regions in sync during CSS transitions (sidebar
+  // collapse/expand) because the browser resolves them at layout time rather
+  // than relying on React state which lags behind by ≥1 frame.
+  const leftPct = (region.bbox.x0 / pageWidth) * 100;
+  const topPct = (region.bbox.y0 / pageHeight) * 100;
+  const widthPct = ((region.bbox.x1 - region.bbox.x0) / pageWidth) * 100;
+  const heightPct = ((region.bbox.y1 - region.bbox.y0) / pageHeight) * 100;
 
-  const left = region.bbox.x0 * sx;
-  const top = region.bbox.y0 * sy;
-  const width = Math.max((region.bbox.x1 - region.bbox.x0) * sx, MIN_REGION_PX);
-  const height = Math.max((region.bbox.y1 - region.bbox.y0) * sy, MIN_REGION_PX);
+  // Pixel values still needed for maxWidth on the label
+  const sx = imgWidth / pageWidth;
+  const pixelWidth = (region.bbox.x1 - region.bbox.x0) * sx;
 
   // Background color based on action
   let bgColor: string;
@@ -388,10 +392,12 @@ export default function RegionOverlay({
         data-region-id={region.id}
         style={{
           position: "absolute",
-          left,
-          top,
-          width,
-          height,
+          left: `${leftPct}%`,
+          top: `${topPct}%`,
+          width: `${widthPct}%`,
+          height: `${heightPct}%`,
+          minWidth: MIN_REGION_PX,
+          minHeight: MIN_REGION_PX,
           background: bgColor,
           border: showFrame ? `1px solid ${borderColor}` : "1px solid transparent",
           borderRadius: 2,
@@ -444,8 +450,9 @@ export default function RegionOverlay({
           onMouseLeave={() => setHovered(false)}
           style={{
             position: "absolute",
-            left: left + 7,
-            top: top - 27,
+            left: `calc(${leftPct}% + 7px)`,
+            top: `${topPct}%`,
+            transform: "translateY(calc(-100% - 2px))",
             zIndex: 6,
             background: borderColor,
             color: "#000",
@@ -454,7 +461,7 @@ export default function RegionOverlay({
             fontSize: 13,
             fontWeight: 600,
             whiteSpace: "nowrap",
-            maxWidth: Math.max(width - 5, 120),
+            maxWidth: Math.max(pixelWidth - 5, 120),
             overflow: "hidden",
             textOverflow: "ellipsis",
           }}

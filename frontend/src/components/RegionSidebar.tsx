@@ -14,6 +14,7 @@ import {
   MoreVertical,
 } from "lucide-react";
 import { PII_COLORS, type PIIRegion, type RegionAction } from "../types";
+import { useAppStore } from "../store";
 
 type SidebarTab = "page" | "document";
 
@@ -141,6 +142,7 @@ export default function RegionSidebar({
 
   const allTypesEnabled = enabledTypes === null || enabledTypes.size === availableTypes.length;
 
+  const { setIsSidebarDragging, isSidebarDragging: sidebarDragging } = useAppStore();
   const isDragging = React.useRef(false);
   const startX = React.useRef(0);
   const startWidth = React.useRef(width);
@@ -152,7 +154,8 @@ export default function RegionSidebar({
     startWidth.current = width;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-  }, [width]);
+    setIsSidebarDragging(true);
+  }, [width, setIsSidebarDragging]);
 
   React.useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
@@ -167,6 +170,7 @@ export default function RegionSidebar({
       isDragging.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      setIsSidebarDragging(false);
     };
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
@@ -174,13 +178,13 @@ export default function RegionSidebar({
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
     };
-  }, [onWidthChange]);
+  }, [onWidthChange, setIsSidebarDragging]);
 
   return (
     <div ref={sidebarRef} style={{
       ...styles.sidebar,
       width: collapsed ? 60 : width,
-      transition: isDragging.current ? 'none' : 'width 0.2s ease',
+      transition: sidebarDragging ? 'none' : 'width 0.2s ease',
     }}>
       {/* Resize handle */}
       {!collapsed && !hideResizeHandle && (
@@ -205,22 +209,9 @@ export default function RegionSidebar({
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          padding: '16px 8px',
-          gap: 16,
+          padding: '12px 8px',
+          gap: 12,
         }}>
-          <Shield size={24} color="var(--text-secondary)" />
-          <div style={{
-            background: 'var(--accent-primary)',
-            color: 'white',
-            fontSize: 12,
-            fontWeight: 600,
-            padding: '4px 8px',
-            borderRadius: 12,
-            minWidth: 32,
-            textAlign: 'center',
-          }}>
-            {pageRegions.length}
-          </div>
           <button
             onClick={() => setCollapsed(false)}
             style={{
@@ -228,18 +219,60 @@ export default function RegionSidebar({
               border: 'none',
               color: 'var(--text-secondary)',
               cursor: 'pointer',
-              padding: 8,
+              padding: 4,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
             }}
             title="Expand sidebar"
           >
-            <ChevronLeft size={20} />
+            <ChevronLeft size={18} />
           </button>
+          <Shield size={20} color="var(--accent-primary)" />
+          <div style={{
+            background: 'var(--accent-primary)',
+            color: 'white',
+            fontSize: 11,
+            fontWeight: 600,
+            padding: '2px 7px',
+            borderRadius: 12,
+            minWidth: 28,
+            textAlign: 'center',
+          }}>
+            {pageRegions.length}
+          </div>
         </div>
       ) : (
         <>
+          {/* Header */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '10px 14px',
+            borderBottom: '1px solid var(--border-color)',
+            flexShrink: 0,
+          }}>
+            <Shield size={18} color="var(--accent-primary)" />
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>Detected</span>
+            <button
+              onClick={() => setCollapsed(true)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+                padding: 4,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 4,
+              }}
+              title="Collapse sidebar"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
           {/* Tab bar */}
           <div style={{
             display: 'flex',
@@ -277,23 +310,6 @@ export default function RegionSidebar({
                 </button>
               );
             })}
-            <button
-              onClick={() => setCollapsed(true)}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text-secondary)',
-                cursor: 'pointer',
-                padding: '4px 8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-              }}
-              title="Collapse sidebar"
-            >
-              <ChevronRight size={16} />
-            </button>
           </div>
           {/* Bulk actions toolbar */}
           {displayedRegions.length > 0 && (() => {
@@ -516,6 +532,14 @@ export default function RegionSidebar({
                 lastClickedIndexRef.current = idx;
               }
             }}
+            onMouseEnter={(e) => {
+              const tb = e.currentTarget.querySelector('[data-region-toolbar]') as HTMLElement | null;
+              if (tb) tb.style.opacity = '1';
+            }}
+            onMouseLeave={(e) => {
+              const tb = e.currentTarget.querySelector('[data-region-toolbar]') as HTMLElement | null;
+              if (tb) tb.style.opacity = '0.6';
+            }}
           >
             {/* Clear — top-right close button */}
             <button
@@ -544,7 +568,10 @@ export default function RegionSidebar({
               <span style={styles.sourceTag}>{r.source}</span>
             </div>
             <p style={styles.regionText}>"{r.text}"</p>
-            <div style={styles.regionActions}>
+            <div
+              data-region-toolbar
+              style={styles.regionActions}
+            >
               {/* Replace all */}
               <button
                 className="btn-ghost btn-sm"
@@ -598,10 +625,20 @@ export default function RegionSidebar({
                   background: r.action === "TOKENIZE" ? "rgba(156,39,176,0.15)" : "transparent",
                   color: "#9c27b0",
                   boxShadow: r.action === "TOKENIZE" ? "0 0 6px rgba(156,39,176,0.3)" : "none",
-                  transition: "all 0.15s ease",
+                  gap: r.action === "TOKENIZE" ? 4 : 0,
+                  transition: "all 0.2s ease",
                 }}
               >
                 <Key size={13} />
+                <span style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  maxWidth: r.action === "TOKENIZE" ? 60 : 0,
+                  overflow: "hidden",
+                  opacity: r.action === "TOKENIZE" ? 1 : 0,
+                  transition: "max-width 0.2s ease, opacity 0.15s ease",
+                  whiteSpace: "nowrap",
+                }}>Tokenize</span>
               </button>
               {/* Remove */}
               <button
@@ -617,27 +654,22 @@ export default function RegionSidebar({
                   background: r.action === "REMOVE" ? "rgba(244,67,54,0.15)" : "transparent",
                   color: "#f44336",
                   boxShadow: r.action === "REMOVE" ? "0 0 6px rgba(244,67,54,0.3)" : "none",
-                  transition: "all 0.15s ease",
+                  gap: r.action === "REMOVE" ? 4 : 0,
+                  transition: "all 0.2s ease",
                 }}
               >
                 <Trash2 size={13} />
+                <span style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  maxWidth: r.action === "REMOVE" ? 52 : 0,
+                  overflow: "hidden",
+                  opacity: r.action === "REMOVE" ? 1 : 0,
+                  transition: "max-width 0.2s ease, opacity 0.15s ease",
+                  whiteSpace: "nowrap",
+                }}>Remove</span>
               </button>
             </div>
-            {r.action !== "PENDING" && (
-              <div
-                style={{
-                  ...styles.actionStatus,
-                  color:
-                    r.action === "REMOVE"
-                      ? "var(--accent-danger)"
-                      : r.action === "TOKENIZE"
-                      ? "var(--accent-tokenize)"
-                      : "var(--text-muted)",
-                }}
-              >
-                {r.action === "CANCEL" ? "✕ Dismissed" : `✓ ${r.action}`}
-              </div>
-            )}
             {activeTab === "document" && (
               <div style={{
                 position: "absolute",
@@ -783,7 +815,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderLeft: "1px solid var(--border-color)",
     display: "flex",
     flexDirection: "column",
-    zIndex: 10,
+    zIndex: 42,
   },
   sidebarTitle: {
     fontSize: 14,
@@ -844,6 +876,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 2,
+    opacity: 0.6,
+    transition: "opacity 0.15s ease",
   },
   sidebarBtn: {
     padding: "4px 6px",
@@ -862,17 +896,12 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "rgba(255,255,255,0.06)",
-    border: "1px solid rgba(255,255,255,0.1)",
+    background: "transparent",
+    border: "none",
     borderRadius: 5,
     cursor: "pointer",
     color: "var(--text-secondary)",
     transition: "opacity 0.15s ease, color 0.15s ease, background 0.15s ease",
-  },
-  actionStatus: {
-    fontSize: 11,
-    fontWeight: 500,
-    marginTop: 4,
   },
   statBadge: {
     fontSize: 11,

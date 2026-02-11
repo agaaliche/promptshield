@@ -106,6 +106,10 @@ interface AppState {
   rightSidebarWidth: number;
   setRightSidebarWidth: (w: number) => void;
 
+  // ── Sidebar drag state (disables canvas transitions during resize) ──
+  isSidebarDragging: boolean;
+  setIsSidebarDragging: (v: boolean) => void;
+
   // ── Upload queue ──
   uploadQueue: UploadItem[];
   setUploadQueue: (items: UploadItem[]) => void;
@@ -132,6 +136,10 @@ export const useAppStore = create<AppState>((set) => ({
     localStorage.setItem('rightSidebarWidth', String(w));
     set({ rightSidebarWidth: w });
   },
+
+  // Sidebar drag
+  isSidebarDragging: false,
+  setIsSidebarDragging: (v) => set({ isSidebarDragging: v }),
 
   // Vault
   vaultUnlocked: false,

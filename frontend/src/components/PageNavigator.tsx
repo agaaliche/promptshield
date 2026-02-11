@@ -4,6 +4,7 @@ import React from "react";
 import { ChevronLeft, ChevronRight, ShieldCheck } from "lucide-react";
 import { getPageBitmapUrl } from "../api";
 import type { PIIRegion } from "../types";
+import { useAppStore } from "../store";
 
 interface PageNavigatorProps {
   docId: string | null;
@@ -36,6 +37,7 @@ export default function PageNavigator({
   sidebarWidth,
   onSidebarWidthChange,
 }: PageNavigatorProps) {
+  const { setIsSidebarDragging, isSidebarDragging: sidebarDragging } = useAppStore();
   const listRef = React.useRef<HTMLDivElement>(null);
   const isDragging = React.useRef(false);
   const startX = React.useRef(0);
@@ -48,7 +50,8 @@ export default function PageNavigator({
     startWidth.current = sidebarWidth;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-  }, [sidebarWidth]);
+    setIsSidebarDragging(true);
+  }, [sidebarWidth, setIsSidebarDragging]);
 
   React.useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
@@ -62,6 +65,7 @@ export default function PageNavigator({
       isDragging.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      setIsSidebarDragging(false);
     };
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
@@ -69,7 +73,7 @@ export default function PageNavigator({
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
     };
-  }, [onSidebarWidthChange]);
+  }, [onSidebarWidthChange, setIsSidebarDragging]);
 
   // Scroll active page thumbnail into view
   React.useEffect(() => {
@@ -107,7 +111,7 @@ export default function PageNavigator({
       display: "flex",
       flexDirection: "column",
       zIndex: 9,
-      transition: isDragging.current ? "none" : "width 0.2s ease",
+      transition: sidebarDragging ? "none" : "width 0.2s ease",
     }}>
       {/* Resize handle on the left edge */}
       <div

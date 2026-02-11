@@ -95,6 +95,7 @@ export default function DocumentViewer() {
     docDetecting,
     rightSidebarWidth,
     setRightSidebarWidth,
+    isSidebarDragging,
     llmStatus,
   } = useAppStore();
 
@@ -605,19 +606,25 @@ export default function DocumentViewer() {
     const updateImageSize = () => {
       const img = imageRef.current;
       if (img && img.offsetWidth > 0 && img.offsetHeight > 0) {
-        setImgSize({ width: img.offsetWidth, height: img.offsetHeight });
+        setImgSize(prev => {
+          if (prev.width === img.offsetWidth && prev.height === img.offsetHeight) return prev;
+          return { width: img.offsetWidth, height: img.offsetHeight };
+        });
       }
     };
 
     // Update on window resize
     window.addEventListener('resize', updateImageSize);
     
-    // Also use ResizeObserver for more accurate tracking
+    // Use ResizeObserver on both the image AND its container for reliable tracking
+    // during sidebar drag where the container changes size before the image does.
     const img = imageRef.current;
+    const container = imageContainerRef.current;
     let observer: ResizeObserver | null = null;
-    if (img && window.ResizeObserver) {
+    if (window.ResizeObserver) {
       observer = new ResizeObserver(updateImageSize);
-      observer.observe(img);
+      if (img) observer.observe(img);
+      if (container) observer.observe(container);
     }
 
     return () => {
@@ -2183,7 +2190,7 @@ export default function DocumentViewer() {
       <div ref={containerRef} style={{
         ...styles.canvasArea,
         paddingRight: (sidebarCollapsed ? 60 : rightSidebarWidth) + (pageCount > 1 ? (pageNavCollapsed ? 28 : 120) : 0),
-        transition: 'padding-right 0.2s ease',
+        transition: isSidebarDragging ? 'none' : 'padding-right 0.2s ease',
       }}>
         <div
           style={{
@@ -2359,6 +2366,20 @@ export default function DocumentViewer() {
         />
       )}
 
+      <PageNavigator
+        docId={activeDocId}
+        pageCount={pageCount}
+        activePage={activePage}
+        onPageSelect={setActivePage}
+        rightOffset={sidebarCollapsed ? 60 : rightSidebarWidth}
+        collapsed={pageNavCollapsed}
+        onCollapsedChange={setPageNavCollapsed}
+        regions={regions}
+        sidebarWidth={rightSidebarWidth}
+        onSidebarWidthChange={setRightSidebarWidth}
+      />
+      </div>{/* end contentArea */}
+
       <RegionSidebar
         sidebarRef={sidebarRef}
         collapsed={sidebarCollapsed}
@@ -2404,19 +2425,6 @@ export default function DocumentViewer() {
         onTypeFilterChange={setSidebarTypeFilter}
         hideResizeHandle={pageCount > 1}
       />
-      <PageNavigator
-        docId={activeDocId}
-        pageCount={pageCount}
-        activePage={activePage}
-        onPageSelect={setActivePage}
-        rightOffset={sidebarCollapsed ? 60 : rightSidebarWidth}
-        collapsed={pageNavCollapsed}
-        onCollapsedChange={setPageNavCollapsed}
-        regions={regions}
-        sidebarWidth={rightSidebarWidth}
-        onSidebarWidthChange={setRightSidebarWidth}
-      />
-      </div>{/* end contentArea */}
     </div>
   );
 }

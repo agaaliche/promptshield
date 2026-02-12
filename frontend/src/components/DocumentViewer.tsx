@@ -1351,8 +1351,8 @@ export default function DocumentViewer() {
           </div>
         </div>
 
-        {/* User menu — fixed right edge of toolbar */}
-        <div style={{ position: "fixed", right: 16, top: "inherit", display: "flex", alignItems: "center", zIndex: 41, pointerEvents: "auto" }}>
+        {/* User menu — fixed right, offset by detected sidebar width */}
+        <div style={{ position: "fixed", right: (sidebarCollapsed ? 60 : rightSidebarWidth) + 12, top: "inherit", display: "flex", alignItems: "center", zIndex: 41, pointerEvents: "auto" }}>
           <UserMenu />
         </div>
       </div>

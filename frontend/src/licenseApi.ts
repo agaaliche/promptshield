@@ -9,6 +9,7 @@ import {
   signInWithEmailAndPassword,
   signInWithRedirect,
   getRedirectResult,
+  onAuthStateChanged,
   signOut,
 } from "firebase/auth";
 import { auth, googleProvider } from "./firebaseConfig";
@@ -192,12 +193,15 @@ export async function signInOnline(
   }
 }
 
+const GOOGLE_REDIRECT_KEY = "ps_google_redirect";
+
 /**
  * Kick off Google sign-in via redirect (avoids COOP popup issues).
- * The page will navigate to Google; on return, call
- * handleGoogleRedirectResult() to complete activation.
+ * Sets a sessionStorage flag so handleGoogleRedirectResult() knows
+ * to look for the credential on the next page load.
  */
 export async function signInWithGoogle(): Promise<void> {
+  sessionStorage.setItem(GOOGLE_REDIRECT_KEY, "1");
   await signInWithRedirect(auth, googleProvider);
 }
 
@@ -205,16 +209,50 @@ export async function signInWithGoogle(): Promise<void> {
  * Check if we're returning from a Google sign-in redirect.
  * Call this once on AuthScreen mount. Returns the activated LicenseStatus
  * if a redirect result is present, or null if not.
+ *
+ * Strategy: try getRedirectResult first; if it returns null (known Firebase
+ * v9+ issue), fall back to onAuthStateChanged with a short timeout.
  */
 export async function handleGoogleRedirectResult(): Promise<LicenseStatus | null> {
+  // Only run if we set the flag before redirecting
+  if (!sessionStorage.getItem(GOOGLE_REDIRECT_KEY)) return null;
+  sessionStorage.removeItem(GOOGLE_REDIRECT_KEY);
+
+  // Attempt 1: getRedirectResult (works in most browsers)
   try {
     const cred = await getRedirectResult(auth);
-    if (!cred) return null; // not returning from a redirect
-    const idToken = await cred.user.getIdToken();
-    return await activateWithToken(idToken);
+    if (cred) {
+      const idToken = await cred.user.getIdToken();
+      return await activateWithToken(idToken);
+    }
   } catch (e: any) {
-    throw new Error(friendlyFirebaseError(e.code));
+    // If it's a real auth error, surface it
+    if (e.code && e.code !== "auth/popup-closed-by-user") {
+      throw new Error(friendlyFirebaseError(e.code));
+    }
   }
+
+  // Attempt 2: fallback — listen for auth state change (covers Firebase bugs
+  // where getRedirectResult resolves null despite successful sign-in)
+  return new Promise<LicenseStatus | null>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      unsubscribe();
+      resolve(null); // no user appeared — genuinely no redirect result
+    }, 5000);
+
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        clearTimeout(timeout);
+        unsubscribe();
+        try {
+          const idToken = await user.getIdToken();
+          resolve(await activateWithToken(idToken));
+        } catch (e: any) {
+          reject(e);
+        }
+      }
+    });
+  });
 }
 
 function friendlyFirebaseError(code?: string): string {

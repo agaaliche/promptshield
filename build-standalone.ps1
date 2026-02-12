@@ -74,14 +74,19 @@ try {
     & $pythonExe -m PyInstaller @args
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
 
-    $exePath = Join-Path (Get-Location) "dist\doc-anonymizer.exe"
+    $exePath = Join-Path (Get-Location) "dist\prompt-shield.exe"
     if (Test-Path $exePath) {
+        # Copy to bin/ at project root
+        $binDir = Join-Path $root "bin"
+        if (-not (Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir -Force | Out-Null }
+        Copy-Item $exePath (Join-Path $binDir "prompt-shield.exe") -Force
+
         $size = [math]::Round((Get-Item $exePath).Length / 1MB, 1)
         Write-Host "`n=== Build complete ===" -ForegroundColor Green
-        Write-Host "Executable: $exePath" -ForegroundColor Green
+        Write-Host "Executable: $binDir\prompt-shield.exe" -ForegroundColor Green
         Write-Host "Size: ${size} MB" -ForegroundColor Green
         Write-Host "`nRun it with:"
-        Write-Host "  .\dist\doc-anonymizer.exe" -ForegroundColor White
+        Write-Host "  .\bin\prompt-shield.exe" -ForegroundColor White
         Write-Host "`nOn first run, spaCy/BERT models will download automatically."
     } else {
         throw "Expected output not found at $exePath"

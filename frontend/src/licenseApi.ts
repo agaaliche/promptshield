@@ -24,6 +24,17 @@ import { useAppStore } from "./store";
 const LICENSING_URL =
   import.meta.env.VITE_LICENSING_URL ?? "https://licensing-server-455859748614.us-east4.run.app";
 
+// ── Firebase auth readiness (resolves once session is restored) ─
+
+const _authReady: Promise<void> = new Promise((resolve) => {
+  const unsub = onAuthStateChanged(auth, () => {
+    unsub();
+    resolve();
+  });
+  // If auth never fires (e.g. offline), resolve after 5s anyway
+  setTimeout(resolve, 5000);
+});
+
 // ── Tauri detection ─────────────────────────────────────────────
 
 /** Returns true when running inside Tauri desktop shell. */
@@ -450,6 +461,8 @@ export async function fullActivation(): Promise<LicenseStatus> {
  * Uses machine fingerprint as identity (no auth tokens needed).
  */
 export async function revalidateLicense(): Promise<LicenseStatus> {
+  // Wait for Firebase to restore the session so the request has a valid token
+  await _authReady;
   const machineId = await getMachineId();
 
   const licenseResponse = await validateLicenseOnline(machineId);

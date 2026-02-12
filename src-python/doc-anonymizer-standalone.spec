@@ -121,7 +121,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name="doc-anonymizer",
+    name="prompt-shield",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

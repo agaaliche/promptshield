@@ -364,8 +364,8 @@ _EN_CONFIG = _LangNERConfig(
     generic_stopwords_filter=True,
     active_model_name=_get_active_en_model,
     base_confidence={
-        PIIType.PERSON: 0.80, PIIType.ORG: 0.45,
-        PIIType.LOCATION: 0.40, PIIType.ADDRESS: 0.55,
+        PIIType.PERSON: 0.80, PIIType.ORG: 0.35,
+        PIIType.LOCATION: 0.30, PIIType.ADDRESS: 0.55,
     },
     person_multiword_cap=0.95,
     org_3word_cap=0.80,
@@ -593,7 +593,7 @@ _FR_CONFIG = _LangNERConfig(
     generic_stopwords_filter=False,
     active_model_name=_get_active_fr_model,
     base_confidence={
-        PIIType.PERSON: 0.78, PIIType.ORG: 0.55, PIIType.LOCATION: 0.40,
+        PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.30,
     },
     person_multiword_cap=0.92,
     org_3word_cap=0.85,
@@ -743,7 +743,7 @@ _IT_CONFIG = _LangNERConfig(
     generic_stopwords_filter=False,
     active_model_name=_get_active_it_model,
     base_confidence={
-        PIIType.PERSON: 0.78, PIIType.ORG: 0.55, PIIType.LOCATION: 0.40,
+        PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.30,
     },
     person_multiword_cap=0.92,
     org_3word_cap=0.85,

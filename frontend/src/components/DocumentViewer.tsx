@@ -63,6 +63,7 @@ import AutodetectPanel from "./AutodetectPanel";
 import VaultUnlockDialog from "./VaultUnlockDialog";
 import CursorToolToolbar from "./CursorToolToolbar";
 import MultiSelectToolbar from "./MultiSelectToolbar";
+import UserMenu from "./UserMenu";
 
 export default function DocumentViewer() {
   const {
@@ -1181,6 +1182,9 @@ export default function DocumentViewer() {
 
       {/* Toolbar */}
       <div ref={topToolbarRef} style={styles.toolbar}>
+        <div style={{ marginRight: 6 }}>
+          <UserMenu />
+        </div>
         <div style={{ position: "relative" }}>
         <button
           className="btn-primary"

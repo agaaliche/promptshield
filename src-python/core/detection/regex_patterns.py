@@ -546,11 +546,12 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # ORG — company patterns
     # ──────────────────────────────────────────────────────────────────
     # French legal: "CompanyName SA/SAS/SARL/EURL/SCI/SNC/SE/SENC"
+    # Uses \s+ to match across line breaks in titles; _IC for ALL CAPS.
     (
-        r"\b[A-ZÀ-Ü][a-zà-ü\-']{1,25}"
-        r"(?:[ \t]+[A-ZÀ-Ü][a-zà-ü\-']{1,25}){0,4}"
-        r"[ \t]+(?:SA|SAS|SARL|EURL|SCI|SNC|SE|SENC|S\.?E\.?N\.?C\.?)\b",
-        PIIType.ORG, 0.90, _NOFLAGS,
+        r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}"
+        r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}){0,4}"
+        r"\s+(?:SA|SAS|SARL|EURL|SCI|SNC|SE|SENC|S\.?E\.?N\.?C\.?)\b",
+        PIIType.ORG, 0.90, _IC,
     ),
     # Multi-language legal suffixes:
     # EN: Inc, Corp, LLC, Ltd, LLP, PLC, Co, LP
@@ -563,8 +564,8 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # Nordic: A/S, ApS, AS, ASA, AB, Oy, Oyj, HB, KB
     (
         r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}"
-        r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}){0,4}"
-        r"[ \t]+(?:"
+        r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}){0,4}"
+        r"\s+(?:"
         r"Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP"
         r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH"
         r"|BV|B\.?V\.?|NV|N\.?V\.?|V\.?O\.?F\.?|C\.?V\.?"
@@ -592,8 +593,8 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r"|Gruppo|Societ[àa]|Azienda|Impresa|Associazione|Fondazione"
         r"|Companhia|Associa[çc][ãa]o|Funda[çc][ãa]o"
         r"|Groep|Bedrijf|Stichting|Vereniging|Maatschappij)"
-        r"[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}"
-        r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}){0,3}\b",
+        r"\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}"
+        r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}){0,3}\b",
         PIIType.ORG, 0.85, _NOFLAGS,
     ),
     # Multilingual company with lowercase connecting words:
@@ -607,7 +608,7 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # ending with a legal suffix.
     (
         r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"
-        r"(?:[ \t]+(?:"
+        r"(?:\s+(?:"
         # FR: de, du, des, la, le, les, l', d', et, en, aux, au, à
         r"de|du|des|la|le|les|l'|d'|et|en|aux|au|à"
         # ES: de, del, los, las, la, el, y, e, para
@@ -621,8 +622,8 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         # NL: van, de, het, en, voor, bij, op
         r"|van|het|voor|bij|op"
         r")"
-        r"|[ \t]+[A-ZÀ-Ü.][a-zA-Zà-üÀ-Ü.\-']{0,25}){1,8}"
-        r"[ \t]+(?:"
+        r"|\s+[A-ZÀ-Ü.][a-zA-Zà-üÀ-Ü.\-']{0,25}){1,8}"
+        r"\s+(?:"
         r"Lt[ée]e|Limit[ée]e|Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP"
         r"|SA|SAS|SARL|EURL|SCI|SNC|SE|SENC|S\.?E\.?N\.?C\.?"
         r"|Enr\.?g?\.?"
@@ -639,7 +640,7 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # Numbered companies (Quebec/Canada style, also DE HRB numbers)
     (
         r"\b\d{5,10}"
-        r"[ \t]+(?:[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,20}[ \t]+){0,3}"
+        r"\s+(?:[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,20}\s+){0,3}"
         r"(?:Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP"
         r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH"
         r"|BV|B\.?V\.?|NV|N\.?V\.?"

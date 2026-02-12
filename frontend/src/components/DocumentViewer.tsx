@@ -1350,8 +1350,9 @@ export default function DocumentViewer() {
             </button>
           </div>
 
-          {/* User menu — after zoom controls */}
-          <div style={{ marginLeft: 12 }}>
+          {/* Separator + User menu */}
+          <div style={{ width: 1, height: 20, background: "var(--border-color, #30363d)", marginLeft: 14, marginRight: 8, flexShrink: 0 }} />
+          <div style={{ marginRight: 6 }}>
             <UserMenu />
           </div>
         </div>

@@ -1208,6 +1208,21 @@ def detect_pii_on_page(
     )
     timings["merge"] = (time.perf_counter() - t0) * 1000
 
+    # ── Filter out large-font regions (watermarks, decorative text) ──
+    _max_pt = config.max_font_size_pt
+    if _max_pt > 0:
+        before = len(regions)
+        regions = [
+            r for r in regions
+            if (r.bbox.y1 - r.bbox.y0) < _max_pt
+        ]
+        skipped = before - len(regions)
+        if skipped:
+            logger.info(
+                f"Page {page_data.page_number}: skipped {skipped} region(s) "
+                f"with bbox height >= {_max_pt}pt (watermark/large text)"
+            )
+
     page_total = (time.perf_counter() - page_t0) * 1000
     timing_parts = " | ".join(f"{k}={v:.0f}ms" for k, v in timings.items())
     logger.info(

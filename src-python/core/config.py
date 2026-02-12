@@ -68,6 +68,19 @@ class AppConfig(BaseModel):
         ),
     )
 
+    # Skip text whose rendered height >= this many PDF points.
+    # Prevents redacting watermarks, headers, decorative text, etc.
+    # 0 = disabled (redact everything regardless of size).
+    max_font_size_pt: float = Field(
+        default=28.0, ge=0.0,
+        description=(
+            "Maximum font size (in PDF points, approximated by bbox height) "
+            "that the detection pipeline will consider as redactable text. "
+            "Text rendered at or above this size — watermarks, large titles, "
+            "decorative elements — will be excluded from auto-detection."
+        ),
+    )
+
     # NER backend: "auto" auto-selects the best model per detected language,
     # "spacy" uses spaCy models, or set to a HuggingFace model id
     # like "dslim/bert-base-NER" for BERT-based detection.
@@ -123,7 +136,8 @@ class AppConfig(BaseModel):
     # Keys that are persisted when changed via the API
     _PERSISTABLE_KEYS: set[str] = {
         "regex_enabled", "ner_enabled", "llm_detection_enabled",
-        "confidence_threshold", "detection_fuzziness", "ocr_language", "ocr_dpi",
+        "confidence_threshold", "detection_fuzziness", "max_font_size_pt",
+        "ocr_language", "ocr_dpi",
         "render_dpi", "tesseract_cmd",
         "ner_backend", "ner_model_preference",
         "llm_model_path",

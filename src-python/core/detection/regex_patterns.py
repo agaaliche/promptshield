@@ -641,10 +641,12 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r")\b\.?",
         PIIType.ORG, 0.90, _NOFLAGS,
     ),
-    # Numbered companies (Quebec/Canada style, also DE HRB numbers)
+    # Numbered companies (Quebec/Canada style with dashes, also DE HRB numbers)
+    # Matches: "9425-7524 Québec inc." or "123456 Company Inc."
+    # Requires at least one word (3+ chars) between number and suffix to avoid postal codes
     (
-        r"\b\d{5,10}"
-        r"\s+(?:[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,20}\s+){0,3}"
+        r"\b\d{3,10}(?:-\d{3,10})?"  # 3-10 digits, optionally followed by dash and more digits
+        r"\s+(?:[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,20}\s+){1,3}"  # Require 1-3 words (min 3 chars each)
         r"(?:Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP"
         r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH"
         r"|BV|B\.?V\.?|NV|N\.?V\.?"

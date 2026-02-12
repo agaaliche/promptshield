@@ -828,11 +828,17 @@ def _extract_span_style(
             "origin": (rect.x0, rect.y1 - 2),  # rough baseline fallback
         }
 
+    # Use the PII region's left edge (rect.x0) as x — NOT the span
+    # origin, which may be far to the left if PII is mid-span.
+    # Keep the span's baseline y so vertical position is correct.
+    span_origin = best_span.get("origin", (rect.x0, rect.y1 - 2))
+    baseline_y = span_origin[1]
+
     return {
         "fontname": _map_to_base14(best_span.get("font", ""), best_span.get("flags", 0)),
         "fontsize": best_span.get("size", 11.0),
         "text_color": _srgb_int_to_rgb(best_span.get("color", 0)),
-        "origin": tuple(best_span.get("origin", (rect.x0, rect.y1 - 2))),
+        "origin": (rect.x0, baseline_y),
     }
 
 

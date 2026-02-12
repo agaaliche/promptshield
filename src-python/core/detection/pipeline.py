@@ -196,7 +196,24 @@ def _split_blocks_at_gaps(
     if len(triples) <= 1:
         return [triples] if triples else []
 
-    sorted_t = sorted(triples, key=lambda t: (t[2].bbox.y0, t[2].bbox.x0))
+    # Sort blocks into proper reading order.  Raw (y0, x0) sorting fails
+    # when same-line blocks have slightly different y0 due to font metrics
+    # or OCR variance (e.g. "Canada" y0=53.22 vs "9169270" y0=53.35 puts
+    # Canada before 9169270 even though 9169270 is 60pt to the left).
+    # Fix: if all blocks fit on one visual line, sort by x0 only.
+    # Otherwise, use y-centre (stable) then x0.
+    blocks = [t[2] for t in triples]
+    max_h = max(b.bbox.y1 - b.bbox.y0 for b in blocks)
+    y_centres = [(b.bbox.y0 + b.bbox.y1) / 2 for b in blocks]
+    single_line = (max(y_centres) - min(y_centres)) <= max_h * 0.5
+
+    if single_line:
+        sorted_t = sorted(triples, key=lambda t: t[2].bbox.x0)
+    else:
+        sorted_t = sorted(
+            triples,
+            key=lambda t: ((t[2].bbox.y0 + t[2].bbox.y1) / 2, t[2].bbox.x0),
+        )
 
     # ── First pass: collect all same-line gap measurements ───────
     same_line_gaps: list[float] = []

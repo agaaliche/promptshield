@@ -80,14 +80,12 @@ export async function storeLocalLicense(blob: string): Promise<LicenseStatus> {
   if (isTauri()) return tauriInvoke<LicenseStatus>("store_license", { blob });
   // Browser fallback: persist in localStorage and decode payload
   localStorage.setItem("ps_dev_license_blob", blob);
-  // Try to decode the license blob (base64-encoded JSON with signature prefix)
+  // Try to decode the license blob: format is "base64(payload_json).base64(signature)"
   let payload: import("./types").LicensePayload | null = null;
   let daysRemaining: number | null = 99;
   try {
-    // Blob format: base64( 64-byte-sig + JSON payload )
-    const raw = atob(blob);
-    const jsonStr = raw.slice(64);
-    const decoded = JSON.parse(jsonStr);
+    const parts = blob.split(".", 2);
+    const decoded = JSON.parse(atob(parts[0]));
     payload = {
       email: decoded.email ?? "unknown",
       plan: decoded.plan ?? "unknown",

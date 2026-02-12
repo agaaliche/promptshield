@@ -1182,9 +1182,6 @@ export default function DocumentViewer() {
 
       {/* Toolbar */}
       <div ref={topToolbarRef} style={styles.toolbar}>
-        <div style={{ marginRight: 6 }}>
-          <UserMenu />
-        </div>
         <div style={{ position: "relative" }}>
         <button
           className="btn-primary"
@@ -1354,6 +1351,10 @@ export default function DocumentViewer() {
           </div>
         </div>
 
+        {/* User menu — right of zoom controls */}
+        <div style={{ marginLeft: 6, position: "relative", zIndex: 42 }}>
+          <UserMenu />
+        </div>
       </div>
 
       {/* Content area — everything below toolbar */}

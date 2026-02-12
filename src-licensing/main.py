@@ -44,6 +44,9 @@ _LICENSING_ALLOWED_ORIGINS = [
     "https://promptshield.com",
     "https://www.promptshield.com",
     "https://app.promptshield.com",
+    "https://tauri.localhost",      # Tauri desktop (Windows)
+    "tauri://localhost",            # Tauri desktop (macOS/Linux)
+    "http://localhost:8910",        # Standalone binary
 ]
 
 # M14: Only add dev origins when explicitly in dev mode

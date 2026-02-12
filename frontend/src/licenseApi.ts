@@ -22,7 +22,7 @@ import { useAppStore } from "./store";
 // ── Licensing server URL ────────────────────────────────────────
 
 const LICENSING_URL =
-  import.meta.env.VITE_LICENSING_URL ?? "https://api.promptshield.com";
+  import.meta.env.VITE_LICENSING_URL ?? "https://licensing-server-455859748614.us-east4.run.app";
 
 // ── Tauri detection ─────────────────────────────────────────────
 

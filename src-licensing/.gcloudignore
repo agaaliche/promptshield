@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.example
+.git/
+.gitignore
+build/
+dist/
+*.egg-info/
+firebase-sa-key.json
+test-export.json
+generate_keys.py
+README.md
+alembic/versions/__pycache__/

@@ -152,8 +152,27 @@ def _libreoffice_convert_to_pdf(src: Path, out_dir: Path) -> Path:
     return pdf_path
 
 
+def _is_rotated_word(char_y_centers: list[float], char_heights: list[float]) -> bool:
+    """Return True if the accumulated character positions indicate rotated text.
+
+    For horizontal text, all characters share roughly the same y-centre.
+    For rotated/diagonal text (watermarks), the y-centres of successive
+    characters shift significantly — the vertical spread of centres will
+    exceed half the average character height.
+    """
+    if len(char_y_centers) < 2:
+        return False
+    y_spread = max(char_y_centers) - min(char_y_centers)
+    avg_h = sum(char_heights) / len(char_heights) if char_heights else 1.0
+    # Horizontal text: y_spread ≈ 0.  45° rotated: y_spread ≈ word width.
+    return y_spread > avg_h * 0.5
+
+
 def _extract_text_blocks_from_page(pdf_page: pdfium.PdfPage, page_index: int) -> list[TextBlock]:
-    """Extract word-level text blocks with bounding boxes from a PDF page."""
+    """Extract word-level text blocks with bounding boxes from a PDF page.
+
+    Rotated text (diagonal watermarks, etc.) is automatically discarded.
+    """
     textpage = pdf_page.get_textpage()
     full_text = textpage.get_text_range()
 
@@ -170,6 +189,10 @@ def _extract_text_blocks_from_page(pdf_page: pdfium.PdfPage, page_index: int) ->
     word_x0 = word_y0 = word_x1 = word_y1 = 0.0
     word_start_idx = 0
     word_index = 0
+    # Per-character tracking for rotation detection
+    char_y_centers: list[float] = []
+    char_heights: list[float] = []
+    rotated_skipped = 0
 
     for i in range(n_chars):
         char = textpage.get_text_range(index=i, count=1)
@@ -178,25 +201,30 @@ def _extract_text_blocks_from_page(pdf_page: pdfium.PdfPage, page_index: int) ->
         if char.strip() == "":
             # End of word — flush if we have accumulated text
             if current_word:
-                # pypdfium2 charbox is (left, bottom, right, top) in PDF coords
-                # Convert to top-left origin: y0 = page_height - top, y1 = page_height - bottom
-                page_height = pdf_page.get_height()
-                blocks.append(TextBlock(
-                    text=current_word,
-                    bbox=BBox(
-                        x0=word_x0,
-                        y0=page_height - word_y1,  # top in screen coords
-                        x1=word_x1,
-                        y1=page_height - word_y0,  # bottom in screen coords
-                    ),
-                    confidence=1.0,
-                    block_index=0,
-                    line_index=0,
-                    word_index=word_index,
-                    is_ocr=False,
-                ))
+                if _is_rotated_word(char_y_centers, char_heights):
+                    rotated_skipped += 1
+                else:
+                    # pypdfium2 charbox is (left, bottom, right, top) in PDF coords
+                    # Convert to top-left origin: y0 = page_height - top, y1 = page_height - bottom
+                    page_height = pdf_page.get_height()
+                    blocks.append(TextBlock(
+                        text=current_word,
+                        bbox=BBox(
+                            x0=word_x0,
+                            y0=page_height - word_y1,  # top in screen coords
+                            x1=word_x1,
+                            y1=page_height - word_y0,  # bottom in screen coords
+                        ),
+                        confidence=1.0,
+                        block_index=0,
+                        line_index=0,
+                        word_index=word_index,
+                        is_ocr=False,
+                    ))
                 word_index += 1
                 current_word = ""
+                char_y_centers = []
+                char_heights = []
         else:
             left, bottom, right, top = charbox
             if not current_word:
@@ -211,24 +239,36 @@ def _extract_text_blocks_from_page(pdf_page: pdfium.PdfPage, page_index: int) ->
                 word_x1 = max(word_x1, right)
                 word_y1 = max(word_y1, top)
             current_word += char
+            char_y_centers.append((bottom + top) / 2.0)
+            char_heights.append(top - bottom)
 
     # Flush last word
     if current_word:
-        page_height = pdf_page.get_height()
-        blocks.append(TextBlock(
-            text=current_word,
-            bbox=BBox(
-                x0=word_x0,
-                y0=page_height - word_y1,
-                x1=word_x1,
-                y1=page_height - word_y0,
-            ),
-            confidence=1.0,
-            block_index=0,
-            line_index=0,
-            word_index=word_index,
-            is_ocr=False,
-        ))
+        if _is_rotated_word(char_y_centers, char_heights):
+            rotated_skipped += 1
+        else:
+            page_height = pdf_page.get_height()
+            blocks.append(TextBlock(
+                text=current_word,
+                bbox=BBox(
+                    x0=word_x0,
+                    y0=page_height - word_y1,
+                    x1=word_x1,
+                    y1=page_height - word_y0,
+                ),
+                confidence=1.0,
+                block_index=0,
+                line_index=0,
+                word_index=word_index,
+                is_ocr=False,
+            ))
+
+    if rotated_skipped:
+        import logging
+        logging.getLogger(__name__).info(
+            f"Page {page_index + 1}: discarded {rotated_skipped} rotated "
+            f"text block(s) (watermarks/diagonal text)"
+        )
 
     return blocks
 

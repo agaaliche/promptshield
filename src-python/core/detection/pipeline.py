@@ -806,16 +806,11 @@ def _merge_detections(
         page_data.text_blocks, page_data.full_text,
     )
 
-    # ── Watermark / large-text filter settings ──
+    # ── Large-font filter setting (rotated text already excluded at extraction) ──
     _max_pt = config.max_font_size_pt
-    # Vertical-spread ratio: if a candidate's line bboxes span more than
-    # this fraction of the page height, it's almost certainly a diagonal
-    # watermark or decorative element — skip the whole candidate.
-    _WATERMARK_V_RATIO = 0.15
 
     # Convert to PIIRegion with bounding boxes — one region per visual line
     regions: list[PIIRegion] = []
-    _watermark_skipped = 0
     _large_font_skipped = 0
     for item in merged:
         # Filter by confidence threshold
@@ -833,16 +828,8 @@ def _merge_detections(
                 continue
             line_bboxes = [bbox]
 
-        # ── Watermark filter: vertical spread across the page ──
-        if _max_pt > 0 and page_data.height > 0:
-            all_y0 = min(b.y0 for b in line_bboxes)
-            all_y1 = max(b.y1 for b in line_bboxes)
-            vertical_spread = all_y1 - all_y0
-            if vertical_spread > page_data.height * _WATERMARK_V_RATIO:
-                _watermark_skipped += 1
-                continue
-
-            # ── Large-font filter: individual line-segment height ──
+        # ── Large-font filter: individual line-segment height ──
+        if _max_pt > 0:
             line_bboxes = [b for b in line_bboxes if (b.y1 - b.y0) < _max_pt]
             if not line_bboxes:
                 _large_font_skipped += 1
@@ -861,11 +848,9 @@ def _merge_detections(
                 char_end=item["end"],
             ))
 
-    if _watermark_skipped or _large_font_skipped:
+    if _large_font_skipped:
         logger.info(
             f"Page {page_data.page_number}: filtered "
-            f"{_watermark_skipped} watermark candidate(s) "
-            f"(vspread>{_WATERMARK_V_RATIO:.0%} of page), "
             f"{_large_font_skipped} large-font candidate(s) "
             f"(bbox height>={_max_pt}pt)"
         )

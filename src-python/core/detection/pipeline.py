@@ -132,8 +132,8 @@ def _resolve_bbox_overlaps(regions: list[PIIRegion]) -> list[PIIRegion]:
 # Hard-capped absolute maximum gap — beyond this, words are in separate
 # columns / form fields regardless of fuzziness.  20 PDF pts ≈ 0.28 in ≈ 7 mm.
 _ABSOLUTE_MAX_GAP_PX = 20.0
-_MIN_GAP_LINE_RATIO = 0.4     # Gap ratio at fuzziness=0  (strict)
-_MAX_GAP_LINE_RATIO = 1.0    # Gap ratio at fuzziness=1  (permissive)
+_MIN_GAP_LINE_RATIO = 0.50    # Gap ratio at fuzziness=0  (strict)
+_MAX_GAP_LINE_RATIO = 1.25    # Gap ratio at fuzziness=1  (permissive)
 _MAX_WORD_GAP_WS = 3          # Max whitespace chars between consecutive words
 _MAX_WORDS_PER_REGION = 4     # Words beyond this trigger split + re-detection
 
@@ -146,9 +146,9 @@ def _effective_gap_threshold(line_height: float) -> float:
     clamped to ``_ABSOLUTE_MAX_GAP_PX``.
 
     Typical results (at default fuzziness=0.5):
-      10 pt font → ~7 pt threshold   (0.7 × 10)
-      12 pt font → ~8.4 pt threshold (0.7 × 12)
-      14 pt font → ~9.8 pt threshold (0.7 × 14)
+      10 pt font →  ~8.75 pt threshold (0.875 × 10)
+      12 pt font → ~10.5 pt threshold  (0.875 × 12)
+      14 pt font → ~12.25 pt threshold (0.875 × 14)
     """
     f = config.detection_fuzziness
     ratio = _MIN_GAP_LINE_RATIO + (_MAX_GAP_LINE_RATIO - _MIN_GAP_LINE_RATIO) * f

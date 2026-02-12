@@ -115,18 +115,18 @@ class TestEffectiveGapThreshold:
 
     def test_strict(self):
         config.detection_fuzziness = 0.0
-        # At fuzziness=0, ratio=0.4 → 12pt font → 4.8pt
-        assert abs(_effective_gap_threshold(12.0) - 4.8) < 0.01
+        # At fuzziness=0, ratio=0.50 → 12pt font → 6.0pt
+        assert abs(_effective_gap_threshold(12.0) - 6.0) < 0.01
 
     def test_permissive(self):
         config.detection_fuzziness = 1.0
-        # At fuzziness=1, ratio=1.0 → 12pt font → 12.0pt
-        assert abs(_effective_gap_threshold(12.0) - 12.0) < 0.01
+        # At fuzziness=1, ratio=1.25 → 12pt font → 15.0pt
+        assert abs(_effective_gap_threshold(12.0) - 15.0) < 0.01
 
     def test_default(self):
         config.detection_fuzziness = 0.5
-        # ratio=0.7 → 12pt font → 8.4pt
-        assert abs(_effective_gap_threshold(12.0) - 8.4) < 0.01
+        # ratio=0.875 → 12pt font → 10.5pt
+        assert abs(_effective_gap_threshold(12.0) - 10.5) < 0.01
 
     def test_absolute_cap(self):
         config.detection_fuzziness = 1.0

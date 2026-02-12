@@ -1349,14 +1349,12 @@ export default function DocumentViewer() {
               <ZoomIn size={16} />
             </button>
           </div>
-
-          {/* Separator + User menu */}
-          <div style={{ width: 1, height: 20, background: "var(--border-color, #30363d)", marginLeft: 14, marginRight: 8, flexShrink: 0 }} />
-          <div style={{ marginRight: 6 }}>
-            <UserMenu />
-          </div>
         </div>
 
+        {/* User menu — fixed right edge of toolbar */}
+        <div style={{ position: "fixed", right: 16, top: "inherit", display: "flex", alignItems: "center", zIndex: 41, pointerEvents: "auto" }}>
+          <UserMenu />
+        </div>
       </div>
 
       {/* Content area — everything below toolbar */}

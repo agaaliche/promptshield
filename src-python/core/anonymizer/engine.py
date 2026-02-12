@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 import fitz  # PyMuPDF
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from core.config import config
 from core.vault.store import vault
@@ -244,34 +244,86 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
 
 
 def _replace_in_paragraphs(paragraphs, replacements: dict[str, str]) -> None:
-    """Replace text in DOCX paragraphs, handling cross-run PII spans.
+    """Replace text in DOCX paragraphs while preserving per-run formatting.
 
     For each paragraph:
-    1. Join all run texts into a single string.
-    2. Apply all replacements on the joined text.
-    3. If the text changed, rewrite the paragraph into a single run
-       (preserving the formatting of the first run).
+    1. Join all run texts into a single string and build a character→run map.
+    2. Apply replacements on the joined text, tracking where each
+       replacement lands.
+    3. Redistribute the result back into the original runs so only the
+       runs that overlap a replacement are touched — all other runs keep
+       their formatting and text verbatim.
 
     This handles PII that is split across multiple XML runs
-    (e.g., "Joh" | "n S" | "mith") — per-run replacement would miss those.
+    (e.g., "Joh" | "n S" | "mith") while preserving styles everywhere else.
     """
     for paragraph in paragraphs:
         runs = paragraph.runs
         if not runs:
             continue
-        full = "".join(r.text for r in runs)
+        # Build original text and a list of (start, end) offsets per run
+        run_texts = [r.text or "" for r in runs]
+        full = "".join(run_texts)
         if not full:
             continue
+
+        # Apply all replacements on the joined text
         replaced = full
         for original, replacement in replacements.items():
             replaced = replaced.replace(original, replacement)
         if replaced == full:
             continue
-        # Rewrite: keep first run (preserves font/style), clear the rest
-        fmt = runs[0].font  # noqa: F841 — we keep the run object alive
-        runs[0].text = replaced
-        for r in runs[1:]:
-            r.text = ""
+
+        # Build character→run_index mapping for the ORIGINAL text.
+        # We process replacements one at a time, adjusting offsets.
+        # The strategy: find each replacement span in `full`, note which
+        # runs it overlaps, push the replacement into the first overlapping
+        # run and trim text from the others.
+        #
+        # We work on a mutable list of run-text strings so we can do
+        # multiple passes (one per replacement) without losing track.
+        new_run_texts = list(run_texts)
+
+        for original, replacement in replacements.items():
+            # Repeatedly replace all occurrences in the joined run texts
+            while True:
+                # Re-join current state
+                joined = "".join(new_run_texts)
+                idx = joined.find(original)
+                if idx == -1:
+                    break
+                end = idx + len(original)
+
+                # Determine which runs are affected
+                cursor = 0
+                for ri, rt in enumerate(new_run_texts):
+                    run_start = cursor
+                    run_end = cursor + len(rt)
+
+                    if run_end <= idx:
+                        # Entirely before the match
+                        cursor = run_end
+                        continue
+                    if run_start >= end:
+                        # Entirely after the match — done
+                        break
+
+                    # This run overlaps the match
+                    local_start = max(idx - run_start, 0)
+                    local_end = min(end - run_start, len(rt))
+
+                    if run_start <= idx < run_end:
+                        # First overlapping run — insert replacement here
+                        new_run_texts[ri] = rt[:local_start] + replacement + rt[local_end:]
+                    else:
+                        # Subsequent overlapping runs — just remove the matched portion
+                        new_run_texts[ri] = rt[:local_start] + rt[local_end:]
+
+                    cursor = run_end
+
+        # Write back to the actual run objects
+        for ri, run in enumerate(runs):
+            run.text = new_run_texts[ri]
 
 
 def _replace_in_docx_xml_parts(docx_doc, replacements: dict[str, str]) -> None:
@@ -588,11 +640,22 @@ def _anonymize_image_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeRe
                     [bbox.x0, bbox.y0, bbox.x1, bbox.y1],
                     fill=(255, 255, 255),
                 )
-                # Draw token text in black
+                # Draw token text sized to match the original region height
+                region_h = bbox.y1 - bbox.y0
+                target_size = max(8, int(region_h * 0.75))
+                font = None
+                try:
+                    font = ImageFont.truetype("arial.ttf", target_size)
+                except (OSError, IOError):
+                    try:
+                        font = ImageFont.truetype("DejaVuSans.ttf", target_size)
+                    except (OSError, IOError):
+                        font = ImageFont.load_default()
                 draw.text(
-                    (bbox.x0 + 2, bbox.y0 + 2),
+                    (bbox.x0 + 2, bbox.y0 + (region_h - target_size) / 2),
                     token_string,
                     fill=(0, 0, 0),
+                    font=font,
                 )
                 tokens_created += 1
 
@@ -638,27 +701,129 @@ def _anonymize_image_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeRe
         img.close()
 
 
+def _map_to_base14(font_name: str, flags: int) -> str:
+    """Map an arbitrary PDF font name + flags to the closest Base-14 font.
+
+    ``flags`` comes from a PyMuPDF span dict (bit 1 = italic, bit 4 = bold,
+    bit 2 = serif, bit 3 = monospaced).
+    """
+    is_bold = bool(flags & 16)
+    is_italic = bool(flags & 2)
+    is_serif = bool(flags & 4)
+    is_mono = bool(flags & 8)
+
+    name_lower = font_name.lower()
+
+    # Monospace family
+    if is_mono or any(k in name_lower for k in ("courier", "mono", "consol", "firacode", "source code")):
+        if is_bold and is_italic:
+            return "cobi"
+        if is_bold:
+            return "cobo"
+        if is_italic:
+            return "coit"
+        return "cour"
+
+    # Serif family
+    if is_serif or any(k in name_lower for k in ("times", "serif", "roman", "garamond", "georgia", "cambria", "palat")):
+        if is_bold and is_italic:
+            return "tibi"
+        if is_bold:
+            return "tibo"
+        if is_italic:
+            return "tiit"
+        return "tiro"
+
+    # Default: Helvetica (sans-serif)
+    if is_bold and is_italic:
+        return "hebi"
+    if is_bold:
+        return "hebo"
+    if is_italic:
+        return "heit"
+    return "helv"
+
+
+def _srgb_int_to_rgb(color_int: int) -> tuple[float, float, float]:
+    """Convert a span ``color`` integer (0xRRGGBB) to the (r, g, b) float
+    tuple that PyMuPDF drawing/redaction methods expect (each 0.0–1.0)."""
+    r = ((color_int >> 16) & 0xFF) / 255.0
+    g = ((color_int >> 8) & 0xFF) / 255.0
+    b = (color_int & 0xFF) / 255.0
+    return (r, g, b)
+
+
+def _extract_span_style(
+    page: fitz.Page,
+    rect: fitz.Rect,
+) -> dict:
+    """Return the dominant text-span style properties inside *rect*.
+
+    Searches all text spans that overlap the redaction rectangle and picks
+    the one with the largest overlap area so the replacement inherits the
+    correct font size, weight, and color.
+
+    Falls back to sensible defaults if the rect contains no extractable text
+    (e.g. image-only area).
+    """
+    blocks = page.get_text("dict", flags=fitz.TEXTFLAGS_TEXT).get("blocks", [])
+
+    best_span: dict | None = None
+    best_overlap: float = 0.0
+
+    for block in blocks:
+        if block.get("type", 0) != 0:  # text blocks only
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                span_rect = fitz.Rect(span["bbox"])
+                intersection = span_rect & rect
+                if intersection.is_empty:
+                    continue
+                area = intersection.width * intersection.height
+                if area > best_overlap:
+                    best_overlap = area
+                    best_span = span
+
+    if best_span is None:
+        return {
+            "fontname": "helv",
+            "fontsize": 11.0,
+            "text_color": (0, 0, 0),
+        }
+
+    return {
+        "fontname": _map_to_base14(best_span.get("font", ""), best_span.get("flags", 0)),
+        "fontsize": best_span.get("size", 11.0),
+        "text_color": _srgb_int_to_rgb(best_span.get("color", 0)),
+    }
+
+
 def _add_text_redaction(
     page: fitz.Page,
     region: PIIRegion,
     page_data,
     replacement_text: str,
 ) -> None:
-    """Add a redaction annotation with replacement text."""
-    # Convert page coordinates to PyMuPDF rect
-    # page_data has width/height in PDF points
+    """Add a redaction annotation with replacement text.
+
+    Preserves the visual style of the original text by extracting the
+    dominant font family, size, and color from the spans overlapping the
+    region's bounding box, then mapping to the closest Base-14 PDF font.
+    """
     bbox = region.bbox
     rect = fitz.Rect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
-    
-    # Add redaction annotation with replacement text
-    # fill: color for the redacted area (white to keep PDF clean)
-    # text: replacement text to insert
+
+    # Extract original style from the text under this region
+    style = _extract_span_style(page, rect)
+
     page.add_redact_annot(
         rect,
         text=replacement_text,
-        fill=(1, 1, 1),  # White fill (no visual styling)
-        text_color=(0, 0, 0),  # Black text
-        fontsize=10,
+        fontname=style["fontname"],
+        fontsize=style["fontsize"],
+        fill=(1, 1, 1),
+        text_color=style["text_color"],
     )
 
 

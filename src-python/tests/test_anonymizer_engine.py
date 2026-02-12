@@ -136,6 +136,35 @@ class TestReplaceInParagraphs:
         )
         assert para.runs[0].text == "[PERSON] lives in [LOC]"
 
+    def test_style_preservation_unrelated_runs_untouched(self):
+        """Runs that don't overlap PII must keep their text verbatim,
+        which means their formatting (carried by the Run XML element)
+        is preserved."""
+        # Paragraph: "Dear " (run0, normal) + "John Doe" (run1, bold) + ", welcome!" (run2, normal)
+        para = _FakeParagraph(["Dear ", "John Doe", ", welcome!"])
+        _replace_in_paragraphs([para], {"John Doe": "[TOKEN]"})
+        # run0 and run2 should be unchanged — their styles survive
+        assert para.runs[0].text == "Dear "
+        assert para.runs[1].text == "[TOKEN]"
+        assert para.runs[2].text == ", welcome!"
+
+    def test_cross_run_style_surrounding_runs_intact(self):
+        """When PII spans the middle runs, surrounding runs are untouched."""
+        # "Intro " | "Joh" | "n D" | "oe" | " end"
+        para = _FakeParagraph(["Intro ", "Joh", "n D", "oe", " end"])
+        _replace_in_paragraphs([para], {"John Doe": "[TOK]"})
+        assert para.runs[0].text == "Intro "
+        assert para.runs[4].text == " end"
+        full = "".join(r.text for r in para.runs)
+        assert full == "Intro [TOK] end"
+
+    def test_partial_run_overlap_preserves_remainder(self):
+        """If PII starts mid-run and ends mid-run, the non-PII parts stay."""
+        # "Hello John Doe, bye" all in one run
+        para = _FakeParagraph(["Hello John Doe, bye"])
+        _replace_in_paragraphs([para], {"John Doe": "[T]"})
+        assert para.runs[0].text == "Hello [T], bye"
+
 
 # ── anonymize_document dispatch ──────────────────────────────────────
 
@@ -362,3 +391,32 @@ class TestAnonymizeImage:
         out_img = Image.open(result.output_path)
         exif = out_img.getexif()
         assert len(exif) == 0, "Output image should have no EXIF data"
+
+
+# ── PDF style extraction helpers ──────────────────────────────────────
+
+
+class TestPDFStyleHelpers:
+    def test_map_to_base14_sans_serif(self):
+        from core.anonymizer.engine import _map_to_base14
+        assert _map_to_base14("Arial", 0) == "helv"
+        assert _map_to_base14("Arial", 16) == "hebo"      # bold
+        assert _map_to_base14("Arial", 2) == "heit"        # italic
+        assert _map_to_base14("Arial", 18) == "hebi"       # bold+italic
+
+    def test_map_to_base14_serif(self):
+        from core.anonymizer.engine import _map_to_base14
+        assert _map_to_base14("TimesNewRoman", 4) == "tiro"
+        assert _map_to_base14("Garamond", 20) == "tibo"    # bold+serif
+
+    def test_map_to_base14_monospace(self):
+        from core.anonymizer.engine import _map_to_base14
+        assert _map_to_base14("Courier", 8) == "cour"
+        assert _map_to_base14("ConsoleFont", 8) == "cour"
+
+    def test_srgb_int_to_rgb(self):
+        from core.anonymizer.engine import _srgb_int_to_rgb
+        assert _srgb_int_to_rgb(0x000000) == (0.0, 0.0, 0.0)
+        assert _srgb_int_to_rgb(0xFFFFFF) == (1.0, 1.0, 1.0)
+        r, g, b = _srgb_int_to_rgb(0xFF0000)
+        assert abs(r - 1.0) < 0.01 and abs(g) < 0.01 and abs(b) < 0.01

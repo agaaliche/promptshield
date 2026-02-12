@@ -134,6 +134,7 @@ def _resolve_bbox_overlaps(regions: list[PIIRegion]) -> list[PIIRegion]:
 _ABSOLUTE_MAX_GAP_PX = 20.0
 _MIN_GAP_LINE_RATIO = 0.50    # Gap ratio at fuzziness=0  (strict)
 _MAX_GAP_LINE_RATIO = 1.25    # Gap ratio at fuzziness=1  (permissive)
+_GAP_OUTLIER_FACTOR = 3.0     # Gap must be ≥ 3× the smallest same-line gap to split
 _MAX_WORD_GAP_WS = 3          # Max whitespace chars between consecutive words
 _MAX_WORDS_PER_REGION = 4     # Words beyond this trigger split + re-detection
 
@@ -185,27 +186,55 @@ def _split_blocks_at_gaps(
     """Split a sequence of block-offset triples at large gaps.
 
     A split occurs when consecutive blocks (sorted left-to-right) have
-    either a spatial gap exceeding the font-relative threshold (scaled
-    by ``detection_fuzziness``, hard-capped at 20 pt) **or** more than
-    ``_MAX_WORD_GAP_WS`` (3) whitespace characters between them in the
-    page's full text.
+    a spatial gap that BOTH exceeds the font-relative threshold AND is
+    a clear outlier (≥ 3× the smallest same-line gap in the group) —
+    this prevents splitting at uniform word spacing caused by bbox
+    edge variance from font glyph sidebearings.  A split also occurs
+    when more than ``_MAX_WORD_GAP_WS`` (3) whitespace characters
+    separate blocks in the page's full text.
     """
     if len(triples) <= 1:
         return [triples] if triples else []
 
     sorted_t = sorted(triples, key=lambda t: (t[2].bbox.y0, t[2].bbox.x0))
+
+    # ── First pass: collect all same-line gap measurements ───────
+    same_line_gaps: list[float] = []
+    for i in range(1, len(sorted_t)):
+        prev_blk = sorted_t[i - 1][2]
+        curr_blk = sorted_t[i][2]
+
+        prev_h = prev_blk.bbox.y1 - prev_blk.bbox.y0
+        curr_h = curr_blk.bbox.y1 - curr_blk.bbox.y0
+        line_h = max(prev_h, curr_h)
+        tolerance = line_h * 0.5
+        # Use y-centre for same-line (consistent with _cluster_into_lines)
+        prev_yc = (prev_blk.bbox.y0 + prev_blk.bbox.y1) / 2
+        curr_yc = (curr_blk.bbox.y0 + curr_blk.bbox.y1) / 2
+        same_line = abs(curr_yc - prev_yc) < tolerance
+
+        if same_line:
+            gap = curr_blk.bbox.x0 - prev_blk.bbox.x1
+            if gap > 0:
+                same_line_gaps.append(gap)
+
+    min_gap = min(same_line_gaps) if same_line_gaps else 0.0
+
+    # ── Second pass: split at genuine gap outliers ───────────────
     groups: list[list[tuple[int, int, TextBlock]]] = [[sorted_t[0]]]
 
     for i in range(1, len(sorted_t)):
         _, prev_ce, prev_blk = sorted_t[i - 1]
         curr_cs, _, curr_blk = sorted_t[i]
 
-        # Same-line check (y-centres within half the line height)
         prev_h = prev_blk.bbox.y1 - prev_blk.bbox.y0
         curr_h = curr_blk.bbox.y1 - curr_blk.bbox.y0
         line_h = max(prev_h, curr_h)
         tolerance = line_h * 0.5
-        same_line = abs(curr_blk.bbox.y0 - prev_blk.bbox.y0) < tolerance
+        # Use y-centre for same-line (consistent with _cluster_into_lines)
+        prev_yc = (prev_blk.bbox.y0 + prev_blk.bbox.y1) / 2
+        curr_yc = (curr_blk.bbox.y0 + curr_blk.bbox.y1) / 2
+        same_line = abs(curr_yc - prev_yc) < tolerance
 
         # Spatial gap (only meaningful on the same visual line)
         gap_px = (curr_blk.bbox.x0 - prev_blk.bbox.x1) if same_line else 0.0
@@ -215,7 +244,16 @@ def _split_blocks_at_gaps(
         between = full_text[prev_ce:curr_cs] if prev_ce <= curr_cs else ""
         ws_count = sum(1 for ch in between if ch in " \t\n\r")
 
-        if gap_px > gap_threshold or ws_count > _MAX_WORD_GAP_WS:
+        # Spatial split requires BOTH absolute threshold AND relative
+        # outlier status — prevents splitting at uniform word spacing
+        # caused by font glyph sidebearing differences.
+        absolute_exceeded = gap_px > gap_threshold
+        if len(same_line_gaps) >= 2 and min_gap > 0:
+            is_outlier = gap_px >= min_gap * _GAP_OUTLIER_FACTOR
+        else:
+            is_outlier = True  # ≤1 gap → fall back to absolute check only
+
+        if (absolute_exceeded and is_outlier) or ws_count > _MAX_WORD_GAP_WS:
             groups.append([sorted_t[i]])
         else:
             groups[-1].append(sorted_t[i])

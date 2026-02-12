@@ -15,6 +15,7 @@ from core.detection.pipeline import (
     _enforce_region_shapes,
     _effective_gap_threshold,
     _ABSOLUTE_MAX_GAP_PX,
+    _GAP_OUTLIER_FACTOR,
     _MAX_WORD_GAP_WS,
     _MAX_WORDS_PER_REGION,
 )
@@ -180,6 +181,35 @@ class TestSplitBlocksAtGaps:
     def test_empty(self):
         result = _split_blocks_at_gaps([], "")
         assert result == []
+
+    def test_uniform_gaps_no_split(self):
+        """Uniform word gaps should NOT split even when slightly above
+        the absolute threshold — the outlier check prevents it.
+        This is the '91269270 Canada Inc' bug fix.
+        """
+        config.detection_fuzziness = 0.0  # strict: threshold = 0.5 × 10 = 5pt
+        # All gaps ~6pt — each above the 5pt threshold but uniform
+        b1 = _tb("91269270", 10, 10, 60, 20)
+        b2 = _tb("Canada", 66, 10, 100, 20)   # 6pt gap
+        b3 = _tb("Inc", 107, 10, 125, 20)      # 7pt gap
+        triples = [(0, 8, b1), (9, 15, b2), (16, 19, b3)]
+        result = _split_blocks_at_gaps(triples, "91269270 Canada Inc")
+        # 7pt < 6pt × 3.0 = 18pt → not outlier → no split
+        assert len(result) == 1
+        assert len(result[0]) == 3
+
+    def test_outlier_gap_splits(self):
+        """A truly large gap (column separator) should still split."""
+        config.detection_fuzziness = 0.0  # strict threshold = 5pt
+        b1 = _tb("John", 10, 10, 40, 20)       # word 1
+        b2 = _tb("Smith", 45, 10, 80, 20)       # 5pt gap (normal)
+        b3 = _tb("DOB", 120, 10, 145, 20)       # 40pt gap (column)
+        triples = [(0, 4, b1), (5, 10, b2), (11, 14, b3)]
+        result = _split_blocks_at_gaps(triples, "John Smith DOB")
+        # 40pt > 5pt × 3.0 = 15pt → outlier → splits
+        assert len(result) == 2
+        assert len(result[0]) == 2  # John Smith
+        assert len(result[1]) == 1  # DOB
 
 
 # ---------------------------------------------------------------------------

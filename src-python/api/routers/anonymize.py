@@ -18,7 +18,7 @@ from models.schemas import (
     DocumentStatus,
     RegionSyncItem,
 )
-from api.deps import documents, get_doc, save_doc
+from api.deps import documents, get_doc, save_doc, _clamp_bbox
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["anonymize"])
@@ -33,12 +33,15 @@ async def sync_regions(doc_id: str, items: list[RegionSyncItem]):
     whether individual PUT calls have completed."""
     doc = get_doc(doc_id)
     region_map = {r.id: r for r in doc.regions}
+    page_map = {p.page_number: p for p in doc.pages}
     synced = 0
     for item in items:
         r = region_map.get(item.id)
         if r:
             r.action = item.action
-            r.bbox = item.bbox
+            # Clamp synced bbox to page bounds
+            pd = page_map.get(r.page_number)
+            r.bbox = _clamp_bbox(item.bbox, pd.width, pd.height) if pd else item.bbox
             synced += 1
     save_doc(doc)
     return {"status": "ok", "synced": synced}

@@ -13,7 +13,7 @@ from fastapi import HTTPException
 
 from core.config import config
 from core.persistence import DocumentStore
-from models.schemas import DocumentInfo
+from models.schemas import BBox, DocumentInfo
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,34 @@ def get_store() -> DocumentStore:
     if store is None:
         raise RuntimeError("Document store not initialized")
     return store
+
+
+def _clamp_bbox(bbox: BBox, page_w: float, page_h: float) -> BBox:
+    """Clamp a bounding box so it sits within [0, page_w] × [0, page_h]."""
+    return BBox(
+        x0=max(0.0, min(bbox.x0, page_w)),
+        y0=max(0.0, min(bbox.y0, page_h)),
+        x1=max(0.0, min(bbox.x1, page_w)),
+        y1=max(0.0, min(bbox.y1, page_h)),
+    )
+
+
+def sanitize_document_regions(doc: DocumentInfo) -> bool:
+    """Clamp every region's bbox to its page bounds.
+
+    Returns True if any region was modified.
+    """
+    page_map = {p.page_number: p for p in doc.pages}
+    changed = False
+    for region in doc.regions:
+        pd = page_map.get(region.page_number)
+        if pd is None:
+            continue
+        clamped = _clamp_bbox(region.bbox, pd.width, pd.height)
+        if clamped != region.bbox:
+            region.bbox = clamped
+            changed = True
+    return changed
 
 
 def get_doc(doc_id: str) -> DocumentInfo:

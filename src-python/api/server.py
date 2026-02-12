@@ -53,6 +53,15 @@ async def lifespan(app: FastAPI):
         deps.documents.clear()
         deps.documents.update(loaded)
         logger.info(f"Loaded {len(deps.documents)} existing documents")
+
+        # Sanitize legacy regions — clamp bboxes to page bounds
+        sanitized = 0
+        for doc in deps.documents.values():
+            if deps.sanitize_document_regions(doc):
+                sanitized += 1
+                deps.store.save_document(doc)
+        if sanitized:
+            logger.info(f"Sanitized region bounds in {sanitized} documents")
     except Exception as e:
         # L6: Log the error but don't wipe all documents — individual
         # corrupt files are already skipped inside load_all_documents.

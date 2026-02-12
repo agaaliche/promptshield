@@ -19,7 +19,7 @@ from models.schemas import (
     RegionAction,
     RegionActionRequest,
 )
-from api.deps import get_doc, save_doc
+from api.deps import get_doc, save_doc, _clamp_bbox
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["regions"])
@@ -81,8 +81,13 @@ async def delete_region(doc_id: str, region_id: str):
 async def update_region_bbox(doc_id: str, region_id: str, bbox: BBox):
     """Update the bounding box of a PII region (move / resize)."""
     doc = get_doc(doc_id)
+    # Find the page dimensions for clamping
+    page_map = {p.page_number: p for p in doc.pages}
     for region in doc.regions:
         if region.id == region_id:
+            pd = page_map.get(region.page_number)
+            if pd is not None:
+                bbox = _clamp_bbox(bbox, pd.width, pd.height)
             region.bbox = bbox
             save_doc(doc)
             return {"status": "ok", "region_id": region_id}
@@ -202,6 +207,11 @@ async def add_manual_region(doc_id: str, region: PIIRegion):
     # H4: Always generate server-side ID — never trust client-provided IDs
     region.id = uuid.uuid4().hex[:12]
     region.source = "MANUAL"
+    # Clamp to page bounds
+    page_map = {p.page_number: p for p in doc.pages}
+    pd = page_map.get(region.page_number)
+    if pd is not None:
+        region.bbox = _clamp_bbox(region.bbox, pd.width, pd.height)
     doc.regions.append(region)
     save_doc(doc)
     return {"status": "ok", "region_id": region.id}
@@ -399,6 +409,12 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest):
             by0 = min(b.bbox.y0 for b in hit_blocks)
             bx1 = max(b.bbox.x1 for b in hit_blocks)
             by1 = max(b.bbox.y1 for b in hit_blocks)
+
+            # Clamp to page bounds
+            bx0 = max(0.0, min(bx0, page.width))
+            by0 = max(0.0, min(by0, page.height))
+            bx1 = max(0.0, min(bx1, page.width))
+            by1 = max(0.0, min(by1, page.height))
 
             page_existing = existing_spans.get(page.page_number, [])
             already_covered = False

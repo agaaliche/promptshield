@@ -135,10 +135,15 @@ function RegionOverlay({
   // Using percentages keeps regions in sync during CSS transitions (sidebar
   // collapse/expand) because the browser resolves them at layout time rather
   // than relying on React state which lags behind by ≥1 frame.
-  const leftPct = (region.bbox.x0 / pageWidth) * 100;
-  const topPct = (region.bbox.y0 / pageHeight) * 100;
-  const widthPct = ((region.bbox.x1 - region.bbox.x0) / pageWidth) * 100;
-  const heightPct = ((region.bbox.y1 - region.bbox.y0) / pageHeight) * 100;
+  // Clamp to [0, 100] so regions never visually overflow the page boundary.
+  const rawLeft = (region.bbox.x0 / pageWidth) * 100;
+  const rawTop = (region.bbox.y0 / pageHeight) * 100;
+  const rawWidth = ((region.bbox.x1 - region.bbox.x0) / pageWidth) * 100;
+  const rawHeight = ((region.bbox.y1 - region.bbox.y0) / pageHeight) * 100;
+  const leftPct = Math.max(0, Math.min(rawLeft, 100));
+  const topPct = Math.max(0, Math.min(rawTop, 100));
+  const widthPct = Math.max(0, Math.min(rawWidth, 100 - leftPct));
+  const heightPct = Math.max(0, Math.min(rawHeight, 100 - topPct));
 
   // Pixel values still needed for maxWidth on the label
   const sx = imgWidth / pageWidth;

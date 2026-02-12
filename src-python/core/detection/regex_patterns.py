@@ -63,6 +63,27 @@ CONTEXT_KEYWORDS: dict[PIIType, list[str]] = {
         "né le", "nee le", "née le", "date de naissance",
         "geburtsdatum", "geboren", "nacimiento",
         "nato il", "nata il", "data di nascita",
+        # Financial / administrative / legal
+        "dated", "as of", "effective", "signed", "executed",
+        "filed", "registered", "incorporated", "established",
+        "fiscal year", "period ended", "quarter ended",
+        "ending", "closing date", "year end",
+        # French financial / legal
+        "en date du", "exercice", "période", "periode",
+        "clos le", "terminé le", "termine le",
+        "signé le", "signe le", "fait le",
+        "établi le", "etabli le",
+        "pour la période", "bilan au", "arrêté le", "arrete le",
+        "comptes au", "clôture", "cloture",
+        "daté du", "datée du", "date du",
+        # German
+        "datum", "stichtag", "zum", "geschäftsjahr",
+        "abschlussdatum", "unterzeichnet am",
+        # Italian
+        "alla data del", "esercizio chiuso",
+        "firmato il", "bilancio al",
+        # Spanish
+        "fecha", "ejercicio cerrado", "firmado el", "balance al",
     ],
     PIIType.PERSON: [
         "name", "patient", "client", "applicant", "employee",
@@ -266,14 +287,14 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
         r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
         r"Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}\b",
-        PIIType.DATE, 0.40, _IC,
+        PIIType.DATE, 0.60, _IC,
     ),
     # English: "15 January 2024"
     (
         r"\b\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
         r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
         r"Dec(?:ember)?)\s+\d{4}\b",
-        PIIType.DATE, 0.40, _IC,
+        PIIType.DATE, 0.60, _IC,
     ),
 
     # French month: "15 janvier 2024", "1er mars 2024"
@@ -281,14 +302,14 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r"\b\d{1,2}(?:er)?\s+(?:janvier|f[ée]vrier|mars|avril|mai|juin|"
         r"juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre)"
         r"\s+\d{4}\b",
-        PIIType.DATE, 0.45, _IC,
+        PIIType.DATE, 0.60, _IC,
     ),
 
     # German month: "15. Januar 2024"
     (
         r"\b\d{1,2}\.\s*(?:Januar|Februar|M[aä]rz|April|Mai|Juni|Juli|"
         r"August|September|Oktober|November|Dezember)\s+\d{4}\b",
-        PIIType.DATE, 0.45, _IC,
+        PIIType.DATE, 0.60, _IC,
     ),
 
     # Spanish month
@@ -296,7 +317,7 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r"\b\d{1,2}\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|"
         r"julio|agosto|septiembre|octubre|noviembre|diciembre)"
         r"(?:\s+(?:de\s+)?\d{4})?\b",
-        PIIType.DATE, 0.40, _IC,
+        PIIType.DATE, 0.50, _IC,
     ),
 
     # Italian month: "15 gennaio 2024"
@@ -304,7 +325,7 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r"\b\d{1,2}\s+(?:gennaio|febbraio|marzo|aprile|maggio|giugno|"
         r"luglio|agosto|settembre|ottobre|novembre|dicembre)"
         r"\s+\d{4}\b",
-        PIIType.DATE, 0.45, _IC,
+        PIIType.DATE, 0.60, _IC,
     ),
 
     # Dutch month: "15 januari 2024"
@@ -312,7 +333,7 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r"\b\d{1,2}\s+(?:januari|februari|maart|april|mei|juni|"
         r"juli|augustus|september|oktober|november|december)"
         r"\s+\d{4}\b",
-        PIIType.DATE, 0.45, _IC,
+        PIIType.DATE, 0.60, _IC,
     ),
 
     # ──────────────────────────────────────────────────────────────────

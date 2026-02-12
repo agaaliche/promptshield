@@ -8,9 +8,14 @@
  * After first activation the user can disable online mode in Settings.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useAppStore } from "../store";
-import { storeLocalLicense, signInOnline, signInWithGoogle } from "../licenseApi";
+import {
+  storeLocalLicense,
+  signInOnline,
+  signInWithGoogle,
+  handleGoogleRedirectResult,
+} from "../licenseApi";
 import type { LicenseStatus } from "../types";
 
 type Mode = "signin" | "key";
@@ -47,27 +52,42 @@ export default function AuthScreen() {
     }
   }, [email, password, setLicenseStatus, setLicenseChecked, addSnackbar]);
 
-  // ── Google sign-in ──────────────────────────────────────────
+  // ── Handle Google redirect result on mount ─────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const status = await handleGoogleRedirectResult();
+        if (cancelled || !status) { setLoading(false); return; }
+        if (status.valid) {
+          setLicenseStatus(status);
+          setLicenseChecked(true);
+          addSnackbar("License activated!", "success");
+        } else {
+          setError(status.error ?? "Activation failed");
+        }
+      } catch (e: any) {
+        if (!cancelled) setError(e.message ?? "Google sign-in failed");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [setLicenseStatus, setLicenseChecked, addSnackbar]);
+
+  // ── Google sign-in (redirect) ───────────────────────────────
   const handleGoogle = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const status: LicenseStatus = await signInWithGoogle();
-      if (status.valid) {
-        setLicenseStatus(status);
-        setLicenseChecked(true);
-        addSnackbar("License activated!", "success");
-      } else {
-        setError(status.error ?? "Activation failed");
-      }
+      await signInWithGoogle();
+      // Page will navigate away to Google — no further code runs here
     } catch (e: any) {
-      if (e.message !== "Sign-in cancelled") {
-        setError(e.message ?? "Google sign-in failed");
-      }
-    } finally {
+      setError(e.message ?? "Google sign-in failed");
       setLoading(false);
     }
-  }, [setLicenseStatus, setLicenseChecked, addSnackbar]);
+  }, []);
 
   // ── Offline key paste ───────────────────────────────────────
   const handleActivateKey = useCallback(async () => {

@@ -5,7 +5,12 @@
  * an Ed25519-signed license blob. Once stored locally the app works offline.
  */
 
-import { signInWithEmailAndPassword, signInWithPopup, signOut } from "firebase/auth";
+import {
+  signInWithEmailAndPassword,
+  signInWithRedirect,
+  getRedirectResult,
+  signOut,
+} from "firebase/auth";
 import { auth, googleProvider } from "./firebaseConfig";
 import type {
   LicenseResponse,
@@ -188,18 +193,26 @@ export async function signInOnline(
 }
 
 /**
- * Sign in with Google popup, then activate the license.
+ * Kick off Google sign-in via redirect (avoids COOP popup issues).
+ * The page will navigate to Google; on return, call
+ * handleGoogleRedirectResult() to complete activation.
  */
-export async function signInWithGoogle(): Promise<LicenseStatus> {
+export async function signInWithGoogle(): Promise<void> {
+  await signInWithRedirect(auth, googleProvider);
+}
+
+/**
+ * Check if we're returning from a Google sign-in redirect.
+ * Call this once on AuthScreen mount. Returns the activated LicenseStatus
+ * if a redirect result is present, or null if not.
+ */
+export async function handleGoogleRedirectResult(): Promise<LicenseStatus | null> {
   try {
-    const cred = await signInWithPopup(auth, googleProvider);
+    const cred = await getRedirectResult(auth);
+    if (!cred) return null; // not returning from a redirect
     const idToken = await cred.user.getIdToken();
     return await activateWithToken(idToken);
   } catch (e: any) {
-    // User closed the popup — not an error
-    if (e.code === "auth/popup-closed-by-user") {
-      throw new Error("Sign-in cancelled");
-    }
     throw new Error(friendlyFirebaseError(e.code));
   }
 }

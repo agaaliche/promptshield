@@ -120,15 +120,66 @@ _COMPANY_SUFFIXES: set[str] = {
 }
 
 _FP_STOPWORDS: set[str] = {
-    "total", "amount", "balance", "date", "number", "type", "page",
-    "section", "table", "figure", "chapter", "appendix",
+    # ────────────────────────────────────────────────────────────────────────────
+    # ENGLISH stopwords (from NER detector)
+    # ────────────────────────────────────────────────────────────────────────────
+    # Generic stopwords
+    "q1", "q2", "q3", "q4", "fy", "ytd", "mtd",
     "n/a", "na", "tbd", "tba", "etc", "pdf", "doc",
-    # French generic business terms
-    "société", "societe", "entreprise", "compagnie", "division",
-    "filiale", "succursale", "direction", "comité", "comite",
-    "conseil", "ministère", "ministere", "gouvernement",
-    "département", "departement", "service", "bureau",
-    # French common words often misclassified
+    "inc", "llc", "ltd", "corp",
+    "quarterly", "annual", "monthly", "weekly", "daily",
+    "next", "last", "previous", "current", "recent",
+    "today", "tomorrow", "yesterday",
+    "above", "below", "total", "subtotal", "grand",
+    # Person stopwords
+    "the", "a", "an", "this", "that", "it", "i", "we", "you", "he", "she",
+    "my", "your", "his", "her", "our", "their", "its",
+    "mr", "mrs", "ms", "dr", "prof",
+    "dear", "hi", "hello", "yes", "no", "ok", "please", "thank", "thanks",
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "page", "section", "table", "figure", "chapter", "appendix",
+    "total", "amount", "balance", "date", "number", "type",
+    # Title suffixes (English job titles)
+    "chairman", "chairwoman", "chairperson", "chair",
+    "president", "vice", "director", "officer", "manager",
+    "chief", "executive", "ceo", "cfo", "coo", "cto", "cio",
+    "secretary", "treasurer", "counsel", "attorney",
+    "partner", "associate", "analyst", "consultant",
+    "md", "svp", "evp", "vp",
+    "head", "lead", "senior", "junior",
+    # ORG stopwords
+    "department", "section", "division", "group", "team",
+    "committee", "board", "council", "commission",
+    "act", "law", "regulation", "policy", "standard",
+    "agreement", "contract", "report", "summary",
+    "schedule", "exhibit", "annex", "appendix",
+    "article", "clause", "provision", "amendment",
+    "chart", "graph",
+    
+    # ────────────────────────────────────────────────────────────────────────────
+    # FRENCH stopwords (from NER detector)
+    # ────────────────────────────────────────────────────────────────────────────
+    # Person stopwords
+    "monsieur", "madame", "mademoiselle", "mme", "mlle",
+    "le", "la", "les", "un", "une", "des", "du", "de",
+    "ce", "cette", "son", "sa", "ses", "notre", "votre", "leur",
+    "il", "elle", "nous", "vous", "ils", "elles", "on",
+    "pagina", "tabella", "figura", "capitolo", "allegato",
+    "totale", "importo", "saldo", "data", "numero", "tipo",
+    "janvier", "février", "fevrier", "mars", "avril", "mai", "juin",
+    "juillet", "août", "aout", "septembre", "octobre", "novembre", "décembre", "decembre",
+    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+    "qui", "que", "où", "ou", "quoi", "dont", "avec", "sans", "pour", "par",
+    "dans", "sur", "sous", "vers", "chez", "dès",
+    # ORG stopwords
+    "département", "departement", "service", "bureau", "direction",
+    "division", "commission", "comité", "comite",
+    "article", "clause", "alinéa", "alinea", "annexe",
+    "tableau", "graphique",
+    "loi", "décret", "decret", "arrêté", "arrete", "règlement", "reglement",
+    "contrat", "accord", "convention", "rapport", "résumé", "resume",
     "principales", "principaux", "général", "generale", "generaux",
     "comptables", "comptable", "financier", "financiere", "financiers", "financieres",
     "corporelles", "corporels", "corporel", "corporelle",
@@ -136,10 +187,40 @@ _FP_STOPWORDS: set[str] = {
     "méthodes", "methodes", "méthode", "methode",
     "statuts", "statut", "nature", "activités", "activites", "activité", "activite",
     "éléments", "elements", "élément", "element",
-    "elles", "ils", "elle", "il",
-    # German
+    "société", "societe", "sociétés", "societes",
+    # French generic business terms
+    "entreprise", "compagnie", "filiale", "succursale",
+    "conseil", "ministère", "ministere", "gouvernement",
+    
+    # ────────────────────────────────────────────────────────────────────────────
+    # ITALIAN stopwords (from NER detector)
+    # ────────────────────────────────────────────────────────────────────────────
+    # Person stopwords
+    "signor", "signore", "signora", "signorina", "sig", "dott", "avv",
+    "lo", "gli", "i",
+    "di", "del", "della", "dei", "delle", "dello",
+    "questo", "questa", "suo", "sua", "loro", "nostro", "nostra",
+    "lui", "lei", "noi", "voi", "essi", "esse",
+    "pagina", "sezione", "tabella", "capitolo",
+    "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+    "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre",
+    "lunedì", "lunedi", "martedì", "martedi", "mercoledì", "mercoledi",
+    "giovedì", "giovedi", "venerdì", "venerdi", "sabato", "domenica",
+    # ORG stopwords
+    "dipartimento", "servizio", "ufficio", "direzione",
+    "sezione", "articolo", "clausola", "allegato",
+    "grafico",
+    "legge", "decreto", "ordinanza", "regolamento",
+    "contratto", "accordo", "convenzione", "rapporto", "relazione",
+    
+    # ────────────────────────────────────────────────────────────────────────────
+    # GERMAN stopwords (basic set)
+    # ────────────────────────────────────────────────────────────────────────────
     "gesellschaft", "unternehmen", "abteilung",
-    # Spanish
+    
+    # ────────────────────────────────────────────────────────────────────────────
+    # SPANISH stopwords (basic set)
+    # ────────────────────────────────────────────────────────────────────────────
     "empresa", "compañía", "compania", "división",
 }
 

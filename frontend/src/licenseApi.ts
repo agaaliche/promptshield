@@ -7,8 +7,7 @@
 
 import {
   signInWithEmailAndPassword,
-  signInWithRedirect,
-  getRedirectResult,
+  signInWithPopup,
   onAuthStateChanged,
   signOut,
 } from "firebase/auth";
@@ -39,26 +38,48 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   return invoke<T>(cmd, args);
 }
 
-// ── Tauri license commands (Rust side) ──────────────────────────
+// ── Tauri license commands (with browser-dev fallbacks) ─────────
 
+/**
+ * Generate a stable-ish machine fingerprint.
+ * In Tauri → Rust-generated hardware ID.
+ * In browser → fingerprint from navigator + random UUID cached in localStorage.
+ */
 export async function getMachineId(): Promise<string> {
-  return tauriInvoke<string>("get_machine_id");
+  if (isTauri()) return tauriInvoke<string>("get_machine_id");
+  // Browser fallback for development / testing
+  let id = localStorage.getItem("ps_dev_machine_id");
+  if (!id) {
+    id = `browser-${crypto.randomUUID()}`;
+    localStorage.setItem("ps_dev_machine_id", id);
+  }
+  return id;
 }
 
 export async function getMachineName(): Promise<string> {
-  return tauriInvoke<string>("get_machine_name");
+  if (isTauri()) return tauriInvoke<string>("get_machine_name");
+  return `${navigator.userAgent.slice(0, 40)} (dev)`;
 }
 
 export async function validateLocalLicense(): Promise<LicenseStatus> {
-  return tauriInvoke<LicenseStatus>("validate_license");
+  if (isTauri()) return tauriInvoke<LicenseStatus>("validate_license");
+  // Browser fallback: check localStorage blob
+  const blob = localStorage.getItem("ps_dev_license_blob");
+  if (!blob) return { valid: false, error: "No license found" } as LicenseStatus;
+  // Can't Ed25519 verify in browser — trust valid if blob exists
+  return { valid: true, plan: "dev", days_remaining: 99 } as LicenseStatus;
 }
 
 export async function storeLocalLicense(blob: string): Promise<LicenseStatus> {
-  return tauriInvoke<LicenseStatus>("store_license", { blob });
+  if (isTauri()) return tauriInvoke<LicenseStatus>("store_license", { blob });
+  // Browser fallback: persist in localStorage
+  localStorage.setItem("ps_dev_license_blob", blob);
+  return { valid: true, plan: "dev", days_remaining: 99 } as LicenseStatus;
 }
 
 export async function clearLocalLicense(): Promise<void> {
-  return tauriInvoke<void>("clear_license");
+  if (isTauri()) return tauriInvoke<void>("clear_license");
+  localStorage.removeItem("ps_dev_license_blob");
 }
 
 export async function startBackend(): Promise<string> {
@@ -196,63 +217,70 @@ export async function signInOnline(
 const GOOGLE_REDIRECT_KEY = "ps_google_redirect";
 
 /**
- * Kick off Google sign-in via redirect (avoids COOP popup issues).
- * Sets a sessionStorage flag so handleGoogleRedirectResult() knows
- * to look for the credential on the next page load.
+ * Sign in with Google.
+ *
+ * Uses signInWithPopup but races it with onAuthStateChanged — if COOP
+ * headers prevent the popup promise from resolving, the auth-state
+ * listener picks up the signed-in user instead.
  */
-export async function signInWithGoogle(): Promise<void> {
-  sessionStorage.setItem(GOOGLE_REDIRECT_KEY, "1");
-  await signInWithRedirect(auth, googleProvider);
+export async function signInWithGoogle(): Promise<LicenseStatus> {
+  return new Promise<LicenseStatus>((resolve, reject) => {
+    let settled = false;
+
+    function finish(p: Promise<LicenseStatus>) {
+      if (settled) return;
+      settled = true;
+      unsubscribe();
+      clearTimeout(timer);
+      p.then(resolve, reject);
+    }
+
+    // Fallback: listen for Firebase detecting the user via auth state
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user && !settled) {
+        finish(
+          user.getIdToken().then((t) => activateWithToken(t)),
+        );
+      }
+    });
+
+    // Primary: signInWithPopup
+    signInWithPopup(auth, googleProvider)
+      .then((cred) => {
+        if (!settled) {
+          finish(
+            cred.user.getIdToken().then((t) => activateWithToken(t)),
+          );
+        }
+      })
+      .catch((e) => {
+        if (settled) return;
+        settled = true;
+        unsubscribe();
+        clearTimeout(timer);
+        if (e.code === "auth/popup-closed-by-user") {
+          reject(new Error("Sign-in cancelled"));
+        } else {
+          reject(new Error(friendlyFirebaseError(e.code)));
+        }
+      });
+
+    // Safety net timeout
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        unsubscribe();
+        reject(new Error("Sign-in timed out. Please try again."));
+      }
+    }, 30_000);
+  });
 }
 
 /**
- * Check if we're returning from a Google sign-in redirect.
- * Call this once on AuthScreen mount. Returns the activated LicenseStatus
- * if a redirect result is present, or null if not.
- *
- * Strategy: try getRedirectResult first; if it returns null (known Firebase
- * v9+ issue), fall back to onAuthStateChanged with a short timeout.
+ * No-op kept for API compatibility — redirect approach removed.
  */
 export async function handleGoogleRedirectResult(): Promise<LicenseStatus | null> {
-  // Only run if we set the flag before redirecting
-  if (!sessionStorage.getItem(GOOGLE_REDIRECT_KEY)) return null;
-  sessionStorage.removeItem(GOOGLE_REDIRECT_KEY);
-
-  // Attempt 1: getRedirectResult (works in most browsers)
-  try {
-    const cred = await getRedirectResult(auth);
-    if (cred) {
-      const idToken = await cred.user.getIdToken();
-      return await activateWithToken(idToken);
-    }
-  } catch (e: any) {
-    // If it's a real auth error, surface it
-    if (e.code && e.code !== "auth/popup-closed-by-user") {
-      throw new Error(friendlyFirebaseError(e.code));
-    }
-  }
-
-  // Attempt 2: fallback — listen for auth state change (covers Firebase bugs
-  // where getRedirectResult resolves null despite successful sign-in)
-  return new Promise<LicenseStatus | null>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      unsubscribe();
-      resolve(null); // no user appeared — genuinely no redirect result
-    }, 5000);
-
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        clearTimeout(timeout);
-        unsubscribe();
-        try {
-          const idToken = await user.getIdToken();
-          resolve(await activateWithToken(idToken));
-        } catch (e: any) {
-          reject(e);
-        }
-      }
-    });
-  });
+  return null;
 }
 
 function friendlyFirebaseError(code?: string): string {

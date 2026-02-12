@@ -545,18 +545,18 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # ──────────────────────────────────────────────────────────────────
     # ORG — company patterns
     # ──────────────────────────────────────────────────────────────────
-    # French legal: "CompanyName SA/SAS/SARL/EURL/SCI/SNC/SE"
+    # French legal: "CompanyName SA/SAS/SARL/EURL/SCI/SNC/SE/SENC"
     (
         r"\b[A-ZÀ-Ü][a-zà-ü\-']{1,25}"
         r"(?:[ \t]+[A-ZÀ-Ü][a-zà-ü\-']{1,25}){0,4}"
-        r"[ \t]+(?:SA|SAS|SARL|EURL|SCI|SNC|SE)\b",
+        r"[ \t]+(?:SA|SAS|SARL|EURL|SCI|SNC|SE|SENC|S\.?E\.?N\.?C\.?)\b",
         PIIType.ORG, 0.90, _NOFLAGS,
     ),
     # English/Spanish/German legal: "ACME Inc.", "Empresa S.L.", "Müller GmbH"
     (
         r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}"
         r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}){0,4}"
-        r"[ \t]+(?:Inc|Corp|LLC|Ltd|LLP|PLC|Co|GmbH|AG|KG|OHG|e\.?K\.?|UG|BV|NV|S\.?A\.?R?\.?L?\.?|S\.?L\.?|S\.?C\.?|S\.?R\.?L\.?)\b\.?",
+        r"[ \t]+(?:Inc|Corp|LLC|Ltd|LLP|PLC|Co|GmbH|AG|KG|OHG|e\.?K\.?|UG|BV|NV|S\.?A\.?R?\.?L?\.?|S\.?L\.?|S\.?C\.?|S\.?R\.?L\.?|Lt[ée]e|Limit[ée]e)\b\.?",
         PIIType.ORG, 0.88, _IC,
     ),
     # French: "Groupe X", "Société X"
@@ -566,11 +566,24 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}){0,3}\b",
         PIIType.ORG, 0.85, _NOFLAGS,
     ),
+    # French / Canadian company with lowercase connecting words:
+    # "Les entreprises de restauration B.N. Ltée"
+    # Allows articles/prepositions (de, du, des, la, le, les, et, en)
+    # between capitalised words, ending with a legal suffix.
+    (
+        r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"
+        r"(?:[ \t]+(?:de|du|des|la|le|les|l'|d'|et|en|aux|au|à|a)"
+        r"|[ \t]+[A-ZÀ-Ü.][a-zA-Zà-üÀ-Ü.\-']{0,25}){1,6}"
+        r"[ \t]+(?:Lt[ée]e|Limit[ée]e|Inc|Corp|LLC|Ltd|LLP|Co"
+        r"|SA|SAS|SARL|EURL|SCI|SNC|SE|SENC|S\.?E\.?N\.?C\.?"
+        r"|Enr\.?g?\.?|GmbH|AG)\b\.?",
+        PIIType.ORG, 0.90, _IC,
+    ),
     # Numbered companies (Quebec/Canada style)
     (
         r"\b\d{5,10}"
         r"[ \t]+(?:[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,20}[ \t]+){0,3}"
-        r"(?:Inc|Corp|LLC|Ltd|LLP|Co|S\.?A\.?R?\.?L?\.?|S\.?L\.?|GmbH|AG|KG|OHG|e\.?K\.?|UG|S\.?C\.?|S\.?R\.?L\.?)\b\.?",
+        r"(?:Inc|Corp|LLC|Ltd|LLP|Co|S\.?A\.?R?\.?L?\.?|S\.?L\.?|GmbH|AG|KG|OHG|e\.?K\.?|UG|S\.?C\.?|S\.?R\.?L\.?|Lt[ée]e|Limit[ée]e|Enr\.?g?\.?)\b\.?",
         PIIType.ORG, 0.90, _IC,
     ),
 

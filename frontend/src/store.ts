@@ -12,17 +12,17 @@ import type {
   UploadItem,
   SnackbarItem,
   LicenseStatus,
-  UserInfo,
 } from "./types";
 
 interface AppState {
-  // ── License / Auth ──
+  // ── License ──
   licenseStatus: LicenseStatus | null;
   setLicenseStatus: (s: LicenseStatus | null) => void;
-  userInfo: UserInfo | null;
-  setUserInfo: (u: UserInfo | null) => void;
   licenseChecked: boolean;
   setLicenseChecked: (v: boolean) => void;
+  /** When true, the app silently refreshes the license key on launch if online. */
+  autoValidateOnline: boolean;
+  setAutoValidateOnline: (v: boolean) => void;
 
   // ── Connection ──
   backendReady: boolean;
@@ -131,14 +131,16 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>()(devtools((set) => ({
-  // License / Auth — Firebase manages auth state/tokens; we only store
-  // licensing info and the synced user profile from the backend.
+  // License — the app is purely key-based; no auth state/tokens.
   licenseStatus: null,
   setLicenseStatus: (s) => set({ licenseStatus: s }),
-  userInfo: null,
-  setUserInfo: (u) => set({ userInfo: u }),
   licenseChecked: false,
   setLicenseChecked: (v) => set({ licenseChecked: v }),
+  autoValidateOnline: localStorage.getItem('autoValidateOnline') !== 'false', // default: true
+  setAutoValidateOnline: (v) => {
+    localStorage.setItem('autoValidateOnline', String(v));
+    set({ autoValidateOnline: v });
+  },
 
   // Connection
   backendReady: false,
@@ -387,13 +389,13 @@ export const useUIStore = () =>
     setDrawMode: s.setDrawMode,
   })));
 
-/** License/auth-related selectors. */
+/** License-related selectors. */
 export const useLicenseStore = () =>
   useAppStore(useShallow((s) => ({
     licenseStatus: s.licenseStatus,
     setLicenseStatus: s.setLicenseStatus,
-    userInfo: s.userInfo,
-    setUserInfo: s.setUserInfo,
     licenseChecked: s.licenseChecked,
     setLicenseChecked: s.setLicenseChecked,
+    autoValidateOnline: s.autoValidateOnline,
+    setAutoValidateOnline: s.setAutoValidateOnline,
   })));

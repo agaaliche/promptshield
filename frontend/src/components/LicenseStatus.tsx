@@ -1,24 +1,30 @@
-/** License status indicator — shown in the sidebar or settings. */
+/** License status indicator — shown in the sidebar.
+ *
+ * Displays plan, days remaining, and email from the license payload.
+ * "Deactivate" clears the local key and returns to the key-paste screen.
+ */
 
+import { useState } from "react";
 import { useAppStore } from "../store";
-import { logout } from "../licenseApi";
+import { deactivateLicense } from "../licenseApi";
 
 export default function LicenseStatus() {
-  const { licenseStatus, userInfo, addSnackbar, setLicenseStatus, setLicenseChecked } =
-    useAppStore();
+  const { licenseStatus, addSnackbar } = useAppStore();
+  const [busy, setBusy] = useState(false);
 
   if (!licenseStatus) return null;
 
   const { valid, payload, days_remaining } = licenseStatus;
 
-  const handleLogout = async () => {
+  const handleDeactivate = async () => {
+    setBusy(true);
     try {
-      await logout();
-      setLicenseStatus(null);
-      setLicenseChecked(false);
-      addSnackbar("Logged out successfully", "info");
+      await deactivateLicense();
+      addSnackbar("License deactivated", "info");
     } catch {
-      addSnackbar("Logout failed", "error");
+      addSnackbar("Failed to deactivate", "error");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -46,15 +52,15 @@ export default function LicenseStatus() {
           </span>
         )}
       </div>
-      {userInfo && (
+      {payload?.email && (
         <div style={styles.row}>
-          <span style={styles.email} title={userInfo.email}>
-            {userInfo.email}
+          <span style={styles.email} title={payload.email}>
+            {payload.email}
           </span>
         </div>
       )}
-      <button onClick={handleLogout} style={styles.logoutBtn}>
-        Sign Out
+      <button onClick={handleDeactivate} disabled={busy} style={styles.deactivateBtn}>
+        {busy ? "..." : "Deactivate"}
       </button>
     </div>
   );
@@ -97,7 +103,7 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: "nowrap",
     maxWidth: 160,
   },
-  logoutBtn: {
+  deactivateBtn: {
     marginTop: 4,
     padding: "4px 8px",
     borderRadius: 4,

@@ -260,13 +260,6 @@ export interface LicenseStatus {
   days_remaining: number | null;
 }
 
-/** @deprecated Firebase manages auth tokens. Kept for backward compat. */
-export interface AuthTokens {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-}
-
 export interface UserInfo {
   id: string;
   email: string;

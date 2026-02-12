@@ -1,13 +1,12 @@
 /** Revalidation dialog — prompts the user to revalidate their license online.
  *
  * Shown when the stored license is nearing expiry (< 7 days) or has expired.
- * With Firebase auth, the user is already signed in — just revalidate directly.
+ * No Firebase — just triggers online revalidation using machine fingerprint.
  */
 
 import { useState, useCallback } from "react";
 import { useAppStore } from "../store";
 import { revalidateLicense } from "../licenseApi";
-import { auth } from "../firebaseConfig";
 
 interface Props {
   daysRemaining: number | null;
@@ -20,16 +19,11 @@ export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) 
   const [error, setError] = useState<string | null>(null);
 
   const expired = daysRemaining !== null && daysRemaining <= 0;
-  const isSignedIn = !!auth.currentUser;
 
   const handleRevalidate = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      if (!isSignedIn) {
-        setError("Please sign in first to revalidate your license.");
-        return;
-      }
       const status = await revalidateLicense();
       if (status.valid) {
         setLicenseStatus(status);
@@ -39,11 +33,11 @@ export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) 
         setError(status.error ?? "Revalidation failed");
       }
     } catch (e: any) {
-      setError(e.message ?? "Revalidation failed");
+      setError(e.message ?? "Revalidation failed. Check your internet connection.");
     } finally {
       setLoading(false);
     }
-  }, [isSignedIn, setLicenseStatus, addSnackbar, onDismiss]);
+  }, [setLicenseStatus, addSnackbar, onDismiss]);
 
   return (
     <div style={styles.overlay}>
@@ -53,7 +47,7 @@ export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) 
         </h2>
         <p style={styles.message}>
           {expired
-            ? "Your license has expired. Please revalidate online to continue using promptShield."
+            ? "Your license has expired. Please revalidate online or paste a new license key to continue using promptShield."
             : `Your license expires in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}. Please revalidate online to avoid interruption.`}
         </p>
 
@@ -62,7 +56,7 @@ export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) 
         <div style={styles.actions}>
           <button
             onClick={handleRevalidate}
-            disabled={loading || !isSignedIn}
+            disabled={loading}
             style={{ ...styles.button, ...styles.buttonPrimary }}
           >
             {loading ? "Revalidating..." : "Revalidate Now"}
@@ -117,21 +111,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#f85149",
     fontSize: 13,
     marginBottom: 12,
-  },
-  form: {
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 8,
-    marginBottom: 16,
-  },
-  input: {
-    padding: "10px 12px",
-    borderRadius: 6,
-    border: "1px solid var(--border-color, #30363d)",
-    background: "var(--bg-primary, #0d1117)",
-    color: "var(--text-primary, #c9d1d9)",
-    fontSize: 14,
-    outline: "none",
   },
   actions: {
     display: "flex",

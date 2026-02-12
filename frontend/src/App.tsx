@@ -1,11 +1,16 @@
-/** Root application component. */
+/** Root application component.
+ *
+ * Launch flow (key-only, no Firebase):
+ *   1. Check local Ed25519-signed license via Tauri → if valid, proceed
+ *   2. If expired/missing → show key-paste screen (AuthScreen)
+ *   3. If "auto-validate online" is enabled + internet → silently refresh key
+ *   4. If expiring within 7 days → show RevalidationDialog
+ */
 
 import { useEffect, useState, Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
-import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "./firebaseConfig";
 import { useAppStore } from "./store";
-import { validateLocalLicense, startBackend, checkWebLicense } from "./licenseApi";
+import { validateLocalLicense, startBackend, revalidateLicense } from "./licenseApi";
 import type { LicenseStatus as LicenseStatusType } from "./types";
 
 // ── Error Boundary ──────────────────────────────────────────────
@@ -48,6 +53,7 @@ class ErrorBoundary extends Component<EBProps, EBState> {
     return this.props.children;
   }
 }
+
 import { checkHealth, getVaultStatus, getLLMStatus, listDocuments, getRegions, getDocument, logError, setBaseUrl } from "./api";
 import { resolveAllOverlaps } from "./regionUtils";
 import Sidebar from "./components/Sidebar";
@@ -78,70 +84,57 @@ function App() {
     setLicenseStatus,
     licenseChecked,
     setLicenseChecked,
+    autoValidateOnline,
     addSnackbar,
   } = useAppStore();
 
   const [showRevalidation, setShowRevalidation] = useState(false);
   const [backendStarting, setBackendStarting] = useState(false);
 
-  // ── Step 1: Check license on mount ──────────────────────────
+  // ── Step 1: Check local license on mount ────────────────────
   useEffect(() => {
     let cancelled = false;
 
     const checkLicense = async () => {
       try {
-        // Try Tauri local license first (desktop mode)
+        // Validate the locally stored Ed25519-signed license key
         const status: LicenseStatusType = await validateLocalLicense();
         if (cancelled) return;
         setLicenseStatus(status);
         setLicenseChecked(true);
 
-        // If license is valid but expiring soon, prompt revalidation
+        // If valid but expiring soon, prompt revalidation
         if (status.valid && status.days_remaining !== null && status.days_remaining <= 7) {
           setShowRevalidation(true);
         }
-      } catch {
-        // Not running in Tauri — use Firebase auth state for web-mode
-        if (cancelled) return;
 
-        // Listen for Firebase auth state changes
-        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-          if (cancelled) return;
-          if (firebaseUser) {
-            // User is signed in — check license on backend
-            try {
-              const webStatus = await checkWebLicense();
-              if (!cancelled) {
-                setLicenseStatus(webStatus);
-                setLicenseChecked(true);
-              }
-            } catch {
-              if (!cancelled) {
-                setLicenseStatus({ valid: false, payload: null, error: "Licensing server unreachable", days_remaining: null });
-                setLicenseChecked(true);
+        // Auto-validate online if enabled and the key is valid (silently refresh)
+        if (status.valid && autoValidateOnline) {
+          try {
+            const refreshed = await revalidateLicense();
+            if (!cancelled && refreshed.valid) {
+              setLicenseStatus(refreshed);
+              // If the refresh extended the key, dismiss the revalidation dialog
+              if (refreshed.days_remaining !== null && refreshed.days_remaining > 7) {
+                setShowRevalidation(false);
               }
             }
-          } else {
-            // No Firebase user — show auth screen
-            if (!cancelled) {
-              setLicenseStatus({ valid: false, payload: null, error: "Not logged in", days_remaining: null });
-              setLicenseChecked(true);
-            }
+          } catch {
+            // Online refresh failed (no internet) — that's fine, offline key is still valid
+            console.debug("[license] Auto-validate failed (offline?)");
           }
-        });
-
-        // Return unsubscribe in cleanup (captured via external ref)
-        _firebaseUnsub = unsubscribe;
+        }
+      } catch {
+        // validateLocalLicense failed — no stored key or not in Tauri
+        if (cancelled) return;
+        setLicenseStatus({ valid: false, payload: null, error: "No license key found", days_remaining: null });
+        setLicenseChecked(true);
       }
     };
 
-    let _firebaseUnsub: (() => void) | null = null;
     checkLicense();
-    return () => {
-      cancelled = true;
-      _firebaseUnsub?.();
-    };
-  }, [setLicenseStatus, setLicenseChecked]);
+    return () => { cancelled = true; };
+  }, [setLicenseStatus, setLicenseChecked, autoValidateOnline]);
 
   // ── Step 2: Start backend once license is valid ─────────────
   useEffect(() => {

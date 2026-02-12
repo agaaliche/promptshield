@@ -13,10 +13,12 @@ from core.detection.pipeline import (
     _split_blocks_at_gaps,
     _bbox_from_block_triples,
     _enforce_region_shapes,
-    _MAX_WORD_GAP_PX,
+    _effective_gap_threshold,
+    _ABSOLUTE_MAX_GAP_PX,
     _MAX_WORD_GAP_WS,
     _MAX_WORDS_PER_REGION,
 )
+from core.config import config
 
 
 # ---------------------------------------------------------------------------
@@ -101,13 +103,53 @@ class TestBlocksOverlappingBBox:
 
 
 # ---------------------------------------------------------------------------
+# _effective_gap_threshold
+# ---------------------------------------------------------------------------
+
+class TestEffectiveGapThreshold:
+    def setup_method(self):
+        self._orig = config.detection_fuzziness
+
+    def teardown_method(self):
+        config.detection_fuzziness = self._orig
+
+    def test_strict(self):
+        config.detection_fuzziness = 0.0
+        # At fuzziness=0, ratio=0.4 → 12pt font → 4.8pt
+        assert abs(_effective_gap_threshold(12.0) - 4.8) < 0.01
+
+    def test_permissive(self):
+        config.detection_fuzziness = 1.0
+        # At fuzziness=1, ratio=1.0 → 12pt font → 12.0pt
+        assert abs(_effective_gap_threshold(12.0) - 12.0) < 0.01
+
+    def test_default(self):
+        config.detection_fuzziness = 0.5
+        # ratio=0.7 → 12pt font → 8.4pt
+        assert abs(_effective_gap_threshold(12.0) - 8.4) < 0.01
+
+    def test_absolute_cap(self):
+        config.detection_fuzziness = 1.0
+        # 30pt line height → ratio=1.0 → 30pt but capped at 20
+        assert _effective_gap_threshold(30.0) == _ABSOLUTE_MAX_GAP_PX
+
+
+# ---------------------------------------------------------------------------
 # _split_blocks_at_gaps
 # ---------------------------------------------------------------------------
 
 class TestSplitBlocksAtGaps:
+    def setup_method(self):
+        """Pin fuzziness to 0.5 for deterministic tests."""
+        self._orig = config.detection_fuzziness
+        config.detection_fuzziness = 0.5
+
+    def teardown_method(self):
+        config.detection_fuzziness = self._orig
+
     def test_no_split_close_blocks(self):
         b1 = _tb("John", 10, 10, 40, 20)
-        b2 = _tb("Smith", 44, 10, 80, 20)  # 4pt gap — within limit
+        b2 = _tb("Smith", 44, 10, 80, 20)  # 4pt gap, threshold ~7pt
         triples = [(0, 4, b1), (5, 10, b2)]
         result = _split_blocks_at_gaps(triples, "John Smith")
         assert len(result) == 1
@@ -115,7 +157,7 @@ class TestSplitBlocksAtGaps:
 
     def test_split_large_spatial_gap(self):
         b1 = _tb("John", 10, 10, 40, 20)
-        b2 = _tb("Smith", 50, 10, 80, 20)  # 10pt gap — exceeds 6pt
+        b2 = _tb("Smith", 50, 10, 80, 20)  # 10pt gap > 7pt threshold
         triples = [(0, 4, b1), (5, 10, b2)]
         result = _split_blocks_at_gaps(triples, "John Smith")
         assert len(result) == 2

@@ -58,6 +58,15 @@ class AppConfig(BaseModel):
     regex_types: Optional[list[str]] = None   # None = all; e.g. ["EMAIL", "SSN"]
     ner_types: Optional[list[str]] = None     # None = all; e.g. ["PERSON", "ORG"]
     confidence_threshold: float = Field(default=0.55, ge=0.0, le=1.0)
+    detection_fuzziness: float = Field(
+        default=0.5, ge=0.0, le=1.0,
+        description=(
+            "Controls how aggressively neighbouring words are grouped into "
+            "the same PII region. 0 = strict (only very close words merge), "
+            "1 = permissive (wider gaps allowed). The actual pixel threshold "
+            "scales with font size and is hard-capped at 20 PDF pts."
+        ),
+    )
 
     # NER backend: "auto" auto-selects the best model per detected language,
     # "spacy" uses spaCy models, or set to a HuggingFace model id
@@ -114,7 +123,7 @@ class AppConfig(BaseModel):
     # Keys that are persisted when changed via the API
     _PERSISTABLE_KEYS: set[str] = {
         "regex_enabled", "ner_enabled", "llm_detection_enabled",
-        "confidence_threshold", "ocr_language", "ocr_dpi",
+        "confidence_threshold", "detection_fuzziness", "ocr_language", "ocr_dpi",
         "render_dpi", "tesseract_cmd",
         "ner_backend", "ner_model_preference",
         "llm_model_path",

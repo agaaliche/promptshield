@@ -129,9 +129,30 @@ def _resolve_bbox_overlaps(regions: list[PIIRegion]) -> list[PIIRegion]:
 # Region shape constraints
 # ---------------------------------------------------------------------------
 
-_MAX_WORD_GAP_PX = 6.0       # Max spatial gap between consecutive words (PDF pts)
-_MAX_WORD_GAP_WS = 3         # Max whitespace chars between consecutive words
-_MAX_WORDS_PER_REGION = 4    # Words beyond this trigger split + re-detection
+# Hard-capped absolute maximum gap — beyond this, words are in separate
+# columns / form fields regardless of fuzziness.  20 PDF pts ≈ 0.28 in ≈ 7 mm.
+_ABSOLUTE_MAX_GAP_PX = 20.0
+_MIN_GAP_LINE_RATIO = 0.4     # Gap ratio at fuzziness=0  (strict)
+_MAX_GAP_LINE_RATIO = 1.0    # Gap ratio at fuzziness=1  (permissive)
+_MAX_WORD_GAP_WS = 3          # Max whitespace chars between consecutive words
+_MAX_WORDS_PER_REGION = 4     # Words beyond this trigger split + re-detection
+
+
+def _effective_gap_threshold(line_height: float) -> float:
+    """Compute the spatial gap threshold in PDF pts.
+
+    Scales linearly with ``detection_fuzziness`` (0 → 1) between
+    ``_MIN_GAP_LINE_RATIO`` and ``_MAX_GAP_LINE_RATIO`` of *line_height*,
+    clamped to ``_ABSOLUTE_MAX_GAP_PX``.
+
+    Typical results (at default fuzziness=0.5):
+      10 pt font → ~7 pt threshold   (0.7 × 10)
+      12 pt font → ~8.4 pt threshold (0.7 × 12)
+      14 pt font → ~9.8 pt threshold (0.7 × 14)
+    """
+    f = config.detection_fuzziness
+    ratio = _MIN_GAP_LINE_RATIO + (_MAX_GAP_LINE_RATIO - _MIN_GAP_LINE_RATIO) * f
+    return min(line_height * ratio, _ABSOLUTE_MAX_GAP_PX)
 
 
 def _clamp_bbox(bbox: BBox, page_w: float, page_h: float) -> BBox:
@@ -164,7 +185,8 @@ def _split_blocks_at_gaps(
     """Split a sequence of block-offset triples at large gaps.
 
     A split occurs when consecutive blocks (sorted left-to-right) have
-    either a spatial gap > ``_MAX_WORD_GAP_PX`` (6 pt) **or** more than
+    either a spatial gap exceeding the font-relative threshold (scaled
+    by ``detection_fuzziness``, hard-capped at 20 pt) **or** more than
     ``_MAX_WORD_GAP_WS`` (3) whitespace characters between them in the
     page's full text.
     """
@@ -181,17 +203,19 @@ def _split_blocks_at_gaps(
         # Same-line check (y-centres within half the line height)
         prev_h = prev_blk.bbox.y1 - prev_blk.bbox.y0
         curr_h = curr_blk.bbox.y1 - curr_blk.bbox.y0
-        tolerance = max(prev_h, curr_h) * 0.5
+        line_h = max(prev_h, curr_h)
+        tolerance = line_h * 0.5
         same_line = abs(curr_blk.bbox.y0 - prev_blk.bbox.y0) < tolerance
 
         # Spatial gap (only meaningful on the same visual line)
         gap_px = (curr_blk.bbox.x0 - prev_blk.bbox.x1) if same_line else 0.0
+        gap_threshold = _effective_gap_threshold(line_h)
 
         # Text gap (whitespace chars between blocks in full_text)
         between = full_text[prev_ce:curr_cs] if prev_ce <= curr_cs else ""
         ws_count = sum(1 for ch in between if ch in " \t\n\r")
 
-        if gap_px > _MAX_WORD_GAP_PX or ws_count > _MAX_WORD_GAP_WS:
+        if gap_px > gap_threshold or ws_count > _MAX_WORD_GAP_WS:
             groups.append([sorted_t[i]])
         else:
             groups[-1].append(sorted_t[i])

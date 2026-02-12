@@ -28,6 +28,7 @@ class SettingsUpdate(BaseModel):
     ner_enabled: Optional[bool] = None
     llm_detection_enabled: Optional[bool] = None
     confidence_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    detection_fuzziness: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     ocr_language: Optional[str] = None
     ocr_dpi: Optional[int] = Field(default=None, ge=72, le=1200)
     render_dpi: Optional[int] = Field(default=None, ge=72, le=1200)

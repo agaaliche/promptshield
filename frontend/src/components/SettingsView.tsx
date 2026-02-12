@@ -107,6 +107,7 @@ export default function SettingsView() {
           ner_enabled: s.ner_enabled as boolean,
           llm_detection_enabled: llmEnabled,
           ner_backend: s.ner_backend as string,
+          detection_fuzziness: (s.detection_fuzziness as number) ?? 0.5,
         });
         // Persist the corrected value if it changed
         if (s.llm_detection_enabled && !hasValidLlm) {
@@ -517,6 +518,47 @@ export default function SettingsView() {
             />{" "}
             Deep analysis (uses an LLM for harder-to-find information)
           </label>
+
+          {/* Detection fuzziness slider */}
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <span style={{ fontSize: 13, color: "var(--text-primary)" }}>
+                Region grouping
+              </span>
+              <span style={{ fontSize: 12, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
+                {Math.round(detectionSettings.detection_fuzziness * 100)}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={Math.round(detectionSettings.detection_fuzziness * 100)}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10) / 100;
+                setDetectionSettings({ detection_fuzziness: v });
+              }}
+              onMouseUp={() => {
+                updateSettings({ detection_fuzziness: detectionSettings.detection_fuzziness })
+                  .catch(logError("update-settings"));
+              }}
+              onTouchEnd={() => {
+                updateSettings({ detection_fuzziness: detectionSettings.detection_fuzziness })
+                  .catch(logError("update-settings"));
+              }}
+              style={{ width: "100%", accentColor: "var(--accent-primary)" }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
+              <span>Strict — split more</span>
+              <span>Permissive — group more</span>
+            </div>
+            <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
+              Controls how aggressively nearby words merge into a single
+              highlight. Higher values allow wider gaps between words in
+              the same region (capped at 20 pt regardless).
+            </p>
+          </div>
         </div>
       </Section>
 

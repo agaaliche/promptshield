@@ -82,6 +82,7 @@ interface AppState {
     ner_enabled: boolean;
     llm_detection_enabled: boolean;
     ner_backend: string;
+    detection_fuzziness: number;
   };
   setDetectionSettings: (s: Partial<AppState["detectionSettings"]>) => void;
 
@@ -290,6 +291,7 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
     ner_enabled: true,
     llm_detection_enabled: true,
     ner_backend: "spacy",
+    detection_fuzziness: 0.5,
   },
   setDetectionSettings: (s) =>
     set((state) => ({

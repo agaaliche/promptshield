@@ -180,13 +180,21 @@ _FP_STOPWORDS: set[str] = {
     "tableau", "graphique",
     "loi", "décret", "decret", "arrêté", "arrete", "règlement", "reglement",
     "contrat", "accord", "convention", "rapport", "résumé", "resume",
-    "principales", "principaux", "général", "generale", "generaux",
-    "comptables", "comptable", "financier", "financiere", "financiers", "financieres",
+    "principales", "principaux", "principale", "principal",
+    "général", "generale", "generaux", "générale", "généraux",
+    "comptables", "comptable", "comptabilité", "comptabilite",
+    "financier", "financiere", "financiers", "financieres", "financière", "financières",
     "corporelles", "corporels", "corporel", "corporelle",
     "immobilisations", "immobilisation",
     "méthodes", "methodes", "méthode", "methode",
     "statuts", "statut", "nature", "activités", "activites", "activité", "activite",
     "éléments", "elements", "élément", "element",
+    "informations", "information",
+    "établissement", "etablissement", "établissements", "etablissements",
+    "appliquée", "applique", "appliquées", "appliques", "appliqué", "appliqués",
+    "opérations", "operations", "opération", "operation",
+    "complémentaires", "complementaires", "complémentaire", "complementaire",
+    "notes", "note",
     "société", "societe", "sociétés", "societes",
     # French generic business terms
     "entreprise", "compagnie", "filiale", "succursale",
@@ -234,6 +242,11 @@ _ORG_NOISE_WORDS: set[str] = {
     # Partial French accounting terms
     "fr", "emp", "lo", "en", "per", "ex", "amor", "immob",
     "achats", "coût", "cout", "frais",
+    # Additional French accounting/business terms
+    "comptabilité", "comptabilite", "informations", "information",
+    "établissement", "etablissement", "établissements", "etablissements",
+    "opérations", "operations", "opération", "operation",
+    "notes", "note", "principales", "principaux", "principale", "principal",
 }
 
 

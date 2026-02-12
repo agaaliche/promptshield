@@ -14,6 +14,7 @@ from core.detection.pipeline import (
     _bbox_from_block_triples,
     _enforce_region_shapes,
     _effective_gap_threshold,
+    _char_offsets_to_line_bboxes,
     _ABSOLUTE_MAX_GAP_PX,
     _GAP_OUTLIER_FACTOR,
     _MAX_WORD_GAP_WS,
@@ -331,3 +332,52 @@ class TestEnforceRegionShapes:
         r = _region(BBox(x0=10, y0=10, x1=100, y1=20), text="manual")
         result = _enforce_region_shapes([r], page, offsets)
         assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# _char_offsets_to_line_bboxes – same-line merge
+# ---------------------------------------------------------------------------
+
+class TestCharOffsetsToLineBboxesMerge:
+    """Blocks on the same visual line must produce one bbox even when
+    _cluster_into_lines over-splits due to slight y-centre differences."""
+
+    def test_same_line_slight_y_drift_produces_one_bbox(self):
+        """Simulates '91269270 Canada Inc' where 'Inc' has a slightly
+        different y-centre.  All blocks should merge into a single bbox."""
+        # Three blocks on roughly the same line, "Inc" shifted down by 2pt
+        b1 = _tb("91269270", 100, 200, 160, 210)  # yc=205
+        b2 = _tb("Canada",   165, 200, 210, 210)   # yc=205
+        b3 = _tb("Inc",      215, 202, 240, 212)   # yc=207 — shifted 2pt
+
+        offsets = [
+            (0,  8, b1),  # "91269270"
+            (9, 15, b2),  # "Canada"
+            (16, 19, b3), # "Inc"
+        ]
+
+        bboxes = _char_offsets_to_line_bboxes(0, 19, offsets)
+
+        assert len(bboxes) == 1, (
+            f"Expected 1 bbox for single-line entity, got {len(bboxes)}: {bboxes}"
+        )
+        # The merged bbox should span the full extent
+        assert bboxes[0].x0 == 100
+        assert bboxes[0].x1 == 240
+
+    def test_genuine_multiline_still_splits(self):
+        """Blocks on genuinely different lines should still produce
+        multiple bboxes."""
+        b1 = _tb("John", 100, 200, 140, 210)    # yc=205, line 1
+        b2 = _tb("Smith", 100, 250, 150, 260)   # yc=255, line 2 (50pt away)
+
+        offsets = [
+            (0, 4, b1),
+            (5, 10, b2),
+        ]
+
+        bboxes = _char_offsets_to_line_bboxes(0, 10, offsets)
+
+        assert len(bboxes) == 2, (
+            f"Expected 2 bboxes for multi-line entity, got {len(bboxes)}"
+        )

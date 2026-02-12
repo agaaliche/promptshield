@@ -619,6 +619,18 @@ def _char_offsets_to_line_bboxes(
 
     lines = _cluster_into_lines(overlapping)
 
+    # If clustering produced multiple "lines" but all blocks are really on
+    # the same visual line (small vertical spread relative to line height),
+    # merge them back.  _cluster_into_lines can over-split when individual
+    # blocks have slightly different y-centres due to OCR / font metrics.
+    if len(lines) > 1:
+        all_blocks = [b for line in lines for b in line]
+        max_h = max(b.bbox.y1 - b.bbox.y0 for b in all_blocks)
+        y_centres = [(b.bbox.y0 + b.bbox.y1) / 2 for b in all_blocks]
+        y_spread = max(y_centres) - min(y_centres)
+        if y_spread <= max_h:
+            lines = [sorted(all_blocks, key=lambda b: b.bbox.x0)]
+
     bboxes: list[BBox] = []
     for line_blocks in lines:
         x0 = min(b.bbox.x0 for b in line_blocks)

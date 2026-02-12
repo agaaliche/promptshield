@@ -552,38 +552,101 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r"[ \t]+(?:SA|SAS|SARL|EURL|SCI|SNC|SE|SENC|S\.?E\.?N\.?C\.?)\b",
         PIIType.ORG, 0.90, _NOFLAGS,
     ),
-    # English/Spanish/German legal: "ACME Inc.", "Empresa S.L.", "Müller GmbH"
+    # Multi-language legal suffixes:
+    # EN: Inc, Corp, LLC, Ltd, LLP, PLC, Co, LP
+    # FR/CA: Ltée, Limitée, Enr., S.E.N.C.
+    # DE: GmbH, AG, KG, OHG, e.K., UG, KGaA, mbH
+    # ES: S.L., S.A., S.L.U., S.C., S.Coop.
+    # IT: S.r.l., S.p.A., S.a.s., S.n.c., S.s.
+    # PT: Lda, Ltda, S.A.
+    # NL: B.V., N.V., V.O.F., C.V.
+    # Nordic: A/S, ApS, AS, ASA, AB, Oy, Oyj, HB, KB
     (
         r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}"
         r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}){0,4}"
-        r"[ \t]+(?:Inc|Corp|LLC|Ltd|LLP|PLC|Co|GmbH|AG|KG|OHG|e\.?K\.?|UG|BV|NV|S\.?A\.?R?\.?L?\.?|S\.?L\.?|S\.?C\.?|S\.?R\.?L\.?|Lt[ée]e|Limit[ée]e)\b\.?",
+        r"[ \t]+(?:"
+        r"Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP"
+        r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH"
+        r"|BV|B\.?V\.?|NV|N\.?V\.?|V\.?O\.?F\.?|C\.?V\.?"
+        r"|S\.?A\.?R?\.?L?\.?|S\.?L\.?U?\.?|S\.?C\.?|S\.?R\.?L\.?"
+        r"|S\.?p\.?A\.?|S\.?a\.?s\.?|S\.?n\.?c\.?|S\.?s\.?"
+        r"|S\.?Coop\.?"
+        r"|Lt[ée]e|Limit[ée]e|Lda|Ltda"
+        r"|A/S|ApS|AS|ASA|AB|Oy|Oyj|HB|KB"
+        r")\b\.?",
         PIIType.ORG, 0.88, _IC,
     ),
-    # French: "Groupe X", "Société X"
+    # Multilingual "Group/Company/Society X" prefix pattern
+    # FR: Groupe, Société, Compagnie, Établissements, Cabinet, Maison
+    # EN: Group, Company, Corporation, Association, Foundation
+    # DE: Firma, Gesellschaft, Verein, Stiftung, Konzern
+    # ES: Grupo, Empresa, Compañía, Asociación, Fundación, Corporación
+    # IT: Gruppo, Società, Azienda, Impresa, Associazione, Fondazione
+    # PT: Grupo, Empresa, Companhia, Associação, Fundação
+    # NL: Groep, Bedrijf, Stichting, Vereniging, Maatschappij
     (
-        r"\b(?:Groupe|Soci[ée]t[ée]|Compagnie|[ÉE]tablissements?|Ets|Cabinet|Maison)"
+        r"\b(?:Groupe|Soci[ée]t[ée]|Compagnie|[ÉE]tablissements?|Ets|Cabinet|Maison"
+        r"|Group|Company|Corporation|Association|Foundation|Trust"
+        r"|Firma|Gesellschaft|Verein|Stiftung|Konzern"
+        r"|Grupo|Empresa|Compa[ñn][ií]a|Asociaci[óo]n|Fundaci[óo]n|Corporaci[óo]n"
+        r"|Gruppo|Societ[àa]|Azienda|Impresa|Associazione|Fondazione"
+        r"|Companhia|Associa[çc][ãa]o|Funda[çc][ãa]o"
+        r"|Groep|Bedrijf|Stichting|Vereniging|Maatschappij)"
         r"[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}"
         r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}){0,3}\b",
         PIIType.ORG, 0.85, _NOFLAGS,
     ),
-    # French / Canadian company with lowercase connecting words:
-    # "Les entreprises de restauration B.N. Ltée"
-    # Allows articles/prepositions (de, du, des, la, le, les, et, en)
-    # between capitalised words, ending with a legal suffix.
+    # Multilingual company with lowercase connecting words:
+    # FR: "Les entreprises de restauration B.N. Ltée"
+    # ES: "Industrias de Alimentos del Sur S.A."
+    # IT: "Società per Azioni del Nord S.p.A."
+    # PT: "Companhia de Seguros do Brasil Ltda"
+    # DE: "Gesellschaft für Informatik und Technik GmbH"
+    # NL: "Bedrijf van de Noord B.V."
+    # Allows articles/prepositions between capitalised words,
+    # ending with a legal suffix.
     (
         r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"
-        r"(?:[ \t]+(?:de|du|des|la|le|les|l'|d'|et|en|aux|au|à|a)"
-        r"|[ \t]+[A-ZÀ-Ü.][a-zA-Zà-üÀ-Ü.\-']{0,25}){1,6}"
-        r"[ \t]+(?:Lt[ée]e|Limit[ée]e|Inc|Corp|LLC|Ltd|LLP|Co"
+        r"(?:[ \t]+(?:"
+        # FR: de, du, des, la, le, les, l', d', et, en, aux, au, à
+        r"de|du|des|la|le|les|l'|d'|et|en|aux|au|à"
+        # ES: de, del, los, las, la, el, y, e, para
+        r"|del|los|las|el|y|para"
+        # IT: di, del, della, delle, dei, degli, il, lo, per, e
+        r"|di|della|delle|dei|degli|il|lo|per"
+        # PT: da, do, dos, das, o, a, os, as, para, e
+        r"|da|do|dos|das|o|os|as"
+        # DE: und, für, der, die, das, den, dem, des, von, zu, zur, zum
+        r"|und|f[üu]r|der|die|das|den|dem|von|zu|zur|zum"
+        # NL: van, de, het, en, voor, bij, op
+        r"|van|het|voor|bij|op"
+        r")"
+        r"|[ \t]+[A-ZÀ-Ü.][a-zA-Zà-üÀ-Ü.\-']{0,25}){1,8}"
+        r"[ \t]+(?:"
+        r"Lt[ée]e|Limit[ée]e|Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP"
         r"|SA|SAS|SARL|EURL|SCI|SNC|SE|SENC|S\.?E\.?N\.?C\.?"
-        r"|Enr\.?g?\.?|GmbH|AG)\b\.?",
+        r"|Enr\.?g?\.?"
+        r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH"
+        r"|BV|B\.?V\.?|NV|N\.?V\.?|V\.?O\.?F\.?|C\.?V\.?"
+        r"|S\.?A\.?R?\.?L?\.?|S\.?L\.?U?\.?|S\.?C\.?|S\.?R\.?L\.?"
+        r"|S\.?p\.?A\.?|S\.?a\.?s\.?|S\.?n\.?c\.?|S\.?s\.?"
+        r"|S\.?Coop\.?"
+        r"|Lda|Ltda"
+        r"|A/S|ApS|AS|ASA|AB|Oy|Oyj|HB|KB"
+        r")\b\.?",
         PIIType.ORG, 0.90, _IC,
     ),
-    # Numbered companies (Quebec/Canada style)
+    # Numbered companies (Quebec/Canada style, also DE HRB numbers)
     (
         r"\b\d{5,10}"
         r"[ \t]+(?:[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,20}[ \t]+){0,3}"
-        r"(?:Inc|Corp|LLC|Ltd|LLP|Co|S\.?A\.?R?\.?L?\.?|S\.?L\.?|GmbH|AG|KG|OHG|e\.?K\.?|UG|S\.?C\.?|S\.?R\.?L\.?|Lt[ée]e|Limit[ée]e|Enr\.?g?\.?)\b\.?",
+        r"(?:Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP"
+        r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH"
+        r"|BV|B\.?V\.?|NV|N\.?V\.?"
+        r"|S\.?A\.?R?\.?L?\.?|S\.?L\.?U?\.?|S\.?C\.?|S\.?R\.?L\.?"
+        r"|S\.?p\.?A\.?|S\.?a\.?s\.?|S\.?n\.?c\.?"
+        r"|Lt[ée]e|Limit[ée]e|Lda|Ltda|Enr\.?g?\.?"
+        r"|A/S|ApS|AS|ASA|AB|Oy|Oyj)\b\.?",
         PIIType.ORG, 0.90, _IC,
     ),
 

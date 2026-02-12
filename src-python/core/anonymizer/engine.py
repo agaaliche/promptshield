@@ -148,25 +148,42 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
     pdf_doc = fitz.open(str(original_path))
 
     try:
-        # Process regions grouped by page
+        # Process regions grouped by page — TWO-PASS approach:
+        #   Pass 1: extract style + add erase-only redactions
+        #   apply_redactions() wipes original text
+        #   Pass 2: insert replacement text at original position/size
+        #
+        # This avoids PyMuPDF's auto-shrink behavior that squishes
+        # long token strings to fit inside the (smaller) original rect.
+
         for page_num in range(len(pdf_doc)):
             page = pdf_doc[page_num]
             page_regions = [
                 r for r in doc.regions if r.page_number == page_num + 1
             ]
 
+            # Pass 1: collect text insertions and add erase-only redactions
+            text_insertions: list[dict] = []
+
             for region in page_regions:
+                bbox = region.bbox
+                rect = fitz.Rect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
+
                 if region.action == RegionAction.REMOVE:
-                    # Replace with hyphens
-                    replacement_text = "---"
-                    _add_text_redaction(page, region, doc.pages[page_num], replacement_text)
+                    # Extract style so "---" replacement looks right
+                    style = _extract_span_style(page, rect)
+                    text_insertions.append({
+                        "text": "---",
+                        "style": style,
+                        "rect": rect,
+                    })
+                    # Add erase-only redaction (no text — we insert it ourselves)
+                    page.add_redact_annot(rect, fill=(1, 1, 1))
                     regions_removed += 1
 
                 elif region.action == RegionAction.TOKENIZE:
-                    # Generate token
                     token_string = vault.generate_token_string(region.pii_type)
 
-                    # Store in vault
                     mapping = TokenMapping(
                         token_string=token_string,
                         original_text=region.text,
@@ -180,19 +197,37 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
                     )
                     vault.store_token(mapping)
 
-                    # Add as redaction with token text
-                    _add_text_redaction(page, region, doc.pages[page_num], token_string)
+                    # Extract style BEFORE wiping the text
+                    style = _extract_span_style(page, rect)
+                    text_insertions.append({
+                        "text": token_string,
+                        "style": style,
+                        "rect": rect,
+                    })
+                    # Add erase-only redaction
+                    page.add_redact_annot(rect, fill=(1, 1, 1))
                     tokens_created += 1
 
-                    # Record for detokenization manifest
                     token_manifest.append({
                         "token_string": token_string,
                         "original_text": region.text,
                         "page_number": page_num + 1,
                     })
 
-            # Apply all redactions on this page
+            # Wipe all original text under redaction areas
             page.apply_redactions()
+
+            # Pass 2: insert replacement text at the original position
+            for ins in text_insertions:
+                style = ins["style"]
+                origin = style["origin"]
+                page.insert_text(
+                    fitz.Point(origin[0], origin[1]),
+                    ins["text"],
+                    fontname=style["fontname"],
+                    fontsize=style["fontsize"],
+                    color=style["text_color"],
+                )
 
         # ── Metadata scrubbing ─────────────────────────────────────────
         # 1. Clear standard document metadata (Author, Title, Subject, …)
@@ -763,6 +798,9 @@ def _extract_span_style(
     the one with the largest overlap area so the replacement inherits the
     correct font size, weight, and color.
 
+    Also returns the text *origin* (baseline insertion point) so that
+    replacement text can be inserted at exactly the right position.
+
     Falls back to sensible defaults if the rect contains no extractable text
     (e.g. image-only area).
     """
@@ -790,41 +828,15 @@ def _extract_span_style(
             "fontname": "helv",
             "fontsize": 11.0,
             "text_color": (0, 0, 0),
+            "origin": (rect.x0, rect.y1 - 2),  # rough baseline fallback
         }
 
     return {
         "fontname": _map_to_base14(best_span.get("font", ""), best_span.get("flags", 0)),
         "fontsize": best_span.get("size", 11.0),
         "text_color": _srgb_int_to_rgb(best_span.get("color", 0)),
+        "origin": tuple(best_span.get("origin", (rect.x0, rect.y1 - 2))),
     }
-
-
-def _add_text_redaction(
-    page: fitz.Page,
-    region: PIIRegion,
-    page_data,
-    replacement_text: str,
-) -> None:
-    """Add a redaction annotation with replacement text.
-
-    Preserves the visual style of the original text by extracting the
-    dominant font family, size, and color from the spans overlapping the
-    region's bounding box, then mapping to the closest Base-14 PDF font.
-    """
-    bbox = region.bbox
-    rect = fitz.Rect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
-
-    # Extract original style from the text under this region
-    style = _extract_span_style(page, rect)
-
-    page.add_redact_annot(
-        rect,
-        text=replacement_text,
-        fontname=style["fontname"],
-        fontsize=style["fontsize"],
-        fill=(1, 1, 1),
-        text_color=style["text_color"],
-    )
 
 
 def _get_context_snippet(text: str, start: int, end: int, context_chars: int = 50) -> str:

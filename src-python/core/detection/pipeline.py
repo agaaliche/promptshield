@@ -941,10 +941,15 @@ def propagate_regions_across_pages(
                     line_bboxes = [bbox]
 
                 for bbox in line_bboxes:
+                    # Clamp to page bounds — propagated regions bypass
+                    # _enforce_region_shapes so must be clamped here.
+                    clamped = _clamp_bbox(bbox, page_data.width, page_data.height)
+                    if clamped.x1 - clamped.x0 < 1.0 or clamped.y1 - clamped.y0 < 1.0:
+                        continue
                     new_region = PIIRegion(
                         id=uuid.uuid4().hex[:12],
                         page_number=page_data.page_number,
-                        bbox=bbox,
+                        bbox=clamped,
                         text=pii_text,
                         pii_type=template.pii_type,
                         confidence=template.confidence,
@@ -971,7 +976,21 @@ def propagate_regions_across_pages(
         page_regions = [r for r in all_regions if r.page_number == pn]
         result.extend(_resolve_bbox_overlaps(page_regions))
 
-    return result
+    # Safety: clamp every region to its page bounds (belt-and-suspenders)
+    clamped_result: list[PIIRegion] = []
+    for r in result:
+        pd = page_map.get(r.page_number)
+        if pd is None:
+            clamped_result.append(r)
+            continue
+        cb = _clamp_bbox(r.bbox, pd.width, pd.height)
+        if cb.x1 - cb.x0 < 1.0 or cb.y1 - cb.y0 < 1.0:
+            continue
+        if cb != r.bbox:
+            r = r.model_copy(update={"bbox": cb})
+        clamped_result.append(r)
+
+    return clamped_result
 
 
 def detect_pii_on_page(

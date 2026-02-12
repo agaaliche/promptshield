@@ -136,7 +136,30 @@ _MIN_GAP_LINE_RATIO = 0.50    # Gap ratio at fuzziness=0  (strict)
 _MAX_GAP_LINE_RATIO = 1.25    # Gap ratio at fuzziness=1  (permissive)
 _GAP_OUTLIER_FACTOR = 3.0     # Gap must be ≥ 3× the smallest same-line gap to split
 _MAX_WORD_GAP_WS = 3          # Max whitespace chars between consecutive words
-_MAX_WORDS_PER_REGION = 4     # Words beyond this trigger split + re-detection
+
+# Per-type word limits for auto-detected regions.  Regions exceeding
+# the limit for their PII type are split into chunks and re-validated.
+_MAX_WORDS_BY_TYPE: dict[str, int] = {
+    "EMAIL":          1,
+    "IP_ADDRESS":     1,
+    "PASSPORT":       2,
+    "SSN":            3,
+    "DATE":           3,
+    "DRIVER_LICENSE": 3,
+    "PERSON":         4,
+    "CREDIT_CARD":    4,
+    "IBAN":           8,
+    "PHONE":          8,
+    "ORG":            8,
+    "ADDRESS":       10,
+}
+_MAX_WORDS_DEFAULT = 4        # Fallback for unknown types
+
+
+def _max_words_for_type(pii_type) -> int:
+    """Return the word-count limit for a given PII type."""
+    key = pii_type.value if hasattr(pii_type, "value") else str(pii_type)
+    return _MAX_WORDS_BY_TYPE.get(key, _MAX_WORDS_DEFAULT)
 
 
 def _effective_gap_threshold(line_height: float) -> float:
@@ -333,11 +356,11 @@ def _enforce_region_shapes(
     1. **Bounds clamping** — bbox cannot exceed page dimensions.
     2. **Word-gap splitting** — consecutive words distanced by more than
        6 PDF pts or 3 whitespace chars become separate regions.
-    3. **Word-count limit** — regions covering more than 4 words are
-       split into ≤ 4-word chunks; each chunk is re-validated via
-       regex + NER.  Chunks that fail re-detection are kept at 50 %
-       confidence (dropped if below the global threshold) to prevent
-       data leaks from unconfirmed highlights.
+    3. **Word-count limit** — regions covering more words than the
+       per-type limit (e.g. 1 for EMAIL, 4 for PERSON, 10 for ADDRESS)
+       are split into chunks and re-validated via regex + NER.  Chunks
+       that fail re-detection are kept at 50 % confidence (dropped if
+       below the global threshold) to prevent data leaks.
     """
     if not block_offsets:
         return regions
@@ -363,13 +386,14 @@ def _enforce_region_shapes(
         gap_groups = _split_blocks_at_gaps(triples, page_data.full_text)
 
         # Fast path: single group, within word limit → keep original
-        if len(gap_groups) == 1 and len(gap_groups[0]) <= _MAX_WORDS_PER_REGION:
+        _wlimit = _max_words_for_type(region.pii_type)
+        if len(gap_groups) == 1 and len(gap_groups[0]) <= _wlimit:
             result.append(region)
             continue
 
         # ── 4. Process each gap-group (may need word-limit splitting) ─
         for group in gap_groups:
-            if len(group) <= _MAX_WORDS_PER_REGION:
+            if len(group) <= _wlimit:
                 # Small group from gap split — create sub-region, keep
                 # original PII type (no re-detection needed).
                 sub_bbox = _clamp_bbox(
@@ -393,12 +417,12 @@ def _enforce_region_shapes(
                     action=region.action,
                 ))
             else:
-                # > 4 words — split into chunks and re-detect each
+                # > word limit — split into chunks and re-detect each
                 sorted_group = sorted(
                     group, key=lambda t: (t[2].bbox.y0, t[2].bbox.x0),
                 )
-                for ci in range(0, len(sorted_group), _MAX_WORDS_PER_REGION):
-                    chunk = sorted_group[ci:ci + _MAX_WORDS_PER_REGION]
+                for ci in range(0, len(sorted_group), _wlimit):
+                    chunk = sorted_group[ci:ci + _wlimit]
                     sub_bbox = _clamp_bbox(
                         _bbox_from_block_triples(chunk), page_w, page_h,
                     )

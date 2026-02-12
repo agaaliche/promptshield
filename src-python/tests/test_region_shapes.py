@@ -18,7 +18,8 @@ from core.detection.pipeline import (
     _ABSOLUTE_MAX_GAP_PX,
     _GAP_OUTLIER_FACTOR,
     _MAX_WORD_GAP_WS,
-    _MAX_WORDS_PER_REGION,
+    _MAX_WORDS_DEFAULT,
+    _max_words_for_type,
 )
 from core.config import config
 
@@ -309,11 +310,11 @@ class TestEnforceRegionShapes:
         r = _region(overall_bbox, text=full_text,
                      char_start=0, char_end=len(full_text))
         result = _enforce_region_shapes([r], page, offsets_list)
-        # 6 words → split into chunks of 4 → 2 chunks (4 + 2)
+        # 6 words → split into chunks of 4 (default for PERSON) → 2 chunks (4 + 2)
         assert len(result) == 2
-        # Each chunk has at most 4 words
+        # Each chunk has at most _MAX_WORDS_DEFAULT words
         for reg in result:
-            assert len(reg.text.split()) <= _MAX_WORDS_PER_REGION
+            assert len(reg.text.split()) <= _MAX_WORDS_DEFAULT
 
     def test_manual_region_no_blocks(self):
         """Region with no overlapping blocks (manual draw) passes through."""

@@ -806,8 +806,17 @@ def _merge_detections(
         page_data.text_blocks, page_data.full_text,
     )
 
+    # ── Watermark / large-text filter settings ──
+    _max_pt = config.max_font_size_pt
+    # Vertical-spread ratio: if a candidate's line bboxes span more than
+    # this fraction of the page height, it's almost certainly a diagonal
+    # watermark or decorative element — skip the whole candidate.
+    _WATERMARK_V_RATIO = 0.15
+
     # Convert to PIIRegion with bounding boxes — one region per visual line
     regions: list[PIIRegion] = []
+    _watermark_skipped = 0
+    _large_font_skipped = 0
     for item in merged:
         # Filter by confidence threshold
         if item["confidence"] < config.confidence_threshold:
@@ -824,6 +833,21 @@ def _merge_detections(
                 continue
             line_bboxes = [bbox]
 
+        # ── Watermark filter: vertical spread across the page ──
+        if _max_pt > 0 and page_data.height > 0:
+            all_y0 = min(b.y0 for b in line_bboxes)
+            all_y1 = max(b.y1 for b in line_bboxes)
+            vertical_spread = all_y1 - all_y0
+            if vertical_spread > page_data.height * _WATERMARK_V_RATIO:
+                _watermark_skipped += 1
+                continue
+
+            # ── Large-font filter: individual line-segment height ──
+            line_bboxes = [b for b in line_bboxes if (b.y1 - b.y0) < _max_pt]
+            if not line_bboxes:
+                _large_font_skipped += 1
+                continue
+
         for bbox in line_bboxes:
             regions.append(PIIRegion(
                 id=uuid.uuid4().hex[:12],
@@ -836,6 +860,15 @@ def _merge_detections(
                 char_start=item["start"],
                 char_end=item["end"],
             ))
+
+    if _watermark_skipped or _large_font_skipped:
+        logger.info(
+            f"Page {page_data.page_number}: filtered "
+            f"{_watermark_skipped} watermark candidate(s) "
+            f"(vspread>{_WATERMARK_V_RATIO:.0%} of page), "
+            f"{_large_font_skipped} large-font candidate(s) "
+            f"(bbox height>={_max_pt}pt)"
+        )
 
     # Enforce region shape constraints (bounds, word gaps, word limit)
     regions = _enforce_region_shapes(regions, page_data, block_offsets)
@@ -1207,21 +1240,6 @@ def detect_pii_on_page(
         gliner_matches=gliner_matches,
     )
     timings["merge"] = (time.perf_counter() - t0) * 1000
-
-    # ── Filter out large-font regions (watermarks, decorative text) ──
-    _max_pt = config.max_font_size_pt
-    if _max_pt > 0:
-        before = len(regions)
-        regions = [
-            r for r in regions
-            if (r.bbox.y1 - r.bbox.y0) < _max_pt
-        ]
-        skipped = before - len(regions)
-        if skipped:
-            logger.info(
-                f"Page {page_data.page_number}: skipped {skipped} region(s) "
-                f"with bbox height >= {_max_pt}pt (watermark/large text)"
-            )
 
     page_total = (time.perf_counter() - page_t0) * 1000
     timing_parts = " | ".join(f"{k}={v:.0f}ms" for k, v in timings.items())

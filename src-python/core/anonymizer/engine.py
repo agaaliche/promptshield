@@ -148,15 +148,22 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
     pdf_doc = fitz.open(str(original_path))
 
     try:
-        # Widen the redaction rect so the (longer) token text fits at the
-        # original font size.  PyMuPDF auto-shrinks replacement text when
-        # it doesn't fit; by pre-extending the rect we avoid that.
+        # Combined erase-then-insert approach:
+        #   1. Extract original style (font, size, color, baseline origin)
+        #   2. Widen the erase rect so white fill covers the token area
+        #   3. Add erase-only redaction (text=None) → apply_redactions()
+        #   4. Insert replacement text at the original baseline via
+        #      page.insert_text() — this is NOT constrained by any rect,
+        #      so the font size is always honoured exactly.
 
         for page_num in range(len(pdf_doc)):
             page = pdf_doc[page_num]
             page_regions = [
                 r for r in doc.regions if r.page_number == page_num + 1
             ]
+
+            # Collect deferred text insertions for after redactions apply
+            deferred: list[tuple[str, dict]] = []  # (text, style)
 
             for region in page_regions:
                 bbox = region.bbox
@@ -189,36 +196,43 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
                 else:
                     continue
 
-                # Extract the original visual style before we redact
+                # Extract the original visual style (incl. baseline origin)
                 style = _extract_span_style(page, rect)
 
-                # Measure replacement text width at the original font size
-                # and extend the rect if the token string is wider.
+                # Widen the erase rect so the white fill covers the area
+                # where the replacement text will be drawn.
                 needed_width = fitz.get_text_length(
                     replacement_text,
                     fontname=style["fontname"],
                     fontsize=style["fontsize"],
                 )
-                current_width = rect.width
-                if needed_width > current_width:
-                    rect.x1 = rect.x0 + needed_width + 2  # +2pt padding
+                if needed_width > rect.width:
+                    rect.x1 = rect.x0 + needed_width + 4
 
-                page.add_redact_annot(
-                    rect,
-                    text=replacement_text,
-                    fontname=style["fontname"],
-                    fontsize=style["fontsize"],
-                    fill=(1, 1, 1),
-                    text_color=style["text_color"],
-                )
+                # Erase-only redaction — no text; we insert it ourselves
+                page.add_redact_annot(rect, fill=(1, 1, 1))
+
+                deferred.append((replacement_text, style))
 
                 if region.action == RegionAction.REMOVE:
                     regions_removed += 1
                 else:
                     tokens_created += 1
 
-            # Apply all redactions on this page
+            # Wipe all original text under the white rects
             page.apply_redactions()
+
+            # Now insert each replacement at the original baseline point
+            # using the original font properties — unconstrained by rect.
+            for text, style in deferred:
+                origin = style["origin"]
+                page.insert_text(
+                    fitz.Point(origin[0], origin[1]),
+                    text,
+                    fontname=style["fontname"],
+                    fontsize=style["fontsize"],
+                    color=style["text_color"],
+                )
 
         # ── Metadata scrubbing ─────────────────────────────────────────
         # 1. Clear standard document metadata (Author, Title, Subject, …)

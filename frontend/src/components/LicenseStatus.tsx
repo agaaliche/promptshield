@@ -60,7 +60,7 @@ export default function LicenseStatus() {
         </div>
       )}
       <button onClick={handleDeactivate} disabled={busy} style={styles.deactivateBtn}>
-        {busy ? "..." : "Deactivate"}
+        {busy ? "..." : "Sign Out"}
       </button>
     </div>
   );

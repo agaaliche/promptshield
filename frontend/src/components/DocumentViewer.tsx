@@ -63,6 +63,7 @@ import AutodetectPanel from "./AutodetectPanel";
 import VaultUnlockDialog from "./VaultUnlockDialog";
 import CursorToolToolbar from "./CursorToolToolbar";
 import MultiSelectToolbar from "./MultiSelectToolbar";
+import UserMenu from "./UserMenu";
 
 export default function DocumentViewer() {
   const {
@@ -1350,6 +1351,8 @@ export default function DocumentViewer() {
           </div>
         </div>
 
+        {/* User menu — right edge */}
+        <UserMenu />
       </div>
 
       {/* Content area — everything below toolbar */}

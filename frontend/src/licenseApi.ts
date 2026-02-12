@@ -115,14 +115,33 @@ async function authenticatedRequest<T>(
 // ── Shared activation helper ────────────────────────────────────
 
 /**
- * Given a Firebase ID token, sync the user with the licensing backend,
+ * Given a Firebase ID token, verify the user exists on the licensing backend,
  * activate the license for this machine, and store the blob locally.
  *
+ * Account creation only happens on promptshield.ca — the app is sign-in only.
  * Used by both email/password and Google sign-in flows.
  */
 async function activateWithToken(idToken: string): Promise<LicenseStatus> {
-  // 1. Sync user with licensing backend (creates row + trial if first time)
-  await authenticatedRequest("/auth/sync", idToken, { method: "POST" });
+  // 1. Verify user exists on licensing backend (does NOT create accounts)
+  const url = `${LICENSING_URL}/auth/me`;
+  const meRes = await fetch(url, {
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    },
+  });
+
+  if (!meRes.ok) {
+    // Sign out of Firebase since activation won't proceed
+    await signOut(auth).catch(() => {});
+    if (meRes.status === 404 || meRes.status === 401) {
+      throw new Error(
+        "No account found. Please sign up at promptshield.ca first.",
+      );
+    }
+    const body = await meRes.text();
+    throw new Error(`Licensing server error: ${body}`);
+  }
 
   // 2. Activate license for this machine
   const machineId = await getMachineId();

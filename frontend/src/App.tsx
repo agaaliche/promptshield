@@ -11,6 +11,7 @@ import { useEffect, useState, Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import { useAppStore } from "./store";
 import { validateLocalLicense, startBackend, revalidateLicense } from "./licenseApi";
+import { warmupModels } from "./api";
 import type { LicenseStatus as LicenseStatusType } from "./types";
 
 // ── Error Boundary ──────────────────────────────────────────────
@@ -182,6 +183,9 @@ function App() {
     let cancelled = false;
 
     const init = async () => {
+      // Preload NLP models in background so first detection is fast
+      warmupModels();
+
       getVaultStatus()
         .then((s) => setVaultUnlocked(s.unlocked))
         .catch(logError("vault-status"));

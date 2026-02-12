@@ -115,6 +115,17 @@ export function getPageBitmapUrl(docId: string, pageNumber: number): string {
 }
 
 // ──────────────────────────────────────────────
+// Warmup — preload NLP models in background
+// ──────────────────────────────────────────────
+
+/** Fire-and-forget: ask backend to start loading NLP models. */
+export function warmupModels(): void {
+  request("/api/warmup", { method: "POST" }).catch(() => {
+    /* non-critical — models will load on first detection instead */
+  });
+}
+
+// ──────────────────────────────────────────────
 // Detection
 // ──────────────────────────────────────────────
 

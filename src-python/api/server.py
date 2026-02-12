@@ -181,6 +181,73 @@ async def health():
 
 
 # ---------------------------------------------------------------------------
+# Model warmup — preload NLP models in background to eliminate first-request lag
+# ---------------------------------------------------------------------------
+
+_warmup_started = False
+
+
+def _warmup_models() -> None:
+    """Load all NLP models (spaCy, GLiNER, BERT) in a background thread.
+
+    Each loader is guarded by its own try/except so one failure doesn't
+    prevent the others from loading.  All loaders are idempotent — if the
+    model is already loaded (e.g. from a previous warmup), they return
+    instantly.
+    """
+    import time as _t
+    t0 = _t.perf_counter()
+    loaded: list[str] = []
+
+    # spaCy English
+    try:
+        from core.detection.ner_detector import _load_model as load_spacy_en
+        load_spacy_en()
+        loaded.append("spaCy-en")
+    except Exception as e:
+        logger.warning(f"Warmup: spaCy-en failed: {e}")
+
+    # spaCy French
+    try:
+        from core.detection.ner_detector import _load_french_model as load_spacy_fr
+        load_spacy_fr()
+        loaded.append("spaCy-fr")
+    except Exception as e:
+        logger.warning(f"Warmup: spaCy-fr failed: {e}")
+
+    # spaCy Italian
+    try:
+        from core.detection.ner_detector import _load_italian_model as load_spacy_it
+        load_spacy_it()
+        loaded.append("spaCy-it")
+    except Exception as e:
+        logger.warning(f"Warmup: spaCy-it failed: {e}")
+
+    # GLiNER
+    try:
+        from core.detection.gliner_detector import _load_model as load_gliner
+        load_gliner()
+        loaded.append("GLiNER")
+    except Exception as e:
+        logger.warning(f"Warmup: GLiNER failed: {e}")
+
+    elapsed = (_t.perf_counter() - t0) * 1000
+    logger.info(f"Warmup complete: {', '.join(loaded)} in {elapsed:.0f}ms")
+
+
+@app.post("/api/warmup")
+async def warmup():
+    """Trigger background model preload.  Returns immediately."""
+    import asyncio
+    global _warmup_started
+    if _warmup_started:
+        return {"status": "already_started"}
+    _warmup_started = True
+    asyncio.get_event_loop().run_in_executor(None, _warmup_models)
+    return {"status": "started"}
+
+
+# ---------------------------------------------------------------------------
 # Bundled frontend — serve the React SPA when running as a standalone exe
 # ---------------------------------------------------------------------------
 

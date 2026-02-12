@@ -1349,12 +1349,13 @@ export default function DocumentViewer() {
               <ZoomIn size={16} />
             </button>
           </div>
+
+          {/* User menu — after zoom controls */}
+          <div style={{ marginLeft: 12 }}>
+            <UserMenu />
+          </div>
         </div>
 
-        {/* User menu — right of zoom controls */}
-        <div style={{ marginLeft: "auto", marginRight: 4, position: "relative", zIndex: 42 }}>
-          <UserMenu />
-        </div>
       </div>
 
       {/* Content area — everything below toolbar */}

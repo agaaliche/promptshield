@@ -137,6 +137,17 @@ _MAX_GAP_LINE_RATIO = 1.25    # Gap ratio at fuzziness=1  (permissive)
 _GAP_OUTLIER_FACTOR = 3.0     # Gap must be ≥ 3× the smallest same-line gap to split
 _MAX_WORD_GAP_WS = 3          # Max whitespace chars between consecutive words
 
+# Per-type maximum visual lines — regions spanning more lines are split.
+# Multi-line support for ORG/ADDRESS (titles, multi-line addresses),
+# PERSON (first + last on separate lines), single-line for all others.
+_MAX_LINES_BY_TYPE: dict[str, int] = {
+    "ORG": 4,
+    "ADDRESS": 4,
+    "PERSON": 2,
+    # All other types default to 1 line
+}
+_MAX_LINES_DEFAULT = 1
+
 # Per-type word limits for auto-detected regions.  Regions exceeding
 # the limit for their PII type are split into chunks and re-validated.
 _MAX_WORDS_BY_TYPE: dict[str, int] = {
@@ -160,6 +171,12 @@ def _max_words_for_type(pii_type) -> int:
     """Return the word-count limit for a given PII type."""
     key = pii_type.value if hasattr(pii_type, "value") else str(pii_type)
     return _MAX_WORDS_BY_TYPE.get(key, _MAX_WORDS_DEFAULT)
+
+
+def _max_lines_for_type(pii_type) -> int:
+    """Return the maximum visual lines for a given PII type."""
+    key = pii_type.value if hasattr(pii_type, "value") else str(pii_type)
+    return _MAX_LINES_BY_TYPE.get(key, _MAX_LINES_DEFAULT)
 
 
 def _effective_gap_threshold(line_height: float) -> float:
@@ -859,11 +876,21 @@ def _merge_detections(
                 _large_font_skipped += 1
                 continue
 
-        for bbox in line_bboxes:
+        # ── Multi-line merging per PII type ──
+        max_lines = _max_lines_for_type(item["pii_type"])
+        
+        if len(line_bboxes) <= max_lines:
+            # Within line limit → merge into one encompassing region
+            merged_bbox = BBox(
+                x0=min(b.x0 for b in line_bboxes),
+                y0=min(b.y0 for b in line_bboxes),
+                x1=max(b.x1 for b in line_bboxes),
+                y1=max(b.y1 for b in line_bboxes),
+            )
             regions.append(PIIRegion(
                 id=uuid.uuid4().hex[:12],
                 page_number=page_data.page_number,
-                bbox=bbox,
+                bbox=merged_bbox,
                 text=item["text"],
                 pii_type=item["pii_type"],
                 confidence=item["confidence"],
@@ -871,6 +898,27 @@ def _merge_detections(
                 char_start=item["start"],
                 char_end=item["end"],
             ))
+        else:
+            # Exceeds line limit → chunk into max_lines-sized groups
+            for i in range(0, len(line_bboxes), max_lines):
+                chunk_bboxes = line_bboxes[i:i + max_lines]
+                merged_bbox = BBox(
+                    x0=min(b.x0 for b in chunk_bboxes),
+                    y0=min(b.y0 for b in chunk_bboxes),
+                    x1=max(b.x1 for b in chunk_bboxes),
+                    y1=max(b.y1 for b in chunk_bboxes),
+                )
+                regions.append(PIIRegion(
+                    id=uuid.uuid4().hex[:12],
+                    page_number=page_data.page_number,
+                    bbox=merged_bbox,
+                    text=item["text"],
+                    pii_type=item["pii_type"],
+                    confidence=item["confidence"],
+                    source=item["source"],
+                    char_start=item["start"],
+                    char_end=item["end"],
+                ))
 
     if _large_font_skipped:
         logger.info(

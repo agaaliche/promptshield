@@ -11,6 +11,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { User, LogOut, Crown, Clock } from "lucide-react";
 import { useAppStore } from "../store";
 import { deactivateLicense } from "../licenseApi";
+import { auth } from "../firebaseConfig";
 
 export default function UserMenu() {
   const { licenseStatus, addSnackbar } = useAppStore();
@@ -55,7 +56,7 @@ export default function UserMenu() {
   if (!licenseStatus?.valid) return null;
 
   const payload = licenseStatus.payload;
-  const email = payload?.email ?? "Unknown";
+  const email = payload?.email ?? auth.currentUser?.email ?? "Unknown";
   const daysLeft = licenseStatus.days_remaining;
 
   // Derive display values

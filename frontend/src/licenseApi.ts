@@ -61,32 +61,12 @@ export async function getMachineName(): Promise<string> {
   return `${navigator.userAgent.slice(0, 40)} (dev)`;
 }
 
-export async function validateLocalLicense(): Promise<LicenseStatus> {
-  if (isTauri()) return tauriInvoke<LicenseStatus>("validate_license");
-  // Browser fallback: check localStorage blob
-  const blob = localStorage.getItem("ps_dev_license_blob");
-  if (!blob) return { valid: false, payload: null, error: "No license found", days_remaining: null };
-  // Can't Ed25519 verify in browser — reconstruct from stored payload
-  try {
-    const stored = JSON.parse(localStorage.getItem("ps_dev_license_payload") ?? "null");
-    if (stored) {
-      return { valid: true, payload: stored, error: null, days_remaining: stored.days_remaining ?? 99 };
-    }
-  } catch { /* ignore parse errors */ }
-  return { valid: true, payload: null, error: null, days_remaining: 99 };
-}
-
-export async function storeLocalLicense(blob: string): Promise<LicenseStatus> {
-  if (isTauri()) return tauriInvoke<LicenseStatus>("store_license", { blob });
-  // Browser fallback: persist in localStorage and decode payload
-  localStorage.setItem("ps_dev_license_blob", blob);
-  // Try to decode the license blob: format is "base64(payload_json).base64(signature)"
-  let payload: import("./types").LicensePayload | null = null;
-  let daysRemaining: number | null = 99;
+/** Decode a license blob (format: base64(payload_json).base64(signature)) */
+function decodeLicenseBlob(blob: string): { payload: import("./types").LicensePayload; daysRemaining: number | null } | null {
   try {
     const parts = blob.split(".", 2);
     const decoded = JSON.parse(atob(parts[0]));
-    payload = {
+    const payload: import("./types").LicensePayload = {
       email: decoded.email ?? "unknown",
       plan: decoded.plan ?? "unknown",
       seats: decoded.seats ?? 1,
@@ -95,14 +75,34 @@ export async function storeLocalLicense(blob: string): Promise<LicenseStatus> {
       expires: decoded.expires ?? "",
       v: decoded.v ?? 1,
     };
+    let daysRemaining: number | null = 99;
     if (decoded.expires) {
       const msLeft = new Date(decoded.expires).getTime() - Date.now();
       daysRemaining = Math.max(0, Math.ceil(msLeft / 86_400_000));
     }
-    // Persist decoded payload for validateLocalLicense fallback
-    localStorage.setItem("ps_dev_license_payload", JSON.stringify({ ...payload, days_remaining: daysRemaining }));
-  } catch { /* blob decode failed — still valid, just no payload detail */ }
-  return { valid: true, payload, error: null, days_remaining: daysRemaining };
+    return { payload, daysRemaining };
+  } catch {
+    return null;
+  }
+}
+
+export async function validateLocalLicense(): Promise<LicenseStatus> {
+  if (isTauri()) return tauriInvoke<LicenseStatus>("validate_license");
+  // Browser fallback: decode blob directly
+  const blob = localStorage.getItem("ps_dev_license_blob");
+  if (!blob) return { valid: false, payload: null, error: "No license found", days_remaining: null };
+  const decoded = decodeLicenseBlob(blob);
+  if (decoded) {
+    return { valid: true, payload: decoded.payload, error: null, days_remaining: decoded.daysRemaining };
+  }
+  return { valid: true, payload: null, error: null, days_remaining: 99 };
+}
+
+export async function storeLocalLicense(blob: string): Promise<LicenseStatus> {
+  if (isTauri()) return tauriInvoke<LicenseStatus>("store_license", { blob });
+  localStorage.setItem("ps_dev_license_blob", blob);
+  const decoded = decodeLicenseBlob(blob);
+  return { valid: true, payload: decoded?.payload ?? null, error: null, days_remaining: decoded?.daysRemaining ?? 99 };
 }
 
 export async function clearLocalLicense(): Promise<void> {

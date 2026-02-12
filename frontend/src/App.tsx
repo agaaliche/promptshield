@@ -64,6 +64,7 @@ import DetokenizeView from "./components/DetokenizeView";
 import SettingsView from "./components/SettingsView";
 import AuthScreen from "./components/AuthScreen";
 import RevalidationDialog from "./components/RevalidationDialog";
+import UserMenu from "./components/UserMenu";
 
 function App() {
   const {
@@ -300,6 +301,10 @@ function App() {
   return (
     <div style={{ display: "flex", height: "100vh", width: "100vw" }}>
       <Snackbar />
+      {/* Global user menu — top-right corner, always visible when signed in */}
+      <div style={{ position: "fixed", top: 10, right: 16, zIndex: 9999 }}>
+        <UserMenu />
+      </div>
       {showRevalidation && (
         <RevalidationDialog
           daysRemaining={licenseStatus.days_remaining}

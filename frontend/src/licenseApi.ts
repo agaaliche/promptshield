@@ -65,16 +65,46 @@ export async function validateLocalLicense(): Promise<LicenseStatus> {
   if (isTauri()) return tauriInvoke<LicenseStatus>("validate_license");
   // Browser fallback: check localStorage blob
   const blob = localStorage.getItem("ps_dev_license_blob");
-  if (!blob) return { valid: false, error: "No license found" } as LicenseStatus;
-  // Can't Ed25519 verify in browser — trust valid if blob exists
-  return { valid: true, plan: "dev", days_remaining: 99 } as LicenseStatus;
+  if (!blob) return { valid: false, payload: null, error: "No license found", days_remaining: null };
+  // Can't Ed25519 verify in browser — reconstruct from stored payload
+  try {
+    const stored = JSON.parse(localStorage.getItem("ps_dev_license_payload") ?? "null");
+    if (stored) {
+      return { valid: true, payload: stored, error: null, days_remaining: stored.days_remaining ?? 99 };
+    }
+  } catch { /* ignore parse errors */ }
+  return { valid: true, payload: null, error: null, days_remaining: 99 };
 }
 
 export async function storeLocalLicense(blob: string): Promise<LicenseStatus> {
   if (isTauri()) return tauriInvoke<LicenseStatus>("store_license", { blob });
-  // Browser fallback: persist in localStorage
+  // Browser fallback: persist in localStorage and decode payload
   localStorage.setItem("ps_dev_license_blob", blob);
-  return { valid: true, plan: "dev", days_remaining: 99 } as LicenseStatus;
+  // Try to decode the license blob (base64-encoded JSON with signature prefix)
+  let payload: import("./types").LicensePayload | null = null;
+  let daysRemaining: number | null = 99;
+  try {
+    // Blob format: base64( 64-byte-sig + JSON payload )
+    const raw = atob(blob);
+    const jsonStr = raw.slice(64);
+    const decoded = JSON.parse(jsonStr);
+    payload = {
+      email: decoded.email ?? "unknown",
+      plan: decoded.plan ?? "unknown",
+      seats: decoded.seats ?? 1,
+      machine_id: decoded.machine_id ?? "",
+      issued: decoded.issued ?? new Date().toISOString(),
+      expires: decoded.expires ?? "",
+      v: decoded.v ?? 1,
+    };
+    if (decoded.expires) {
+      const msLeft = new Date(decoded.expires).getTime() - Date.now();
+      daysRemaining = Math.max(0, Math.ceil(msLeft / 86_400_000));
+    }
+    // Persist decoded payload for validateLocalLicense fallback
+    localStorage.setItem("ps_dev_license_payload", JSON.stringify({ ...payload, days_remaining: daysRemaining }));
+  } catch { /* blob decode failed — still valid, just no payload detail */ }
+  return { valid: true, payload, error: null, days_remaining: daysRemaining };
 }
 
 export async function clearLocalLicense(): Promise<void> {
@@ -86,20 +116,31 @@ export async function startBackend(): Promise<string> {
   return tauriInvoke<string>("start_backend");
 }
 
-// ── Simple HTTP client (no auth headers) ────────────────────────
+// ── HTTP client (auto-attaches Firebase bearer token) ───────────
 
 /**
- * Licensing API request. No bearer tokens — the machine fingerprint +
- * license blob in the request body serve as identity for validation.
+ * Licensing API request. Automatically attaches the current Firebase
+ * user's ID token as a Bearer header when a user is signed in.
  */
 async function licensingRequest<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
   const url = `${LICENSING_URL}${path}`;
+  const authHeaders: Record<string, string> = {};
+  const user = auth.currentUser;
+  if (user) {
+    try {
+      const idToken = await user.getIdToken();
+      authHeaders["Authorization"] = `Bearer ${idToken}`;
+    } catch {
+      // Token refresh failed — proceed without auth (offline)
+    }
+  }
   const res = await fetch(url, {
     headers: {
       "Content-Type": "application/json",
+      ...authHeaders,
       ...(options.headers as Record<string, string> | undefined),
     },
     ...options,
@@ -190,8 +231,11 @@ async function activateWithToken(idToken: string): Promise<LicenseStatus> {
   const status = await storeLocalLicense(licenseResponse.license_blob);
   useAppStore.getState().setLicenseStatus(status);
 
-  // 4. Sign out of Firebase — we don't need the session, just the key
-  await signOut(auth).catch(() => {});
+  // 4. In Tauri mode, sign out of Firebase — we only need the local key.
+  //    In browser mode, keep the session so revalidation can use the token.
+  if (isTauri()) {
+    await signOut(auth).catch(() => {});
+  }
 
   return status;
 }
@@ -375,6 +419,10 @@ export async function createBillingPortal(): Promise<{ portal_url: string }> {
  */
 export async function deactivateLicense(): Promise<void> {
   await clearLocalLicense().catch(() => {});
+  // Also clear cached payload from browser fallback
+  localStorage.removeItem("ps_dev_license_payload");
+  // Sign out of Firebase (clears browser session)
+  await signOut(auth).catch(() => {});
   useAppStore.getState().setLicenseStatus(null);
   useAppStore.getState().setLicenseChecked(false);
 }

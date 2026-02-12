@@ -148,13 +148,14 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
     pdf_doc = fitz.open(str(original_path))
 
     try:
-        # Combined erase-then-insert approach:
+        # Erase-then-insert approach:
         #   1. Extract original style (font, size, color, baseline origin)
-        #   2. Widen the erase rect so white fill covers the token area
-        #   3. Add erase-only redaction (text=None) → apply_redactions()
-        #   4. Insert replacement text at the original baseline via
-        #      page.insert_text() — this is NOT constrained by any rect,
-        #      so the font size is always honoured exactly.
+        #   2. Add erase-only redaction over the ORIGINAL rect only
+        #      (never widen — widening destroys neighbouring text)
+        #   3. apply_redactions() paints white over original text
+        #   4. page.insert_text() at original baseline — unconstrained
+        #      by any rect, the font size is always honoured exactly.
+        #      The token extends rightward over the (white) page background.
 
         for page_num in range(len(pdf_doc)):
             page = pdf_doc[page_num]
@@ -199,17 +200,8 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
                 # Extract the original visual style (incl. baseline origin)
                 style = _extract_span_style(page, rect)
 
-                # Widen the erase rect so the white fill covers the area
-                # where the replacement text will be drawn.
-                needed_width = fitz.get_text_length(
-                    replacement_text,
-                    fontname=style["fontname"],
-                    fontsize=style["fontsize"],
-                )
-                if needed_width > rect.width:
-                    rect.x1 = rect.x0 + needed_width + 4
-
-                # Erase-only redaction — no text; we insert it ourselves
+                # Erase-only redaction over the original rect — do NOT
+                # widen; widening destroys adjacent non-PII text.
                 page.add_redact_annot(rect, fill=(1, 1, 1))
 
                 deferred.append((replacement_text, style))

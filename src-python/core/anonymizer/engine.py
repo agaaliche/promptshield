@@ -148,13 +148,9 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
     pdf_doc = fitz.open(str(original_path))
 
     try:
-        # Process regions grouped by page — TWO-PASS approach:
-        #   Pass 1: extract style + add erase-only redactions
-        #   apply_redactions() wipes original text
-        #   Pass 2: insert replacement text at original position/size
-        #
-        # This avoids PyMuPDF's auto-shrink behavior that squishes
-        # long token strings to fit inside the (smaller) original rect.
+        # Widen the redaction rect so the (longer) token text fits at the
+        # original font size.  PyMuPDF auto-shrinks replacement text when
+        # it doesn't fit; by pre-extending the rect we avoid that.
 
         for page_num in range(len(pdf_doc)):
             page = pdf_doc[page_num]
@@ -162,25 +158,12 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
                 r for r in doc.regions if r.page_number == page_num + 1
             ]
 
-            # Pass 1: collect text insertions and add erase-only redactions
-            text_insertions: list[dict] = []
-
             for region in page_regions:
                 bbox = region.bbox
                 rect = fitz.Rect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
 
                 if region.action == RegionAction.REMOVE:
-                    # Extract style so "---" replacement looks right
-                    style = _extract_span_style(page, rect)
-                    text_insertions.append({
-                        "text": "---",
-                        "style": style,
-                        "rect": rect,
-                    })
-                    # Add erase-only redaction (no text — we insert it ourselves)
-                    page.add_redact_annot(rect, fill=(1, 1, 1))
-                    regions_removed += 1
-
+                    replacement_text = "---"
                 elif region.action == RegionAction.TOKENIZE:
                     token_string = vault.generate_token_string(region.pii_type)
 
@@ -196,38 +179,46 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
                         ),
                     )
                     vault.store_token(mapping)
-
-                    # Extract style BEFORE wiping the text
-                    style = _extract_span_style(page, rect)
-                    text_insertions.append({
-                        "text": token_string,
-                        "style": style,
-                        "rect": rect,
-                    })
-                    # Add erase-only redaction
-                    page.add_redact_annot(rect, fill=(1, 1, 1))
-                    tokens_created += 1
+                    replacement_text = token_string
 
                     token_manifest.append({
                         "token_string": token_string,
                         "original_text": region.text,
                         "page_number": page_num + 1,
                     })
+                else:
+                    continue
 
-            # Wipe all original text under redaction areas
-            page.apply_redactions()
+                # Extract the original visual style before we redact
+                style = _extract_span_style(page, rect)
 
-            # Pass 2: insert replacement text at the original position
-            for ins in text_insertions:
-                style = ins["style"]
-                origin = style["origin"]
-                page.insert_text(
-                    fitz.Point(origin[0], origin[1]),
-                    ins["text"],
+                # Measure replacement text width at the original font size
+                # and extend the rect if the token string is wider.
+                needed_width = fitz.get_text_length(
+                    replacement_text,
                     fontname=style["fontname"],
                     fontsize=style["fontsize"],
-                    color=style["text_color"],
                 )
+                current_width = rect.width
+                if needed_width > current_width:
+                    rect.x1 = rect.x0 + needed_width + 2  # +2pt padding
+
+                page.add_redact_annot(
+                    rect,
+                    text=replacement_text,
+                    fontname=style["fontname"],
+                    fontsize=style["fontsize"],
+                    fill=(1, 1, 1),
+                    text_color=style["text_color"],
+                )
+
+                if region.action == RegionAction.REMOVE:
+                    regions_removed += 1
+                else:
+                    tokens_created += 1
+
+            # Apply all redactions on this page
+            page.apply_redactions()
 
         # ── Metadata scrubbing ─────────────────────────────────────────
         # 1. Clear standard document metadata (Author, Title, Subject, …)

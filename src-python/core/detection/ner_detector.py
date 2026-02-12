@@ -364,8 +364,8 @@ _EN_CONFIG = _LangNERConfig(
     generic_stopwords_filter=True,
     active_model_name=_get_active_en_model,
     base_confidence={
-        PIIType.PERSON: 0.80, PIIType.ORG: 0.35,
-        PIIType.LOCATION: 0.30, PIIType.ADDRESS: 0.55,
+        PIIType.PERSON: 0.80, PIIType.ORG: 0.30,
+        PIIType.LOCATION: 0.25, PIIType.ADDRESS: 0.55,
     },
     person_multiword_cap=0.95,
     org_3word_cap=0.80,
@@ -559,6 +559,9 @@ _FR_PERSON_STOPWORDS: set[str] = {
     "janvier", "février", "fevrier", "mars", "avril", "mai", "juin",
     "juillet", "août", "aout", "septembre", "octobre", "novembre", "décembre", "decembre",
     "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+    # Common vocabulary
+    "qui", "que", "où", "ou", "quoi", "dont", "avec", "sans", "pour", "par",
+    "dans", "sur", "sous", "vers", "chez", "dès", "des",
 }
 
 _FR_ORG_STOPWORDS: set[str] = {
@@ -568,6 +571,16 @@ _FR_ORG_STOPWORDS: set[str] = {
     "tableau", "figure", "graphique",
     "loi", "décret", "decret", "arrêté", "arrete", "règlement", "reglement",
     "contrat", "accord", "convention", "rapport", "résumé", "resume",
+    # Common adjectives/nouns often misclassified
+    "principales", "principaux", "général", "generale", "generaux",
+    "comptables", "comptable", "financier", "financiere", "financiers", "financieres",
+    "corporelles", "corporels", "corporel", "corporelle",
+    "immobilisations", "immobilisation",
+    "méthodes", "methodes", "méthode", "methode",
+    "statuts", "statut", "nature", "activités", "activites", "activité", "activite",
+    "éléments", "elements", "élément", "element",
+    "société", "societe", "sociétés", "societes",
+    "elles", "ils", "elle", "il",  # pronouns sometimes tagged as ORG
 }
 
 
@@ -593,7 +606,7 @@ _FR_CONFIG = _LangNERConfig(
     generic_stopwords_filter=False,
     active_model_name=_get_active_fr_model,
     base_confidence={
-        PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.30,
+        PIIType.PERSON: 0.78, PIIType.ORG: 0.35, PIIType.LOCATION: 0.25,
     },
     person_multiword_cap=0.92,
     org_3word_cap=0.85,
@@ -743,7 +756,7 @@ _IT_CONFIG = _LangNERConfig(
     generic_stopwords_filter=False,
     active_model_name=_get_active_it_model,
     base_confidence={
-        PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.30,
+        PIIType.PERSON: 0.78, PIIType.ORG: 0.35, PIIType.LOCATION: 0.25,
     },
     person_multiword_cap=0.92,
     org_3word_cap=0.85,

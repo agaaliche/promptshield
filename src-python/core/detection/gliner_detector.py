@@ -128,6 +128,15 @@ _FP_STOPWORDS: set[str] = {
     "filiale", "succursale", "direction", "comité", "comite",
     "conseil", "ministère", "ministere", "gouvernement",
     "département", "departement", "service", "bureau",
+    # French common words often misclassified
+    "principales", "principaux", "général", "generale", "generaux",
+    "comptables", "comptable", "financier", "financiere", "financiers", "financieres",
+    "corporelles", "corporels", "corporel", "corporelle",
+    "immobilisations", "immobilisation",
+    "méthodes", "methodes", "méthode", "methode",
+    "statuts", "statut", "nature", "activités", "activites", "activité", "activite",
+    "éléments", "elements", "élément", "element",
+    "elles", "ils", "elle", "il",
     # German
     "gesellschaft", "unternehmen", "abteilung",
     # Spanish

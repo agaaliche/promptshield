@@ -605,10 +605,13 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # DE: "Gesellschaft für Informatik und Technik GmbH"
     # NL: "Bedrijf van de Noord B.V."
     # Allows articles/prepositions between capitalised words,
-    # ending with a legal suffix.
+    # ending with a legal suffix. After connecting words, next word
+    # can start with lowercase (e.g., "de restauration").
     (
-        r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"
-        r"(?:\s+(?:"
+        r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"  # First word: must start with capital
+        r"(?:"  # Then repeat 1-5 times:
+        r"\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"  # Capitalized word
+        r"|\s+(?:"  # OR connecting word followed by any word
         # FR: de, du, des, la, le, les, l', d', et, en, aux, au, à
         r"de|du|des|la|le|les|l'|d'|et|en|aux|au|à"
         # ES: de, del, los, las, la, el, y, e, para
@@ -622,8 +625,9 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         # NL: van, de, het, en, voor, bij, op
         r"|van|het|voor|bij|op"
         r")"
-        r"|\s+[A-ZÀ-Ü.][a-zA-Zà-üÀ-Ü.\-']{0,25}){1,8}"
-        r"\s+(?:"
+        r"\s+[a-zA-ZÀ-üÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"  # After connecting word, allow lowercase start
+        r"){1,5}"
+        r"\s+(?i:"  # Make suffix case-insensitive
         r"Lt[ée]e|Limit[ée]e|Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP"
         r"|SA|SAS|SARL|EURL|SCI|SNC|SE|SENC|S\.?E\.?N\.?C\.?"
         r"|Enr\.?g?\.?"
@@ -635,7 +639,7 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r"|Lda|Ltda"
         r"|A/S|ApS|AS|ASA|AB|Oy|Oyj|HB|KB"
         r")\b\.?",
-        PIIType.ORG, 0.90, _IC,
+        PIIType.ORG, 0.90, _NOFLAGS,
     ),
     # Numbered companies (Quebec/Canada style, also DE HRB numbers)
     (

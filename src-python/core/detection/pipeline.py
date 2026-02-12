@@ -125,6 +125,243 @@ def _resolve_bbox_overlaps(regions: list[PIIRegion]) -> list[PIIRegion]:
     return final
 
 
+# ---------------------------------------------------------------------------
+# Region shape constraints
+# ---------------------------------------------------------------------------
+
+_MAX_WORD_GAP_PX = 6.0       # Max spatial gap between consecutive words (PDF pts)
+_MAX_WORD_GAP_WS = 3         # Max whitespace chars between consecutive words
+_MAX_WORDS_PER_REGION = 4    # Words beyond this trigger split + re-detection
+
+
+def _clamp_bbox(bbox: BBox, page_w: float, page_h: float) -> BBox:
+    """Clamp bounding box coordinates to fit within page dimensions."""
+    return BBox(
+        x0=max(0.0, min(bbox.x0, page_w)),
+        y0=max(0.0, min(bbox.y0, page_h)),
+        x1=max(0.0, min(bbox.x1, page_w)),
+        y1=max(0.0, min(bbox.y1, page_h)),
+    )
+
+
+def _blocks_overlapping_bbox(
+    bbox: BBox,
+    block_offsets: list[tuple[int, int, TextBlock]],
+) -> list[tuple[int, int, TextBlock]]:
+    """Return block-offset triples whose TextBlock spatially overlaps *bbox*."""
+    result: list[tuple[int, int, TextBlock]] = []
+    for bstart, bend, block in block_offsets:
+        bb = block.bbox
+        if bb.x0 < bbox.x1 and bb.x1 > bbox.x0 and bb.y0 < bbox.y1 and bb.y1 > bbox.y0:
+            result.append((bstart, bend, block))
+    return result
+
+
+def _split_blocks_at_gaps(
+    triples: list[tuple[int, int, TextBlock]],
+    full_text: str,
+) -> list[list[tuple[int, int, TextBlock]]]:
+    """Split a sequence of block-offset triples at large gaps.
+
+    A split occurs when consecutive blocks (sorted left-to-right) have
+    either a spatial gap > ``_MAX_WORD_GAP_PX`` (6 pt) **or** more than
+    ``_MAX_WORD_GAP_WS`` (3) whitespace characters between them in the
+    page's full text.
+    """
+    if len(triples) <= 1:
+        return [triples] if triples else []
+
+    sorted_t = sorted(triples, key=lambda t: (t[2].bbox.y0, t[2].bbox.x0))
+    groups: list[list[tuple[int, int, TextBlock]]] = [[sorted_t[0]]]
+
+    for i in range(1, len(sorted_t)):
+        _, prev_ce, prev_blk = sorted_t[i - 1]
+        curr_cs, _, curr_blk = sorted_t[i]
+
+        # Same-line check (y-centres within half the line height)
+        prev_h = prev_blk.bbox.y1 - prev_blk.bbox.y0
+        curr_h = curr_blk.bbox.y1 - curr_blk.bbox.y0
+        tolerance = max(prev_h, curr_h) * 0.5
+        same_line = abs(curr_blk.bbox.y0 - prev_blk.bbox.y0) < tolerance
+
+        # Spatial gap (only meaningful on the same visual line)
+        gap_px = (curr_blk.bbox.x0 - prev_blk.bbox.x1) if same_line else 0.0
+
+        # Text gap (whitespace chars between blocks in full_text)
+        between = full_text[prev_ce:curr_cs] if prev_ce <= curr_cs else ""
+        ws_count = sum(1 for ch in between if ch in " \t\n\r")
+
+        if gap_px > _MAX_WORD_GAP_PX or ws_count > _MAX_WORD_GAP_WS:
+            groups.append([sorted_t[i]])
+        else:
+            groups[-1].append(sorted_t[i])
+
+    return groups
+
+
+def _bbox_from_block_triples(
+    triples: list[tuple[int, int, TextBlock]],
+) -> BBox:
+    """Compute a merged bounding box from block-offset triples."""
+    return BBox(
+        x0=min(t[2].bbox.x0 for t in triples),
+        y0=min(t[2].bbox.y0 for t in triples),
+        x1=max(t[2].bbox.x1 for t in triples),
+        y1=max(t[2].bbox.y1 for t in triples),
+    )
+
+
+def _redetect_pii(text: str) -> tuple[PIIType, float, DetectionSource] | None:
+    """Run lightweight regex + NER re-detection on *text*.
+
+    Returns ``(pii_type, confidence, source)`` for the highest-confidence
+    match, or ``None`` if nothing exceeds the confidence threshold.
+    Used to validate/reclassify chunks produced by word-limit splitting.
+    """
+    best: tuple[PIIType, float, DetectionSource] | None = None
+
+    # Regex (fast, reliable for structured PII)
+    if config.regex_enabled:
+        for m in detect_regex(text):
+            if best is None or m.confidence > best[1]:
+                best = (m.pii_type, m.confidence, DetectionSource.REGEX)
+
+    # spaCy NER (fast on short text)
+    if config.ner_enabled and is_ner_available():
+        for m in detect_ner(text):
+            if best is None or m.confidence > best[1]:
+                best = (m.pii_type, m.confidence, DetectionSource.NER)
+
+    # Heuristic name detection (good even on 1-2 word fragments)
+    if config.ner_enabled:
+        for m in detect_names_heuristic(text):
+            if best is None or m.confidence > best[1]:
+                best = (m.pii_type, m.confidence, DetectionSource.NER)
+
+    if best is not None and best[1] >= config.confidence_threshold:
+        return best
+    return None
+
+
+def _enforce_region_shapes(
+    regions: list[PIIRegion],
+    page_data: PageData,
+    block_offsets: list[tuple[int, int, TextBlock]],
+) -> list[PIIRegion]:
+    """Post-process regions to enforce shape-quality constraints.
+
+    Rules (applied in order):
+    1. **Bounds clamping** — bbox cannot exceed page dimensions.
+    2. **Word-gap splitting** — consecutive words distanced by more than
+       6 PDF pts or 3 whitespace chars become separate regions.
+    3. **Word-count limit** — regions covering more than 4 words are
+       split into ≤ 4-word chunks; each chunk is re-validated via
+       regex + NER.  Chunks that fail re-detection are kept at 50 %
+       confidence (dropped if below the global threshold) to prevent
+       data leaks from unconfirmed highlights.
+    """
+    if not block_offsets:
+        return regions
+
+    page_w, page_h = page_data.width, page_data.height
+    result: list[PIIRegion] = []
+
+    for region in regions:
+        # ── 1. Clamp to page bounds ──────────────────────────────────
+        clamped = _clamp_bbox(region.bbox, page_w, page_h)
+        if clamped.x1 - clamped.x0 < 1.0 or clamped.y1 - clamped.y0 < 1.0:
+            continue  # degenerate after clamping
+        region = region.model_copy(update={"bbox": clamped})
+
+        # ── 2. Find overlapping TextBlocks ───────────────────────────
+        triples = _blocks_overlapping_bbox(region.bbox, block_offsets)
+        if not triples:
+            # Manual region or geometry mismatch — keep as-is
+            result.append(region)
+            continue
+
+        # ── 3. Split at word gaps ────────────────────────────────────
+        gap_groups = _split_blocks_at_gaps(triples, page_data.full_text)
+
+        # Fast path: single group, within word limit → keep original
+        if len(gap_groups) == 1 and len(gap_groups[0]) <= _MAX_WORDS_PER_REGION:
+            result.append(region)
+            continue
+
+        # ── 4. Process each gap-group (may need word-limit splitting) ─
+        for group in gap_groups:
+            if len(group) <= _MAX_WORDS_PER_REGION:
+                # Small group from gap split — create sub-region, keep
+                # original PII type (no re-detection needed).
+                sub_bbox = _clamp_bbox(
+                    _bbox_from_block_triples(group), page_w, page_h,
+                )
+                if sub_bbox.x1 - sub_bbox.x0 < 1.0 or sub_bbox.y1 - sub_bbox.y0 < 1.0:
+                    continue
+                sub_text = " ".join(t[2].text for t in group)
+                cs = min(t[0] for t in group)
+                ce = max(t[1] for t in group)
+                result.append(PIIRegion(
+                    id=uuid.uuid4().hex[:16],
+                    page_number=region.page_number,
+                    bbox=sub_bbox,
+                    text=sub_text,
+                    pii_type=region.pii_type,
+                    confidence=region.confidence,
+                    source=region.source,
+                    char_start=cs,
+                    char_end=ce,
+                    action=region.action,
+                ))
+            else:
+                # > 4 words — split into chunks and re-detect each
+                sorted_group = sorted(
+                    group, key=lambda t: (t[2].bbox.y0, t[2].bbox.x0),
+                )
+                for ci in range(0, len(sorted_group), _MAX_WORDS_PER_REGION):
+                    chunk = sorted_group[ci:ci + _MAX_WORDS_PER_REGION]
+                    sub_bbox = _clamp_bbox(
+                        _bbox_from_block_triples(chunk), page_w, page_h,
+                    )
+                    if sub_bbox.x1 - sub_bbox.x0 < 1.0 or sub_bbox.y1 - sub_bbox.y0 < 1.0:
+                        continue
+                    sub_text = " ".join(t[2].text for t in chunk)
+                    cs = min(t[0] for t in chunk)
+                    ce = max(t[1] for t in chunk)
+
+                    # Re-detect PII type on this chunk
+                    detection = _redetect_pii(sub_text)
+                    if detection is not None:
+                        pii_type, confidence, source = detection
+                    else:
+                        # No re-detection hit — keep original type at
+                        # reduced confidence to flag uncertainty.
+                        pii_type = region.pii_type
+                        confidence = region.confidence * 0.5
+                        source = region.source
+                        if confidence < config.confidence_threshold:
+                            continue  # drop unconfirmed chunk
+
+                    result.append(PIIRegion(
+                        id=uuid.uuid4().hex[:16],
+                        page_number=region.page_number,
+                        bbox=sub_bbox,
+                        text=sub_text,
+                        pii_type=pii_type,
+                        confidence=confidence,
+                        source=source,
+                        char_start=cs,
+                        char_end=ce,
+                        action=region.action,
+                    ))
+
+    logger.debug(
+        f"Shape enforcement: {len(regions)} regions → {len(result)} "
+        f"(page {page_data.page_number})"
+    )
+    return result
+
+
 def _compute_block_offsets_legacy(
     text_blocks: list[TextBlock],
 ) -> list[tuple[int, int, TextBlock]]:
@@ -508,6 +745,9 @@ def _merge_detections(
                 char_start=item["start"],
                 char_end=item["end"],
             ))
+
+    # Enforce region shape constraints (bounds, word gaps, word limit)
+    regions = _enforce_region_shapes(regions, page_data, block_offsets)
 
     # Resolve any remaining bounding-box overlaps
     regions = _resolve_bbox_overlaps(regions)

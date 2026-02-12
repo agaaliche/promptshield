@@ -508,7 +508,7 @@ export default function DocumentViewer() {
       });
       setRegions(resolveAllOverlaps(result.regions));
       setStatusMessage(
-        `Autodetect: ${result.added} added, ${result.updated} updated (${result.total_regions} total)`
+        `Autodetect: ${result.added} added, ${result.updated} updated, ${result.removed ?? 0} removed (${result.total_regions} total)`
       );
     } catch (err) {
       setStatusMessage(`Autodetect failed: ${err}`);

@@ -100,6 +100,7 @@ export interface RedetectResult {
   doc_id: string;
   added: number;
   updated: number;
+  removed: number;
   total_regions: number;
   regions: PIIRegion[];
 }

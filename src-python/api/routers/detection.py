@@ -299,6 +299,32 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
                 existing_on_scanned.append(nr)
                 added_count += 1
 
+        # ── Prune stale auto-detected regions ──
+        # Remove old auto-detected regions that are still PENDING and
+        # had no matching new detection (i.e. the improved detection no
+        # longer flags them).  Regions that the user acted on (REMOVE,
+        # TOKENIZE, CANCEL) or that were manually created are preserved.
+        from models.schemas import RegionAction, DetectionSource
+        pruned = []
+        removed_count = 0
+        for r in existing_on_scanned:
+            if r.id in matched_existing_ids:
+                # Was matched (updated) by a new detection — keep
+                pruned.append(r)
+            elif r.action != RegionAction.PENDING:
+                # User already acted on it — keep
+                pruned.append(r)
+            elif r.source == DetectionSource.MANUAL:
+                # Manually created — keep
+                pruned.append(r)
+            elif r in new_regions:
+                # Newly added this run — keep
+                pruned.append(r)
+            else:
+                # Old auto-detected, still PENDING, no new match — remove
+                removed_count += 1
+        existing_on_scanned = pruned
+
         merged_regions = existing_other + existing_on_scanned
 
         # Propagate newly detected text across all pages
@@ -329,7 +355,7 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
         logger.info(
             f"Redetect for '{doc.original_filename}' "
             f"(threshold={body.confidence_threshold}, pages={body.page_number or 'all'}): "
-            f"{added_count} added, {updated_count} updated, "
+            f"{added_count} added, {updated_count} updated, {removed_count} pruned, "
             f"{len(doc.regions)} total"
         )
 
@@ -337,6 +363,7 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
             "doc_id": doc_id,
             "added": added_count,
             "updated": updated_count,
+            "removed": removed_count,
             "total_regions": len(doc.regions),
             "regions": [r.model_dump(mode="json") for r in doc.regions],
         }

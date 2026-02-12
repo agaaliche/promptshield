@@ -170,7 +170,7 @@ export default function DetokenizeView() {
               style={S.textarea}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Paste text containing [ANON_PERSON_A3F2B1] style tokens here..."
+              placeholder="Paste text containing [P38291] style tokens here..."
               rows={18}
             />
           </div>

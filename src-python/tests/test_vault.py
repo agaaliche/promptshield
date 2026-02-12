@@ -38,8 +38,9 @@ class TestTokenVault:
 
     def test_store_and_resolve_token(self, vault: TokenVault):
         m = _store(vault, "John Doe", PIIType.PERSON, "doc-001")
-        assert m.token_string.startswith("[ANON_")
+        assert m.token_string.startswith("[P")
         assert m.token_string.endswith("]")
+        assert len(m.token_string) == 8  # [P38291]
 
         resolved = vault.resolve_token(m.token_string)
         assert resolved is not None
@@ -47,7 +48,7 @@ class TestTokenVault:
         assert resolved.pii_type == PIIType.PERSON
 
     def test_resolve_unknown_token(self, vault: TokenVault):
-        result = vault.resolve_token("[ANON_PERSON_DEADBE]")
+        result = vault.resolve_token("[P99999]")
         assert result is None
 
     def test_resolve_all_in_text(self, vault: TokenVault):
@@ -60,7 +61,8 @@ class TestTokenVault:
         assert count == 2
         assert "Alice" in resolved_text
         assert "secret@mail.com" in resolved_text
-        assert "[ANON_" not in resolved_text
+        assert "[P" not in resolved_text
+        assert "[E" not in resolved_text
 
     def test_list_tokens(self, vault: TokenVault):
         _store(vault, "Bob", PIIType.PERSON, "doc-002")

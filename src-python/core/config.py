@@ -98,7 +98,7 @@ class AppConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = Field(default=8910, ge=0, le=65535)   # 0 = random
 
-    # Token format
+    # Token format — short tokens: [P38291] = letter prefix + 5 digits
     token_prefix: str = "ANON"
     token_format: str = "[{prefix}_{type}_{hex}]"
 

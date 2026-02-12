@@ -187,25 +187,42 @@ class TokenVault:
     # Token operations
     # -----------------------------------------------------------------------
 
+    # Map each PIIType to a single-letter prefix for compact tokens
+    _TYPE_LETTER: dict[str, str] = {
+        "PERSON": "P",
+        "ORG": "O",
+        "EMAIL": "E",
+        "PHONE": "T",       # T for telephone
+        "SSN": "S",
+        "CREDIT_CARD": "C",
+        "DATE": "D",
+        "ADDRESS": "A",
+        "LOCATION": "L",
+        "IP_ADDRESS": "I",
+        "IBAN": "B",
+        "PASSPORT": "X",
+        "DRIVER_LICENSE": "R",
+        "CUSTOM": "K",
+        "UNKNOWN": "U",
+    }
+
     def generate_token_string(self, pii_type: PIIType) -> str:
-        """Generate a unique token string like [ANON_PERSON_A3F2B1C8D9]."""
+        """Generate a compact unique token like [P38291].
+
+        Format: ``[<letter><5 digits>]`` — 8 chars total.
+        The letter encodes the entity type (P=person, E=email, etc.).
+        100 000 unique tokens per type before collision retry.
+        """
         type_str = pii_type.value if isinstance(pii_type, PIIType) else str(pii_type)
+        letter = self._TYPE_LETTER.get(type_str, "U")
         with self._lock:
-            hex_part = secrets.token_hex(5).upper()  # 10 hex chars — ~1 trillion unique per type
-            token = config.token_format.format(
-                prefix=config.token_prefix,
-                type=type_str,
-                hex=hex_part,
-            )
+            digits = str(secrets.randbelow(100_000)).zfill(5)
+            token = f"[{letter}{digits}]"
 
             # Ensure uniqueness
             while self._token_string_exists(token):
-                hex_part = secrets.token_hex(4).upper()
-                token = config.token_format.format(
-                    prefix=config.token_prefix,
-                    type=type_str,
-                    hex=hex_part,
-                )
+                digits = str(secrets.randbelow(100_000)).zfill(5)
+                token = f"[{letter}{digits}]"
 
             return token
 
@@ -277,9 +294,11 @@ class TokenVault:
 
         self._ensure_unlocked()
 
-        # Find all token patterns in the text
+        # Find all token patterns in the text.
+        # Supports both new compact format [P38291] and legacy [ANON_TYPE_HEX].
         pattern = re.compile(
-            r"\[" + re.escape(config.token_prefix) + r"_[A-Z_]+_[A-F0-9]{6,12}\]"
+            r"\[[A-Z]\d{5}\]"
+            r"|\[" + re.escape(config.token_prefix) + r"_[A-Z_]+_[A-F0-9]{6,12}\]"
         )
         found_tokens = pattern.findall(text)
 

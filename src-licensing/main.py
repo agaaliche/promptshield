@@ -47,7 +47,7 @@ _LICENSING_ALLOWED_ORIGINS = [
 ]
 
 # M14: Only add dev origins when explicitly in dev mode
-if os.environ.get("PS_DEV_MODE", "").lower() in ("1", "true", "yes"):
+if settings.dev_mode:
     _LICENSING_ALLOWED_ORIGINS.extend([
         "http://localhost:1420",   # Tauri dev
         "http://localhost:5173",   # Vite dev
@@ -91,7 +91,7 @@ if __name__ == "__main__":
     import uvicorn
 
     # M13: Never use reload=True in production; use an env var to control
-    is_dev = os.environ.get("PS_DEV_MODE", "").lower() in ("1", "true", "yes")
+    is_dev = settings.dev_mode
 
     # H6: In production, configure SSL cert/key via environment variables
     ssl_kwargs: dict[str, Any] = {}

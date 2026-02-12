@@ -1,17 +1,25 @@
 """promptShield Licensing Server — configuration via environment variables."""
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+_ENV_FILE = Path(__file__).resolve().parent / ".env"
 
 
 class Settings(BaseSettings):
     # ── Database ──
     database_url: str = "postgresql+asyncpg://localhost:5432/promptshield"
 
-    # ── JWT ──
+    # ── JWT (kept for backward compat but no longer used for auth) ──
     jwt_secret: str = "CHANGE-ME-IN-PRODUCTION"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
+
+    # ── Firebase ──
+    firebase_project_id: str = "promptshield-6d5cd"
+    firebase_service_account_path: str = ""  # path to service-account JSON; empty = use ADC
 
     # ── Ed25519 keys (base64-encoded) ──
     ed25519_private_key_b64: str = ""
@@ -36,7 +44,11 @@ class Settings(BaseSettings):
     # Admin
     admin_emails: str = ""  # comma-separated list of admin emails
 
-    model_config = {"env_prefix": "PS_", "env_file": ".env"}
+    # Dev mode
+    dev_mode: bool = False
+    allow_default_secret: bool = False
+
+    model_config = {"env_prefix": "PS_", "env_file": str(_ENV_FILE)}
 
 
 settings = Settings()
@@ -46,16 +58,14 @@ settings = Settings()
 def validate_settings() -> None:
     """Raise on dangerous default values."""
     if settings.jwt_secret in ("CHANGE-ME-IN-PRODUCTION", ""):
-        import os
-        if os.getenv("PS_ALLOW_DEFAULT_SECRET") != "1":
+        if not settings.allow_default_secret:
             raise RuntimeError(
                 "CRITICAL: PS_JWT_SECRET is not configured. "
                 "Set the PS_JWT_SECRET environment variable before starting the server. "
                 "Set PS_ALLOW_DEFAULT_SECRET=1 only for local development."
             )
     if not settings.ed25519_private_key_b64:
-        import os
-        if os.getenv("PS_ALLOW_DEFAULT_SECRET") != "1":
+        if not settings.allow_default_secret:
             raise RuntimeError(
                 "CRITICAL: PS_ED25519_PRIVATE_KEY_B64 is not set. "
                 "Run 'python generate_keys.py' to generate a keypair."

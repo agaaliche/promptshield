@@ -1,28 +1,65 @@
-/** API client for the PromptShield licensing server + Tauri commands. */
+/** API client for the PromptShield licensing server + Tauri commands.
+ *
+ * Auth is delegated to Firebase. The licensing server verifies Firebase ID
+ * tokens via the `Authorization: Bearer <idToken>` header. No custom JWT /
+ * refresh-token logic is needed on the client side — Firebase SDK handles
+ * token refresh transparently.
+ */
 
 import type {
-  AuthTokens,
   LicenseResponse,
   LicenseStatus,
   SubscriptionInfo,
   UserInfo,
 } from "./types";
 import { useAppStore } from "./store";
+import { auth } from "./firebaseConfig";
+import { signOut } from "firebase/auth";
 
 // ── Licensing server URL ────────────────────────────────────────
 
 const LICENSING_URL =
   import.meta.env.VITE_LICENSING_URL ?? "https://api.promptshield.com";
 
+// ── Tauri detection ─────────────────────────────────────────────
+
+/** Returns true when running inside Tauri desktop shell. */
+export function isTauri(): boolean {
+  return "__TAURI_INTERNALS__" in window;
+}
+
 // ── Tauri invoke helper ─────────────────────────────────────────
 
-/**
- * Dynamically import the Tauri invoke API.
- * Returns null when running outside Tauri (e.g. plain browser dev).
- */
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<T>(cmd, args);
+}
+
+/**
+ * Web-mode license check: verifies Firebase user against the licensing server.
+ * Returns a LicenseStatus-compatible object.
+ */
+export async function checkWebLicense(): Promise<LicenseStatus> {
+  const user = auth.currentUser;
+  if (!user) {
+    return { valid: false, payload: null, error: "Not logged in", days_remaining: null };
+  }
+  try {
+    // Sync user with backend (creates user row + trial if first time)
+    await syncFirebaseUser();
+    // Check licence status
+    const ls = await getLicenseStatus();
+    return {
+      valid: ls.valid,
+      payload: ls.plan
+        ? { plan: ls.plan, email: user.email ?? "", seats: ls.seats ?? 1, machine_id: "web", issued: "", expires: ls.expires_at ?? "", v: 1 }
+        : null,
+      error: ls.valid ? null : (ls.message ?? "License invalid"),
+      days_remaining: ls.days_remaining ?? null,
+    };
+  } catch {
+    return { valid: false, payload: null, error: "Session expired", days_remaining: null };
+  }
 }
 
 // ── Tauri license commands (Rust side) ──────────────────────────
@@ -51,12 +88,14 @@ export async function startBackend(): Promise<string> {
   return tauriInvoke<string>("start_backend");
 }
 
-// ── Licensing server HTTP client ────────────────────────────────
+// ── Firebase auth header ────────────────────────────────────────
 
-function getAuthHeaders(): Record<string, string> {
-  const tokens = useAppStore.getState().authTokens;
-  if (!tokens) return {};
-  return { Authorization: `Bearer ${tokens.access_token}` };
+/** Get the current Firebase ID token for Authorization header. */
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const user = auth.currentUser;
+  if (!user) return {};
+  const idToken = await user.getIdToken();
+  return { Authorization: `Bearer ${idToken}` };
 }
 
 async function licensingRequest<T>(
@@ -64,36 +103,39 @@ async function licensingRequest<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const url = `${LICENSING_URL}${path}`;
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(url, {
     headers: {
       "Content-Type": "application/json",
-      ...getAuthHeaders(),
+      ...authHeaders,
       ...(options.headers as Record<string, string> | undefined),
     },
     ...options,
   });
 
   if (res.status === 401) {
-    // Try refresh
-    const refreshed = await tryRefreshToken();
-    if (refreshed) {
-      // Retry with new token
-      const retryRes = await fetch(url, {
-        headers: {
-          "Content-Type": "application/json",
-          ...getAuthHeaders(),
-          ...(options.headers as Record<string, string> | undefined),
-        },
-        ...options,
-      });
-      if (!retryRes.ok) {
-        const body = await retryRes.text();
-        throw new Error(`Licensing API error ${retryRes.status}: ${body}`);
+    // Firebase token may have expired — force refresh and retry once
+    const user = auth.currentUser;
+    if (user) {
+      try {
+        const freshToken = await user.getIdToken(/* forceRefresh */ true);
+        const retryRes = await fetch(url, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${freshToken}`,
+            ...(options.headers as Record<string, string> | undefined),
+          },
+          ...options,
+        });
+        if (!retryRes.ok) {
+          const body = await retryRes.text();
+          throw new Error(`Licensing API error ${retryRes.status}: ${body}`);
+        }
+        return retryRes.json();
+      } catch {
+        // Force-refresh also failed — sign out
       }
-      return retryRes.json();
     }
-    // Refresh failed — clear auth
-    useAppStore.getState().setAuthTokens(null);
     useAppStore.getState().setUserInfo(null);
     throw new Error("Session expired. Please log in again.");
   }
@@ -106,77 +148,28 @@ async function licensingRequest<T>(
   return res.json();
 }
 
-// ── Auth endpoints ──────────────────────────────────────────────
+// ── Auth: Firebase sync ─────────────────────────────────────────
 
-export async function register(
-  email: string,
-  password: string,
-): Promise<UserInfo> {
-  return licensingRequest<UserInfo>("/auth/register", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
-}
-
-export async function login(
-  email: string,
-  password: string,
-): Promise<AuthTokens> {
-  const tokens = await licensingRequest<AuthTokens>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
-  useAppStore.getState().setAuthTokens(tokens);
-  return tokens;
-}
-
-// H15: Singleton promise to prevent concurrent token refresh races
-let _refreshPromise: Promise<boolean> | null = null;
-
-export async function tryRefreshToken(): Promise<boolean> {
-  // If a refresh is already in-flight, piggyback on it
-  if (_refreshPromise) return _refreshPromise;
-
-  _refreshPromise = _doRefreshToken();
-  try {
-    return await _refreshPromise;
-  } finally {
-    _refreshPromise = null;
-  }
-}
-
-async function _doRefreshToken(): Promise<boolean> {
-  const tokens = useAppStore.getState().authTokens;
-  if (!tokens?.refresh_token) return false;
-  try {
-    const newTokens = await fetch(`${LICENSING_URL}/auth/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: tokens.refresh_token }),
-    });
-    if (!newTokens.ok) return false;
-    const data: AuthTokens = await newTokens.json();
-    useAppStore.getState().setAuthTokens(data);
-    return true;
-  } catch {
-    return false;
-  }
+/**
+ * Sync the current Firebase user with the licensing backend.
+ * The backend will create or update the local user row and auto-provision
+ * a free trial subscription for first-time users.
+ */
+export async function syncFirebaseUser(): Promise<UserInfo> {
+  const user = await licensingRequest<UserInfo>("/auth/sync", { method: "POST" });
+  useAppStore.getState().setUserInfo(user);
+  return user;
 }
 
 export async function logout(): Promise<void> {
-  const tokens = useAppStore.getState().authTokens;
-  if (tokens?.refresh_token) {
-    try {
-      await licensingRequest("/auth/logout", {
-        method: "POST",
-        body: JSON.stringify({ refresh_token: tokens.refresh_token }),
-      });
-    } catch {
-      // Best effort
-    }
+  try {
+    await signOut(auth);
+  } catch {
+    // Best effort
   }
-  useAppStore.getState().setAuthTokens(null);
   useAppStore.getState().setUserInfo(null);
+  useAppStore.getState().setLicenseStatus(null);
+  useAppStore.getState().setLicenseChecked(false);
   await clearLocalLicense().catch(() => {});
 }
 

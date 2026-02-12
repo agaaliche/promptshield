@@ -1,14 +1,17 @@
-"""JWT authentication + password hashing utilities."""
+"""Firebase ID-token verification + FastAPI dependency for current user.
+
+All password hashing and custom JWT logic has been removed — Firebase
+handles identity. The licensing server only verifies the ID token that
+the frontend obtains via the Firebase client SDK.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import secrets
+import logging
 import uuid
-from datetime import datetime, timedelta, timezone
 
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+import firebase_admin
+from firebase_admin import auth as firebase_auth, credentials as firebase_creds
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
@@ -16,73 +19,95 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import get_db
-from models import RefreshToken, User
+from models import User
 
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+logger = logging.getLogger("licensing.auth")
 _bearer = HTTPBearer()
 
 
-# ── Password helpers ───────────────────────────────────────────
+# ── Firebase Admin SDK initialisation (once) ────────────────────
 
-def hash_password(plain: str) -> str:
-    return _pwd_ctx.hash(plain)
-
-
-def verify_password(plain: str, hashed: str) -> bool:
-    return _pwd_ctx.verify(plain, hashed)
-
-
-# ── JWT helpers ────────────────────────────────────────────────
-
-def _create_token(data: dict, expires_delta: timedelta) -> str:
-    to_encode = data.copy()
-    to_encode["exp"] = datetime.now(timezone.utc) + expires_delta
-    to_encode["iat"] = datetime.now(timezone.utc)
-    return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+def _init_firebase() -> None:
+    """Initialise the Firebase Admin SDK if not already done."""
+    if firebase_admin._apps:
+        return  # already initialised
+    if settings.firebase_service_account_path:
+        cred = firebase_creds.Certificate(settings.firebase_service_account_path)
+    else:
+        # Falls back to Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS)
+        cred = firebase_creds.ApplicationDefault()
+    firebase_admin.initialize_app(cred, {"projectId": settings.firebase_project_id})
+    logger.info("Firebase Admin SDK initialised (project=%s)", settings.firebase_project_id)
 
 
-def create_access_token(user_id: str, email: str) -> tuple[str, int]:
-    """Return (token, expires_in_seconds)."""
-    delta = timedelta(minutes=settings.access_token_expire_minutes)
-    token = _create_token(
-        {"sub": user_id, "email": email, "type": "access"},
-        delta,
-    )
-    return token, int(delta.total_seconds())
+_init_firebase()
 
 
-def create_refresh_token(user_id: str) -> tuple[str, str, datetime]:
-    """Return (raw_token, token_hash, expires_at)."""
-    raw = secrets.token_urlsafe(48)
-    token_hash = hashlib.sha256(raw.encode()).hexdigest()
-    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
-    return raw, token_hash, expires_at
+# ── Verify Firebase ID token ───────────────────────────────────
+
+def verify_firebase_token(id_token: str) -> dict:
+    """Verify a Firebase ID token and return the decoded claims.
+
+    Raises HTTPException(401) on invalid / expired tokens.
+    """
+    try:
+        decoded = firebase_auth.verify_id_token(id_token, check_revoked=True)
+        return decoded
+    except firebase_auth.RevokedIdTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+    except firebase_auth.InvalidIdTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid ID token")
+    except firebase_auth.ExpiredIdTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired")
+    except Exception as exc:
+        logger.warning("Firebase token verification failed: %s", exc)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token verification failed")
 
 
-def decode_access_token(token: str) -> dict:
-    """Decode JWT; raises JWTError on failure."""
-    return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
-
-
-# ── FastAPI dependency — get current user from Bearer token ────
+# ── FastAPI dependency — get current user from Firebase Bearer token ──
 
 async def get_current_user(
     creds: HTTPAuthorizationCredentials = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Validate access token and return the User ORM object."""
-    try:
-        payload = decode_access_token(creds.credentials)
-        if payload.get("type") != "access":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing subject")
-    except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    """Validate Firebase ID token and return the local User ORM object.
 
-    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    If the user row does not yet exist (first API call after Firebase
+    sign-up), a stub row is created so downstream code always has a User.
+    """
+    decoded = verify_firebase_token(creds.credentials)
+    firebase_uid: str = decoded["uid"]
+    email: str = decoded.get("email", "")
+
+    # Look up by firebase_uid first, fall back to email for migration
+    result = await db.execute(
+        select(User).where(User.firebase_uid == firebase_uid)
+    )
     user = result.scalar_one_or_none()
-    if not user or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+
+    if not user and email:
+        # Check if a legacy user row exists with this email
+        result = await db.execute(
+            select(User).where(User.email == email.lower())
+        )
+        user = result.scalar_one_or_none()
+        if user:
+            # Link existing user to Firebase
+            user.firebase_uid = firebase_uid
+            await db.flush()
+
+    if not user:
+        # Auto-create a new user row on first sign-in
+        user = User(
+            email=email.lower(),
+            firebase_uid=firebase_uid,
+            full_name=decoded.get("name"),
+        )
+        db.add(user)
+        await db.flush()
+        await db.refresh(user)
+
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account deactivated")
+
     return user

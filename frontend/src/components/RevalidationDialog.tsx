@@ -1,11 +1,13 @@
 /** Revalidation dialog — prompts the user to revalidate their license online.
  *
  * Shown when the stored license is nearing expiry (< 7 days) or has expired.
+ * With Firebase auth, the user is already signed in — just revalidate directly.
  */
 
 import { useState, useCallback } from "react";
 import { useAppStore } from "../store";
-import { revalidateLicense, login, getMe } from "../licenseApi";
+import { revalidateLicense } from "../licenseApi";
+import { auth } from "../firebaseConfig";
 
 interface Props {
   daysRemaining: number | null;
@@ -13,23 +15,20 @@ interface Props {
 }
 
 export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) {
-  const { authTokens, addSnackbar, setLicenseStatus } = useAppStore();
+  const { addSnackbar, setLicenseStatus } = useAppStore();
   const [loading, setLoading] = useState(false);
-  const [needsLogin, setNeedsLogin] = useState(!authTokens);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const expired = daysRemaining !== null && daysRemaining <= 0;
+  const isSignedIn = !!auth.currentUser;
 
   const handleRevalidate = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      if (needsLogin) {
-        await login(email, password);
-        await getMe();
-        setNeedsLogin(false);
+      if (!isSignedIn) {
+        setError("Please sign in first to revalidate your license.");
+        return;
       }
       const status = await revalidateLicense();
       if (status.valid) {
@@ -44,7 +43,7 @@ export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) 
     } finally {
       setLoading(false);
     }
-  }, [needsLogin, email, password, setLicenseStatus, addSnackbar, onDismiss]);
+  }, [isSignedIn, setLicenseStatus, addSnackbar, onDismiss]);
 
   return (
     <div style={styles.overlay}>
@@ -60,32 +59,13 @@ export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) 
 
         {error && <div style={styles.error}>{error}</div>}
 
-        {needsLogin && (
-          <div style={styles.form}>
-            <input
-              type="email"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={styles.input}
-            />
-            <input
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={styles.input}
-            />
-          </div>
-        )}
-
         <div style={styles.actions}>
           <button
             onClick={handleRevalidate}
-            disabled={loading}
+            disabled={loading || !isSignedIn}
             style={{ ...styles.button, ...styles.buttonPrimary }}
           >
-            {loading ? "Revalidating..." : needsLogin ? "Sign In & Revalidate" : "Revalidate Now"}
+            {loading ? "Revalidating..." : "Revalidate Now"}
           </button>
           {!expired && (
             <button onClick={onDismiss} style={styles.button}>

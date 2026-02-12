@@ -12,7 +12,6 @@ import type {
   UploadItem,
   SnackbarItem,
   LicenseStatus,
-  AuthTokens,
   UserInfo,
 } from "./types";
 
@@ -20,8 +19,6 @@ interface AppState {
   // ── License / Auth ──
   licenseStatus: LicenseStatus | null;
   setLicenseStatus: (s: LicenseStatus | null) => void;
-  authTokens: AuthTokens | null;
-  setAuthTokens: (t: AuthTokens | null) => void;
   userInfo: UserInfo | null;
   setUserInfo: (u: UserInfo | null) => void;
   licenseChecked: boolean;
@@ -134,23 +131,10 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>()(devtools((set) => ({
-  // License / Auth
-  // C7: Auth tokens in localStorage is an XSS risk. In Tauri builds these
-  // should migrate to the Tauri secure store (keychain). localStorage is
-  // acceptable for the web-preview mode where there is no Tauri API.
+  // License / Auth — Firebase manages auth state/tokens; we only store
+  // licensing info and the synced user profile from the backend.
   licenseStatus: null,
   setLicenseStatus: (s) => set({ licenseStatus: s }),
-  authTokens: (() => {
-    try {
-      const raw = localStorage.getItem("ps_auth_tokens");
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
-  })(),
-  setAuthTokens: (t) => {
-    if (t) localStorage.setItem("ps_auth_tokens", JSON.stringify(t));
-    else localStorage.removeItem("ps_auth_tokens");
-    set({ authTokens: t });
-  },
   userInfo: null,
   setUserInfo: (u) => set({ userInfo: u }),
   licenseChecked: false,
@@ -408,8 +392,6 @@ export const useLicenseStore = () =>
   useAppStore(useShallow((s) => ({
     licenseStatus: s.licenseStatus,
     setLicenseStatus: s.setLicenseStatus,
-    authTokens: s.authTokens,
-    setAuthTokens: s.setAuthTokens,
     userInfo: s.userInfo,
     setUserInfo: s.setUserInfo,
     licenseChecked: s.licenseChecked,

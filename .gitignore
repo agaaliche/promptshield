@@ -16,6 +16,7 @@ build/
 # Node
 node_modules/
 frontend/dist/
+.vite/
 
 # Tauri build artifacts
 frontend/src-tauri/target/
@@ -33,6 +34,10 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+
+# Firebase service account keys (secrets)
+firebase-sa-key.json
+*-sa-key.json
 
 # PyInstaller
 *.spec.bak

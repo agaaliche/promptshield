@@ -30,7 +30,8 @@ class User(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(320), unique=True, nullable=False, index=True)
-    hashed_password = Column(String(128), nullable=False)
+    firebase_uid = Column(String(128), unique=True, nullable=True, index=True)
+    hashed_password = Column(String(128), nullable=True)  # nullable — Firebase users don't have local passwords
     full_name = Column(String(200), nullable=True)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)

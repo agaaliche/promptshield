@@ -2,8 +2,10 @@
 
 import { useEffect, useState, Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "./firebaseConfig";
 import { useAppStore } from "./store";
-import { validateLocalLicense, startBackend, getMe } from "./licenseApi";
+import { validateLocalLicense, startBackend, checkWebLicense } from "./licenseApi";
 import type { LicenseStatus as LicenseStatusType } from "./types";
 
 // ── Error Boundary ──────────────────────────────────────────────
@@ -76,7 +78,6 @@ function App() {
     setLicenseStatus,
     licenseChecked,
     setLicenseChecked,
-    authTokens,
     addSnackbar,
   } = useAppStore();
 
@@ -89,6 +90,7 @@ function App() {
 
     const checkLicense = async () => {
       try {
+        // Try Tauri local license first (desktop mode)
         const status: LicenseStatusType = await validateLocalLicense();
         if (cancelled) return;
         setLicenseStatus(status);
@@ -99,24 +101,47 @@ function App() {
           setShowRevalidation(true);
         }
       } catch {
-        // Not running in Tauri (browser dev) — skip license check
-        if (!cancelled) {
-          setLicenseStatus({ valid: true, payload: null, error: null, days_remaining: null });
-          setLicenseChecked(true);
-        }
+        // Not running in Tauri — use Firebase auth state for web-mode
+        if (cancelled) return;
+
+        // Listen for Firebase auth state changes
+        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+          if (cancelled) return;
+          if (firebaseUser) {
+            // User is signed in — check license on backend
+            try {
+              const webStatus = await checkWebLicense();
+              if (!cancelled) {
+                setLicenseStatus(webStatus);
+                setLicenseChecked(true);
+              }
+            } catch {
+              if (!cancelled) {
+                setLicenseStatus({ valid: false, payload: null, error: "Licensing server unreachable", days_remaining: null });
+                setLicenseChecked(true);
+              }
+            }
+          } else {
+            // No Firebase user — show auth screen
+            if (!cancelled) {
+              setLicenseStatus({ valid: false, payload: null, error: "Not logged in", days_remaining: null });
+              setLicenseChecked(true);
+            }
+          }
+        });
+
+        // Return unsubscribe in cleanup (captured via external ref)
+        _firebaseUnsub = unsubscribe;
       }
     };
 
+    let _firebaseUnsub: (() => void) | null = null;
     checkLicense();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      _firebaseUnsub?.();
+    };
   }, [setLicenseStatus, setLicenseChecked]);
-
-  // Restore user info from saved tokens
-  useEffect(() => {
-    if (authTokens && licenseStatus?.valid) {
-      getMe().catch(() => {});
-    }
-  }, [authTokens, licenseStatus?.valid]);
 
   // ── Step 2: Start backend once license is valid ─────────────
   useEffect(() => {

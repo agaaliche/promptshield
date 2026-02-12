@@ -1,27 +1,56 @@
-/** Key-paste screen — shown when no valid local license key is found.
+/** Activation screen — shown when no valid local license key is found.
  *
- * The desktop app is purely key-based: users get their license key from
- * promptshield.ca and paste it here. No login / email / password / social
- * sign-in in the app itself.
+ * Two tabs:
+ *   1. "Sign In" (default) — email + password → authenticates online via
+ *      Firebase REST API → activates license automatically.
+ *   2. "License Key" — paste an offline license key for air-gapped setups.
+ *
+ * After first activation the user can disable online mode in Settings.
  */
 
 import { useState, useCallback } from "react";
 import { useAppStore } from "../store";
-import { storeLocalLicense } from "../licenseApi";
+import { storeLocalLicense, signInOnline } from "../licenseApi";
 import type { LicenseStatus } from "../types";
+
+type Mode = "signin" | "key";
 
 export default function AuthScreen() {
   const { setLicenseStatus, setLicenseChecked, addSnackbar } = useAppStore();
+
+  const [mode, setMode] = useState<Mode>("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [licenseKey, setLicenseKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleActivate = useCallback(async () => {
-    const trimmed = licenseKey.trim();
-    if (!trimmed) {
-      setError("Please paste your license key");
-      return;
+  // ── Online sign-in ──────────────────────────────────────────
+  const handleSignIn = useCallback(async () => {
+    if (!email.trim()) { setError("Please enter your email"); return; }
+    if (!password) { setError("Please enter your password"); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      const status: LicenseStatus = await signInOnline(email.trim(), password);
+      if (status.valid) {
+        setLicenseStatus(status);
+        setLicenseChecked(true);
+        addSnackbar("License activated!", "success");
+      } else {
+        setError(status.error ?? "Activation failed");
+      }
+    } catch (e: any) {
+      setError(e.message ?? "Sign-in failed");
+    } finally {
+      setLoading(false);
     }
+  }, [email, password, setLicenseStatus, setLicenseChecked, addSnackbar]);
+
+  // ── Offline key paste ───────────────────────────────────────
+  const handleActivateKey = useCallback(async () => {
+    const trimmed = licenseKey.trim();
+    if (!trimmed) { setError("Please paste your license key"); return; }
     setLoading(true);
     setError(null);
     try {
@@ -42,7 +71,8 @@ export default function AuthScreen() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    handleActivate();
+    if (mode === "signin") handleSignIn();
+    else handleActivateKey();
   };
 
   return (
@@ -53,40 +83,62 @@ export default function AuthScreen() {
           <p style={styles.subtitle}>Secure Document Anonymization</p>
         </div>
 
-        <div style={styles.iconContainer}>
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary, #58a6ff)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-        </div>
-
-        <p style={styles.description}>
-          Enter your license key to get started. You can obtain a key from your
-          account dashboard at{" "}
-          <a
-            href="https://promptshield.ca"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={styles.link}
+        {/* ── Tab bar ── */}
+        <div style={styles.tabs}>
+          <button
+            style={{ ...styles.tab, ...(mode === "signin" ? styles.tabActive : {}) }}
+            onClick={() => { setMode("signin"); setError(null); }}
           >
-            promptshield.ca
-          </a>
-          .
-        </p>
+            Sign In
+          </button>
+          <button
+            style={{ ...styles.tab, ...(mode === "key" ? styles.tabActive : {}) }}
+            onClick={() => { setMode("key"); setError(null); }}
+          >
+            License Key
+          </button>
+        </div>
 
         {error && <div style={styles.error}>{error}</div>}
 
         <form onSubmit={handleSubmit} style={styles.form}>
-          <label style={styles.label}>License Key</label>
-          <textarea
-            value={licenseKey}
-            onChange={(e) => setLicenseKey(e.target.value)}
-            placeholder="Paste your license key here..."
-            rows={5}
-            style={styles.textarea}
-            autoFocus
-            spellCheck={false}
-          />
+          {mode === "signin" ? (
+            <>
+              <label style={styles.label}>Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="user@example.com"
+                required
+                style={styles.input}
+                autoFocus
+              />
+              <label style={styles.label}>Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                minLength={8}
+                style={styles.input}
+              />
+            </>
+          ) : (
+            <>
+              <label style={styles.label}>License Key</label>
+              <textarea
+                value={licenseKey}
+                onChange={(e) => setLicenseKey(e.target.value)}
+                placeholder="Paste your license key here..."
+                rows={5}
+                style={styles.textarea}
+                autoFocus
+                spellCheck={false}
+              />
+            </>
+          )}
 
           <button
             type="submit"
@@ -96,24 +148,44 @@ export default function AuthScreen() {
               ...(loading ? styles.buttonDisabled : {}),
             }}
           >
-            {loading ? "Activating..." : "Activate License"}
+            {loading
+              ? "Please wait..."
+              : mode === "signin"
+                ? "Sign In & Activate"
+                : "Activate License"}
           </button>
         </form>
 
         <div style={styles.footer}>
-          <p style={styles.footerText}>
-            Don't have a key?{" "}
-            <a
-              href="https://promptshield.ca"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={styles.link}
-            >
-              Sign up at promptshield.ca
-            </a>
-          </p>
+          {mode === "signin" ? (
+            <p style={styles.footerText}>
+              Don't have an account?{" "}
+              <a
+                href="https://promptshield.ca"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={styles.link}
+              >
+                Sign up at promptshield.ca
+              </a>
+            </p>
+          ) : (
+            <p style={styles.footerText}>
+              Get your key from{" "}
+              <a
+                href="https://promptshield.ca"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={styles.link}
+              >
+                promptshield.ca
+              </a>
+            </p>
+          )}
           <p style={styles.footerHint}>
-            Your license works offline for up to 30 days between validations.
+            {mode === "signin"
+              ? "After activation, the app works offline for up to 30 days."
+              : "No internet? Paste an offline license key from your account dashboard."}
           </p>
         </div>
       </div>
@@ -142,7 +214,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   header: {
     textAlign: "center" as const,
-    marginBottom: 16,
+    marginBottom: 20,
   },
   title: {
     fontSize: 28,
@@ -156,17 +228,26 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--text-secondary, #8b949e)",
     margin: "4px 0 0 0",
   },
-  iconContainer: {
+  tabs: {
     display: "flex",
-    justifyContent: "center",
-    marginBottom: 16,
-  },
-  description: {
-    fontSize: 13,
-    color: "var(--text-secondary, #8b949e)",
-    lineHeight: 1.5,
-    textAlign: "center" as const,
+    gap: 0,
     marginBottom: 20,
+    borderBottom: "1px solid var(--border-color, #30363d)",
+  },
+  tab: {
+    flex: 1,
+    padding: "8px 0",
+    background: "none",
+    border: "none",
+    borderBottom: "2px solid transparent",
+    color: "var(--text-secondary, #8b949e)",
+    fontSize: 13,
+    cursor: "pointer",
+    transition: "all 0.15s",
+  },
+  tabActive: {
+    color: "var(--accent-primary, #58a6ff)",
+    borderBottomColor: "var(--accent-primary, #58a6ff)",
   },
   error: {
     background: "rgba(248,81,73,0.1)",
@@ -188,6 +269,16 @@ const styles: Record<string, React.CSSProperties> = {
     color: "var(--text-secondary, #8b949e)",
     textTransform: "uppercase" as const,
     letterSpacing: "0.5px",
+  },
+  input: {
+    padding: "10px 12px",
+    borderRadius: 6,
+    border: "1px solid var(--border-color, #30363d)",
+    background: "var(--bg-primary, #0d1117)",
+    color: "var(--text-primary, #c9d1d9)",
+    fontSize: 14,
+    outline: "none",
+    marginBottom: 4,
   },
   textarea: {
     padding: "10px 12px",
@@ -222,7 +313,7 @@ const styles: Record<string, React.CSSProperties> = {
     textDecoration: "none",
   },
   footer: {
-    marginTop: 24,
+    marginTop: 20,
     textAlign: "center" as const,
   },
   footerText: {

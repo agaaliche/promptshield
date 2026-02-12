@@ -1,8 +1,8 @@
 /** API client for the PromptShield licensing server + Tauri commands.
  *
- * The desktop app is purely key-based. There is NO Firebase auth in the app.
- * Online license validation uses the machine fingerprint + existing license
- * blob as proof of prior authorization — no bearer tokens needed.
+ * Online sign-in uses the Firebase REST API (no SDK) to get an ID token,
+ * then activates the license via the licensing server. Once a key is stored
+ * locally, the app works offline with Ed25519-signed verification.
  */
 
 import type {
@@ -16,6 +16,9 @@ import { useAppStore } from "./store";
 
 const LICENSING_URL =
   import.meta.env.VITE_LICENSING_URL ?? "https://api.promptshield.com";
+
+// Firebase Web API key — used for REST sign-in only (no Firebase SDK)
+const FIREBASE_API_KEY = "AIzaSyADfsmLMp4qCKD8Sm1BIgKgYOjiK0F9z4A";
 
 // ── Tauri detection ─────────────────────────────────────────────
 
@@ -82,6 +85,103 @@ async function licensingRequest<T>(
   }
 
   return res.json();
+}
+
+/**
+ * Licensing API request with a Firebase bearer token for auth.
+ */
+async function authenticatedRequest<T>(
+  path: string,
+  idToken: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const url = `${LICENSING_URL}${path}`;
+  const res = await fetch(url, {
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+      ...(options.headers as Record<string, string> | undefined),
+    },
+    ...options,
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Licensing API error ${res.status}: ${body}`);
+  }
+
+  return res.json();
+}
+
+// ── Online sign-in (Firebase REST API — no SDK) ─────────────────
+
+/**
+ * Sign in with email + password via Firebase REST API, then activate the
+ * license on the licensing server and store the blob locally.
+ *
+ * This is the primary first-time activation flow.
+ */
+export async function signInOnline(
+  email: string,
+  password: string,
+): Promise<LicenseStatus> {
+  // 1. Authenticate with Firebase REST API
+  const authRes = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, returnSecureToken: true }),
+    },
+  );
+
+  if (!authRes.ok) {
+    const err = await authRes.json().catch(() => ({}));
+    throw new Error(friendlyFirebaseError(err?.error?.message));
+  }
+
+  const { idToken } = await authRes.json();
+
+  // 2. Sync user with licensing backend (creates row + trial if first time)
+  await authenticatedRequest("/auth/sync", idToken, { method: "POST" });
+
+  // 3. Activate license for this machine
+  const machineId = await getMachineId();
+  const machineName = await getMachineName();
+
+  const licenseResponse = await authenticatedRequest<LicenseResponse>(
+    "/license/activate",
+    idToken,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        machine_fingerprint: machineId,
+        machine_name: machineName,
+      }),
+    },
+  );
+
+  // 4. Store the Ed25519-signed blob locally
+  const status = await storeLocalLicense(licenseResponse.license_blob);
+  useAppStore.getState().setLicenseStatus(status);
+
+  return status;
+}
+
+function friendlyFirebaseError(code?: string): string {
+  if (!code) return "Authentication failed";
+  switch (code) {
+    case "EMAIL_NOT_FOUND":
+    case "INVALID_PASSWORD":
+    case "INVALID_LOGIN_CREDENTIALS":
+      return "Invalid email or password";
+    case "USER_DISABLED":
+      return "This account has been disabled";
+    case "TOO_MANY_ATTEMPTS_TRY_LATER":
+      return "Too many attempts. Please try again later.";
+    default:
+      return code.replace(/_/g, " ").toLowerCase();
+  }
 }
 
 // ── License endpoints ───────────────────────────────────────────

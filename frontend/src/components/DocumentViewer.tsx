@@ -1352,7 +1352,7 @@ export default function DocumentViewer() {
         </div>
 
         {/* User menu — right of zoom controls */}
-        <div style={{ marginLeft: 6, position: "relative", zIndex: 42 }}>
+        <div style={{ marginLeft: "auto", marginRight: 4, position: "relative", zIndex: 42 }}>
           <UserMenu />
         </div>
       </div>

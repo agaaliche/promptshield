@@ -116,11 +116,14 @@ def _detokenize_xlsx(data: bytes, vault) -> tuple[bytes, int, list[str]]:
 def _detokenize_pdf(data: bytes, vault) -> tuple[bytes, int, list[str]]:
     """PDF — in-place token replacement preserving original layout.
 
-    Strategy: search for each token string on each page using PyMuPDF's
-    ``search_for`` (which returns exact pixel rects), add a redaction
-    annotation with the original text as replacement, then apply
-    redactions.  This preserves all non-token content, images, and
-    formatting.
+    Strategy per page:
+      1. Search for each token string → get pixel rects.
+      2. Extract the token's visual style (font, size, color, baseline).
+      3. Add erase-only redactions (white fill, no text).
+      4. apply_redactions() wipes the token text.
+      5. insert_text() at the original baseline with the original value
+         using the extracted style — unconstrained by rect, so the
+         (usually longer) original text renders at the correct size.
     """
     import re
 
@@ -159,34 +162,96 @@ def _detokenize_pdf(data: bytes, vault) -> tuple[bytes, int, list[str]]:
         if not token_map:
             return data, 0, list(set(all_unresolved))
 
-        # Second pass: search-and-replace on each page
+        # Second pass: erase tokens then insert original text per page
         for page in pdf_doc:
+            # Collect deferred text insertions
+            deferred: list[tuple[str, dict]] = []  # (original_text, style)
+
             for token_str, original_text in token_map.items():
                 rects = page.search_for(token_str)
                 if not rects:
                     continue
 
                 for rect in rects:
-                    # Estimate font size from rect height (rough but effective)
-                    fontsize = max(6.0, min(rect.height * 0.85, 14.0))
+                    # Extract the visual style of the token text
+                    style = _extract_detok_style(page, rect)
 
-                    page.add_redact_annot(
-                        rect,
-                        text=original_text,
-                        fill=(1, 1, 1),       # white background
-                        text_color=(0, 0, 0),  # black text
-                        fontsize=fontsize,
-                        fontname="helv",
+                    # Widen erase rect to cover the original text which
+                    # is usually longer than the compact token.
+                    needed_width = fitz.get_text_length(
+                        original_text,
+                        fontname=style["fontname"],
+                        fontsize=style["fontsize"],
                     )
+                    erase_rect = fitz.Rect(rect)
+                    if needed_width > erase_rect.width:
+                        erase_rect.x1 = erase_rect.x0 + needed_width + 4
+
+                    page.add_redact_annot(erase_rect, fill=(1, 1, 1))
+                    deferred.append((original_text, style))
                     total_replaced += 1
 
             page.apply_redactions()
+
+            # Insert original text at each token's baseline position
+            for text, style in deferred:
+                origin = style["origin"]
+                page.insert_text(
+                    fitz.Point(origin[0], origin[1]),
+                    text,
+                    fontname=style["fontname"],
+                    fontsize=style["fontsize"],
+                    color=style["text_color"],
+                )
 
         output_bytes = pdf_doc.tobytes(deflate=True, clean=True)
         return output_bytes, total_replaced, list(set(all_unresolved))
 
     finally:
         pdf_doc.close()
+
+
+def _extract_detok_style(page: fitz.Page, rect: fitz.Rect) -> dict:
+    """Extract font properties from the dominant span overlapping *rect*.
+
+    Returns dict with fontname (Base-14), fontsize, text_color, origin.
+    Falls back to sensible defaults when no span overlaps.
+    """
+    from core.anonymizer.engine import _map_to_base14, _srgb_int_to_rgb
+
+    blocks = page.get_text("dict", clip=rect.irect, flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+
+    best_span = None
+    best_overlap = 0.0
+
+    for block in blocks:
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                sb = fitz.Rect(span["bbox"])
+                overlap = abs(sb & rect)  # intersection area
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_span = span
+
+    if best_span is None:
+        return {
+            "fontname": "helv",
+            "fontsize": 11.0,
+            "text_color": (0, 0, 0),
+            "origin": (rect.x0, rect.y1 - 2),
+        }
+
+    span_origin = best_span.get("origin", (rect.x0, rect.y1 - 2))
+    baseline_y = span_origin[1]
+
+    return {
+        "fontname": _map_to_base14(best_span.get("font", ""), best_span.get("flags", 0)),
+        "fontsize": best_span.get("size", 11.0),
+        "text_color": _srgb_int_to_rgb(best_span.get("color", 0)),
+        "origin": (rect.x0, baseline_y),
+    }
 
 
 # ---------------------------------------------------------------------------

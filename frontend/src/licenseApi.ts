@@ -1,10 +1,12 @@
 /** API client for the PromptShield licensing server + Tauri commands.
  *
- * Online sign-in uses the Firebase REST API (no SDK) to get an ID token,
- * then activates the license via the licensing server. Once a key is stored
- * locally, the app works offline with Ed25519-signed verification.
+ * Online sign-in uses the Firebase Auth SDK (email/password + Google).
+ * After sign-in the ID token is sent to the licensing server which returns
+ * an Ed25519-signed license blob. Once stored locally the app works offline.
  */
 
+import { signInWithEmailAndPassword, signInWithPopup, signOut } from "firebase/auth";
+import { auth, googleProvider } from "./firebaseConfig";
 import type {
   LicenseResponse,
   LicenseStatus,
@@ -16,9 +18,6 @@ import { useAppStore } from "./store";
 
 const LICENSING_URL =
   import.meta.env.VITE_LICENSING_URL ?? "https://api.promptshield.com";
-
-// Firebase Web API key — used for REST sign-in only (no Firebase SDK)
-const FIREBASE_API_KEY = "AIzaSyADfsmLMp4qCKD8Sm1BIgKgYOjiK0F9z4A";
 
 // ── Tauri detection ─────────────────────────────────────────────
 
@@ -113,39 +112,19 @@ async function authenticatedRequest<T>(
   return res.json();
 }
 
-// ── Online sign-in (Firebase REST API — no SDK) ─────────────────
+// ── Shared activation helper ────────────────────────────────────
 
 /**
- * Sign in with email + password via Firebase REST API, then activate the
- * license on the licensing server and store the blob locally.
+ * Given a Firebase ID token, sync the user with the licensing backend,
+ * activate the license for this machine, and store the blob locally.
  *
- * This is the primary first-time activation flow.
+ * Used by both email/password and Google sign-in flows.
  */
-export async function signInOnline(
-  email: string,
-  password: string,
-): Promise<LicenseStatus> {
-  // 1. Authenticate with Firebase REST API
-  const authRes = await fetch(
-    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, returnSecureToken: true }),
-    },
-  );
-
-  if (!authRes.ok) {
-    const err = await authRes.json().catch(() => ({}));
-    throw new Error(friendlyFirebaseError(err?.error?.message));
-  }
-
-  const { idToken } = await authRes.json();
-
-  // 2. Sync user with licensing backend (creates row + trial if first time)
+async function activateWithToken(idToken: string): Promise<LicenseStatus> {
+  // 1. Sync user with licensing backend (creates row + trial if first time)
   await authenticatedRequest("/auth/sync", idToken, { method: "POST" });
 
-  // 3. Activate license for this machine
+  // 2. Activate license for this machine
   const machineId = await getMachineId();
   const machineName = await getMachineName();
 
@@ -161,26 +140,70 @@ export async function signInOnline(
     },
   );
 
-  // 4. Store the Ed25519-signed blob locally
+  // 3. Store the Ed25519-signed blob locally
   const status = await storeLocalLicense(licenseResponse.license_blob);
   useAppStore.getState().setLicenseStatus(status);
 
+  // 4. Sign out of Firebase — we don't need the session, just the key
+  await signOut(auth).catch(() => {});
+
   return status;
+}
+
+// ── Online sign-in (Firebase Auth SDK) ──────────────────────────
+
+/**
+ * Sign in with email + password, then activate the license.
+ */
+export async function signInOnline(
+  email: string,
+  password: string,
+): Promise<LicenseStatus> {
+  try {
+    const cred = await signInWithEmailAndPassword(auth, email, password);
+    const idToken = await cred.user.getIdToken();
+    return await activateWithToken(idToken);
+  } catch (e: any) {
+    throw new Error(friendlyFirebaseError(e.code));
+  }
+}
+
+/**
+ * Sign in with Google popup, then activate the license.
+ */
+export async function signInWithGoogle(): Promise<LicenseStatus> {
+  try {
+    const cred = await signInWithPopup(auth, googleProvider);
+    const idToken = await cred.user.getIdToken();
+    return await activateWithToken(idToken);
+  } catch (e: any) {
+    // User closed the popup — not an error
+    if (e.code === "auth/popup-closed-by-user") {
+      throw new Error("Sign-in cancelled");
+    }
+    throw new Error(friendlyFirebaseError(e.code));
+  }
 }
 
 function friendlyFirebaseError(code?: string): string {
   if (!code) return "Authentication failed";
   switch (code) {
-    case "EMAIL_NOT_FOUND":
-    case "INVALID_PASSWORD":
-    case "INVALID_LOGIN_CREDENTIALS":
+    case "auth/user-not-found":
+    case "auth/wrong-password":
+    case "auth/invalid-credential":
       return "Invalid email or password";
-    case "USER_DISABLED":
+    case "auth/user-disabled":
       return "This account has been disabled";
-    case "TOO_MANY_ATTEMPTS_TRY_LATER":
+    case "auth/too-many-requests":
       return "Too many attempts. Please try again later.";
+    case "auth/network-request-failed":
+      return "Network error. Check your internet connection.";
+    case "auth/popup-blocked":
+      return "Sign-in popup was blocked. Allow popups and try again.";
+    case "auth/account-exists-with-different-credential":
+      return "An account already exists with this email using a different sign-in method.";
     default:
-      return code.replace(/_/g, " ").toLowerCase();
+      return code?.replace("auth/", "").replace(/-/g, " ") ?? "Authentication failed";
   }
 }
 

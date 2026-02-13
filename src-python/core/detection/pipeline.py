@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from typing import Optional
@@ -177,6 +178,114 @@ def _max_lines_for_type(pii_type) -> int:
     """Return the maximum visual lines for a given PII type."""
     key = pii_type.value if hasattr(pii_type, "value") else str(pii_type)
     return _MAX_LINES_BY_TYPE.get(key, _MAX_LINES_DEFAULT)
+
+
+# ---------------------------------------------------------------------------
+# Cross-line ORG boundary scanner
+# ---------------------------------------------------------------------------
+_CROSS_LINE_WORD_WINDOW = 5   # words to inspect on each side of a \n
+
+
+def _detect_cross_line_orgs(full_text: str) -> list[RegexMatch]:
+    """Detect ORG names that span across line breaks.
+
+    At each ``\\n`` boundary in *full_text*, extract a window of the last
+    ``_CROSS_LINE_WORD_WINDOW`` words and the first
+    ``_CROSS_LINE_WORD_WINDOW`` words of the next line, join them as a
+    single line (replacing ``\\n`` with a space — offset-safe because
+    both are 1 char), and run ORG regex patterns.  Only matches that
+    straddle the boundary are kept.
+
+    This catches company names that wrap across visual lines and would
+    otherwise be missed if NER/GLiNER struggle with ``\\n`` inside
+    entity names.
+    """
+    import re as _re
+    from core.detection.regex_patterns import PATTERNS as _PAT
+
+    org_patterns: list[tuple[_re.Pattern, PIIType, float]] = [
+        (_re.compile(p, f), pt, c)
+        for p, pt, c, f in _PAT
+        if pt == PIIType.ORG
+    ]
+    if not org_patterns:
+        return []
+
+    results: list[RegexMatch] = []
+    wn = _CROSS_LINE_WORD_WINDOW
+
+    # Iterate over every \n in full_text
+    for nl in _re.finditer(r"\n", full_text):
+        nl_pos = nl.start()
+
+        # ── window before boundary (last N words on current line) ──
+        win_start = nl_pos
+        wc = 0
+        i = nl_pos - 1
+        while i >= 0:
+            ch = full_text[i]
+            if ch == "\n":
+                win_start = i + 1
+                break
+            if ch == " ":
+                wc += 1
+                if wc >= wn:
+                    win_start = i + 1
+                    break
+            i -= 1
+        else:
+            win_start = 0
+
+        # ── window after boundary (first N words on next line) ──
+        win_end = nl_pos + 1
+        wc = 0
+        i = nl_pos + 1
+        while i < len(full_text):
+            ch = full_text[i]
+            if ch == "\n":
+                win_end = i
+                break
+            if ch == " ":
+                wc += 1
+                if wc >= wn:
+                    win_end = i
+                    break
+            i += 1
+        else:
+            win_end = len(full_text)
+
+        window = full_text[win_start:win_end]
+        if len(window.split()) < 3:
+            continue
+
+        # Replace \n → space (1-to-1 char mapping keeps offsets aligned)
+        test_text = window.replace("\n", " ")
+        nl_rel = nl_pos - win_start   # boundary position within window
+
+        for compiled_re, pii_type, conf in org_patterns:
+            for m in compiled_re.finditer(test_text):
+                # Only keep matches that straddle the \n boundary
+                if m.start() < nl_rel < m.end():
+                    real_start = win_start + m.start()
+                    real_end = win_start + m.end()
+                    results.append(RegexMatch(
+                        start=real_start,
+                        end=real_end,
+                        text=full_text[real_start:real_end],
+                        pii_type=pii_type,
+                        confidence=conf,
+                    ))
+
+    # Deduplicate — same span may be found from adjacent boundaries
+    seen: set[tuple[int, int]] = set()
+    unique: list[RegexMatch] = []
+    for r in results:
+        key = (r.start, r.end)
+        if key not in seen:
+            seen.add(key)
+            unique.append(r)
+
+    return unique
 
 
 def _effective_gap_threshold(line_height: float) -> float:
@@ -393,7 +502,19 @@ def _enforce_region_shapes(
         region = region.model_copy(update={"bbox": clamped})
 
         # ── 2. Find overlapping TextBlocks ───────────────────────────
-        triples = _blocks_overlapping_bbox(region.bbox, block_offsets)
+        # Prefer char offsets over bbox for auto-detected regions —
+        # multi-line bboxes merge into a wide rectangle that captures
+        # unrelated blocks on the same visual lines.  Char offsets
+        # precisely identify the blocks that constitute the match.
+        if region.char_start is not None and region.char_end is not None and region.char_start < region.char_end:
+            triples = [
+                (bs, be, blk)
+                for bs, be, blk in block_offsets
+                if be > region.char_start and bs < region.char_end
+            ]
+        else:
+            # Manual region or missing offsets — fall back to spatial overlap
+            triples = _blocks_overlapping_bbox(region.bbox, block_offsets)
         if not triples:
             # Manual region or geometry mismatch — keep as-is
             result.append(region)
@@ -432,6 +553,7 @@ def _enforce_region_shapes(
                     char_start=cs,
                     char_end=ce,
                     action=region.action,
+                    linked_group=region.linked_group,
                 ))
             else:
                 # > word limit — split into chunks and re-detect each
@@ -473,6 +595,7 @@ def _enforce_region_shapes(
                         char_start=cs,
                         char_end=ce,
                         action=region.action,
+                        linked_group=region.linked_group,
                     ))
 
     logger.debug(
@@ -842,6 +965,156 @@ def _merge_detections(
         else:
             merged.append(cand)
 
+    # ── Pipeline-level ORG noise filter ──────────────────────────────────
+    # NER (spaCy, BERT) and GLiNER all feed into this merge step.
+    # Filter single-word ORG candidates from NER/GLiNER that are generic
+    # business / accounting / legal terms — not real organisation names.
+    _ORG_PIPELINE_NOISE: set[str] = {
+        # English
+        "department", "section", "division", "group", "team",
+        "committee", "board", "council", "commission",
+        "act", "law", "regulation", "policy", "standard",
+        "agreement", "contract", "report", "summary",
+        "schedule", "exhibit", "annex", "appendix",
+        "article", "clause", "provision", "amendment",
+        "table", "figure", "chart", "graph", "page",
+        "total", "subtotal", "grand", "amount", "balance",
+        "net", "tax", "note", "notes", "other", "non",
+        "assets", "asset", "liabilities", "liability", "equity",
+        "revenue", "revenues", "expenses", "expense", "income",
+        "profit", "loss", "cash", "capital", "debt",
+        "depreciation", "amortization", "provision", "provisions",
+        "interest", "dividend", "dividends",
+        "goodwill", "inventory", "receivable", "receivables",
+        "payable", "payables", "deferred", "retained",
+        "earnings", "cost", "costs", "margin", "surplus", "deficit",
+        "current", "long", "short", "term",
+        "inc", "llc", "ltd", "corp", "co", "plc", "sa", "se",
+        # French
+        "société", "societe", "entreprise", "compagnie", "filiale",
+        "département", "departement", "service", "bureau", "direction",
+        "division", "commission", "comité", "comite",
+        "conseil", "ministère", "ministere", "gouvernement",
+        "article", "clause", "alinéa", "alinea", "annexe",
+        "tableau", "graphique",
+        "loi", "décret", "decret", "arrêté", "arrete",
+        "règlement", "reglement",
+        "contrat", "accord", "convention", "rapport",
+        "résumé", "resume",
+        "actif", "passif", "actifs", "passifs",
+        "court", "long", "terme",
+        "encaisse", "emprunt", "immobilisation", "immobilisations",
+        "amortissement", "solde",
+        "résultat", "resultat", "résultats", "resultats",
+        "bénéfice", "benefice", "perte", "pertes",
+        "bilan", "exercice", "exercices",
+        "charges", "produits", "compte", "comptes",
+        "exploitation", "financement", "investissement",
+        "achats", "coût", "cout", "frais",
+        "client", "fournisseur",
+        "principales", "principaux", "principale", "principal",
+        "général", "generale", "generaux", "générale", "généraux",
+        "comptables", "comptable", "comptabilité", "comptabilite",
+        "financier", "financiere", "financiers", "financieres",
+        "financière", "financières",
+        "corporelles", "corporels", "corporel", "corporelle",
+        "méthodes", "methodes", "méthode", "methode",
+        "statuts", "statut", "nature",
+        "activités", "activites", "activité", "activite",
+        "éléments", "elements", "élément", "element",
+        "informations", "information",
+        "établissement", "etablissement",
+        "établissements", "etablissements",
+        "opérations", "operations", "opération", "operation",
+        "complémentaires", "complementaires",
+        "complémentaire", "complementaire",
+        "notes", "note",
+        "groupe", "section",
+        "société", "societe",
+        # Italian
+        "dipartimento", "servizio", "ufficio", "direzione",
+        "sezione", "articolo", "clausola", "allegato", "grafico",
+        "legge", "decreto", "ordinanza", "regolamento",
+        "contratto", "accordo", "convenzione",
+        "rapporto", "relazione",
+        # German / Spanish
+        "gesellschaft", "unternehmen", "abteilung",
+        "empresa", "compañía", "compania", "división",
+    }
+
+    def _is_org_pipeline_noise(text: str) -> bool:
+        clean = text.strip()
+        low = clean.lower()
+        if low in _ORG_PIPELINE_NOISE:
+            return True
+        if len(clean) <= 2:
+            return True
+        if clean.isupper() and len(clean) <= 4:
+            return True
+        if clean and clean[0].isdigit():
+            return True
+        if clean.isdigit():
+            return True
+        words = clean.split()
+        # All-lowercase single/two-word — not a real org name
+        if clean == clean.lower() and len(words) <= 2:
+            return True
+        if len(words) == 1 and len(words[0]) <= 3:
+            return True
+        # Multi-word where every word is noise
+        if len(words) >= 2 and all(
+            w.lower() in _ORG_PIPELINE_NOISE for w in words
+        ):
+            return True
+        return False
+
+    org_before = len(merged)
+    merged = [
+        item for item in merged
+        if not (
+            item["pii_type"] == PIIType.ORG
+            and item["source"] in (DetectionSource.NER, DetectionSource.GLINER)
+            and _is_org_pipeline_noise(item["text"])
+        )
+    ]
+    org_dropped = org_before - len(merged)
+    if org_dropped:
+        logger.debug(
+            f"Page {page_data.page_number}: pipeline ORG filter "
+            f"dropped {org_dropped} NER/GLiNER noise ORG(s)"
+        )
+
+    # ── Merge adjacent ADDRESS fragments (any source) ────────────────
+    # BERT models emit STREET, BUILDINGNUM, CITY, ZIPCODE as separate
+    # entities.  Also absorb LOCATION entities (city / state names)
+    # sandwiched between ADDRESS fragments.  Allow cross-line merge up
+    # to 4 visual lines total (consistent with _MAX_LINES_BY_TYPE).
+    _addr_merged: list[dict] = []
+    for item in merged:
+        if _addr_merged and _addr_merged[-1]["pii_type"] == PIIType.ADDRESS:
+            cur_is_addr = item["pii_type"] == PIIType.ADDRESS
+            cur_is_loc  = item["pii_type"] == PIIType.LOCATION
+            if cur_is_addr or cur_is_loc:
+                prev = _addr_merged[-1]
+                gap = item["start"] - prev["end"]
+                if 0 <= gap <= 60:
+                    combined_text = page_data.full_text[prev["start"]:item["end"]]
+                    newline_count = combined_text.count("\n")
+                    if newline_count <= 3:  # max 4 visual lines
+                        prev["end"] = item["end"]
+                        prev["text"] = combined_text
+                        prev["confidence"] = max(
+                            prev["confidence"], item["confidence"]
+                        )
+                        continue
+        _addr_merged.append(item)
+    if len(_addr_merged) < len(merged):
+        logger.debug(
+            f"Page {page_data.page_number}: merged "
+            f"{len(merged) - len(_addr_merged)} adjacent ADDRESS fragment(s)"
+        )
+    merged = _addr_merged
+
     # Pre-compute deterministic block-offset map once for this page
     block_offsets = _compute_block_offsets(
         page_data.text_blocks, page_data.full_text,
@@ -856,6 +1129,10 @@ def _merge_detections(
     for item in merged:
         # Filter by confidence threshold
         if item["confidence"] < config.confidence_threshold:
+            continue
+
+        # Drop CUSTOM-type detections entirely — they are a noisy catch-all
+        if item["pii_type"] == PIIType.CUSTOM:
             continue
 
         line_bboxes = _char_offsets_to_line_bboxes(
@@ -876,21 +1153,32 @@ def _merge_detections(
                 _large_font_skipped += 1
                 continue
 
+        # ── ADDRESS street-number heuristic ──────────────────────────
+        # For multi-line ADDRESS matches, the street number and at least
+        # one street-name word must coexist on the same visual line.
+        # This prevents false positives like "2023\nActif Court" where
+        # "2023" is a year on line 1 and "Actif Court" are unrelated
+        # table headers on line 2.
+        if (
+            len(line_bboxes) > 1
+            and item["pii_type"] in (PIIType.ADDRESS, "ADDRESS")
+        ):
+            match_text = page_data.full_text[item["start"]:item["end"]]
+            first_line = match_text.split("\n")[0].strip()
+            # If the first visual line is purely numeric / punctuation
+            # (no alphabetic street-name word), skip this match.
+            if first_line and not re.search(r"[A-Za-zÀ-ÿ]", first_line):
+                continue
+
         # ── Multi-line merging per PII type ──
         max_lines = _max_lines_for_type(item["pii_type"])
         
-        if len(line_bboxes) <= max_lines:
-            # Within line limit → merge into one encompassing region
-            merged_bbox = BBox(
-                x0=min(b.x0 for b in line_bboxes),
-                y0=min(b.y0 for b in line_bboxes),
-                x1=max(b.x1 for b in line_bboxes),
-                y1=max(b.y1 for b in line_bboxes),
-            )
+        if len(line_bboxes) == 1:
+            # Single line — one region, no linked group needed
             regions.append(PIIRegion(
                 id=uuid.uuid4().hex[:12],
                 page_number=page_data.page_number,
-                bbox=merged_bbox,
+                bbox=line_bboxes[0],
                 text=item["text"],
                 pii_type=item["pii_type"],
                 confidence=item["confidence"],
@@ -898,27 +1186,72 @@ def _merge_detections(
                 char_start=item["start"],
                 char_end=item["end"],
             ))
-        else:
-            # Exceeds line limit → chunk into max_lines-sized groups
-            for i in range(0, len(line_bboxes), max_lines):
-                chunk_bboxes = line_bboxes[i:i + max_lines]
-                merged_bbox = BBox(
-                    x0=min(b.x0 for b in chunk_bboxes),
-                    y0=min(b.y0 for b in chunk_bboxes),
-                    x1=max(b.x1 for b in chunk_bboxes),
-                    y1=max(b.y1 for b in chunk_bboxes),
-                )
+        elif len(line_bboxes) <= max_lines:
+            # Multi-line within limit → create per-line sibling regions
+            # sharing a linked_group ID so the UI treats them as one unit.
+            group_id = uuid.uuid4().hex[:12]
+
+            # Compute per-line char offsets from \n positions so that
+            # each sibling has char_start/char_end scoped to its own
+            # line — prevents _enforce_region_shapes from pulling in
+            # blocks from the other line(s).
+            match_text = page_data.full_text[item["start"]:item["end"]]
+            line_parts = match_text.split("\n")
+            if len(line_parts) == len(line_bboxes):
+                line_char_ranges: list[tuple[int, int]] = []
+                pos = item["start"]
+                for part in line_parts:
+                    line_char_ranges.append((pos, pos + len(part)))
+                    pos += len(part) + 1  # +1 for the \n
+            else:
+                # Mismatch — fall back to shared offsets
+                line_char_ranges = [(item["start"], item["end"])] * len(line_bboxes)
+
+            for idx, lb in enumerate(line_bboxes):
+                cs, ce = line_char_ranges[idx]
                 regions.append(PIIRegion(
                     id=uuid.uuid4().hex[:12],
                     page_number=page_data.page_number,
-                    bbox=merged_bbox,
+                    bbox=lb,
                     text=item["text"],
                     pii_type=item["pii_type"],
                     confidence=item["confidence"],
                     source=item["source"],
-                    char_start=item["start"],
-                    char_end=item["end"],
+                    char_start=cs,
+                    char_end=ce,
+                    linked_group=group_id,
                 ))
+        else:
+            # Exceeds line limit → chunk into max_lines-sized groups
+            match_text = page_data.full_text[item["start"]:item["end"]]
+            line_parts = match_text.split("\n")
+            if len(line_parts) == len(line_bboxes):
+                all_char_ranges: list[tuple[int, int]] = []
+                pos = item["start"]
+                for part in line_parts:
+                    all_char_ranges.append((pos, pos + len(part)))
+                    pos += len(part) + 1
+            else:
+                all_char_ranges = [(item["start"], item["end"])] * len(line_bboxes)
+
+            for i in range(0, len(line_bboxes), max_lines):
+                chunk_bboxes = line_bboxes[i:i + max_lines]
+                chunk_ranges = all_char_ranges[i:i + max_lines]
+                group_id = uuid.uuid4().hex[:12] if len(chunk_bboxes) > 1 else None
+                for idx, lb in enumerate(chunk_bboxes):
+                    cs, ce = chunk_ranges[idx]
+                    regions.append(PIIRegion(
+                        id=uuid.uuid4().hex[:12],
+                        page_number=page_data.page_number,
+                        bbox=lb,
+                        text=item["text"],
+                        pii_type=item["pii_type"],
+                        confidence=item["confidence"],
+                        source=item["source"],
+                        char_start=cs,
+                        char_end=ce,
+                        linked_group=group_id,
+                    ))
 
     if _large_font_skipped:
         logger.info(
@@ -926,6 +1259,35 @@ def _merge_detections(
             f"{_large_font_skipped} large-font candidate(s) "
             f"(bbox height>={_max_pt}pt)"
         )
+
+    # ── Suppress standalone ORGs that fall inside a linked group ──
+    # A standalone ORG whose char range is contained within (or
+    # significantly overlaps with) a linked-group sibling's range is
+    # redundant — the group already covers that text.
+    linked_intervals: list[tuple[int, int]] = []
+    for r in regions:
+        if r.linked_group is not None:
+            linked_intervals.append((r.char_start, r.char_end))
+    if linked_intervals:
+        kept: list[PIIRegion] = []
+        for r in regions:
+            if (
+                r.linked_group is None
+                and r.pii_type == PIIType.ORG
+                and any(
+                    r.char_start >= gs and r.char_end <= ge
+                    for gs, ge in linked_intervals
+                )
+            ):
+                continue  # standalone ORG fully inside a linked sibling
+            kept.append(r)
+        if len(kept) < len(regions):
+            logger.debug(
+                f"Page {page_data.page_number}: suppressed "
+                f"{len(regions) - len(kept)} standalone ORG(s) "
+                f"inside linked groups"
+            )
+        regions = kept
 
     # Enforce region shape constraints (bounds, word gaps, word limit)
     regions = _enforce_region_shapes(regions, page_data, block_offsets)
@@ -1143,6 +1505,31 @@ def detect_pii_on_page(
         logger.info(
             f"Page {page_data.page_number}: Regex found {len(regex_matches)} matches"
         )
+
+        # Cross-line ORG boundary scan — catches company names that wrap
+        # across visual lines (\n in full_text).
+        t0 = time.perf_counter()
+        cross_line_matches = _detect_cross_line_orgs(text)
+        if cross_line_matches:
+            # Only add cross-line matches that don't already overlap
+            # with existing regex matches (avoid duplicates).
+            existing_spans = [(m.start, m.end) for m in regex_matches]
+            added = 0
+            for cl in cross_line_matches:
+                overlaps = any(
+                    cl.start < e_end and cl.end > e_start
+                    for e_start, e_end in existing_spans
+                )
+                if not overlaps:
+                    regex_matches.append(cl)
+                    existing_spans.append((cl.start, cl.end))
+                    added += 1
+            if added:
+                logger.info(
+                    f"Page {page_data.page_number}: Cross-line ORG scan "
+                    f"added {added} match(es)"
+                )
+        timings["cross_line_org"] = (time.perf_counter() - t0) * 1000
 
     # Layer 2: NER (spaCy, HuggingFace BERT, or auto-select)
     # Always supplements with heuristic name detection for coverage.

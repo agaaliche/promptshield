@@ -55,24 +55,38 @@ async def debug_detections(doc_id: str, page_number: Optional[int] = None):
 
 @router.put("/documents/{doc_id}/regions/{region_id}/action")
 async def set_region_action(doc_id: str, region_id: str, req: RegionActionRequest):
-    """Set the action for a specific PII region."""
+    """Set the action for a specific PII region (and linked siblings)."""
     doc = get_doc(doc_id)
+    target = None
     for region in doc.regions:
         if region.id == region_id:
+            target = region
             region.action = req.action
-            save_doc(doc)
-            return {"status": "ok", "region_id": region_id, "action": req.action.value}
-    raise HTTPException(404, f"Region '{region_id}' not found")
+            break
+    if target is None:
+        raise HTTPException(404, f"Region '{region_id}' not found")
+    # Propagate to linked siblings
+    if target.linked_group:
+        for region in doc.regions:
+            if region.linked_group == target.linked_group:
+                region.action = req.action
+    save_doc(doc)
+    return {"status": "ok", "region_id": region_id, "action": req.action.value}
 
 
 @router.delete("/documents/{doc_id}/regions/{region_id}")
 async def delete_region(doc_id: str, region_id: str):
-    """Delete a PII region entirely from the document."""
+    """Delete a PII region (and linked siblings) from the document."""
     doc = get_doc(doc_id)
-    original_len = len(doc.regions)
-    doc.regions = [r for r in doc.regions if r.id != region_id]
-    if len(doc.regions) == original_len:
+    # Find linked_group before deletion
+    target = next((r for r in doc.regions if r.id == region_id), None)
+    if target is None:
         raise HTTPException(404, f"Region '{region_id}' not found")
+    grp = target.linked_group
+    if grp:
+        doc.regions = [r for r in doc.regions if r.linked_group != grp]
+    else:
+        doc.regions = [r for r in doc.regions if r.id != region_id]
     save_doc(doc)
     return {"status": "ok", "region_id": region_id}
 

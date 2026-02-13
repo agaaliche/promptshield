@@ -50,6 +50,7 @@ export interface PIIRegion {
   char_start: number;
   char_end: number;
   action: RegionAction;
+  linked_group?: string | null;  // shared ID linking multi-line sibling regions
 }
 
 export interface DocumentInfo {
@@ -101,6 +102,13 @@ export interface RedetectResult {
   added: number;
   updated: number;
   removed: number;
+  total_regions: number;
+  regions: PIIRegion[];
+}
+
+export interface ResetDetectionResult {
+  doc_id: string;
+  cleared: number;
   total_regions: number;
   regions: PIIRegion[];
 }

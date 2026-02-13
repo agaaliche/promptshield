@@ -333,10 +333,83 @@ class TestOrg:
         org = _of_type(detect_regex("Envoyé par Groupe Michelin"), "ORG")
         assert len(org) >= 1
 
+    def test_french_body_text_lowercase_company(self):
+        """Body text: 'Les entreprises de restauration B.N. ltée' with lowercase words."""
+        text = "filiale, Les entreprises de restauration B.N. ltée, ont fusionné."
+        org = _of_type(detect_regex(text), "ORG")
+        assert len(org) >= 1
+        assert any("entreprises" in m.text.lower() and "ltée" in m.text.lower() for m in org)
 
-# ═══════════════════════════════════════════════════════════════════════════
-# False positive prevention
-# ═══════════════════════════════════════════════════════════════════════════
+    def test_french_numbered_company_quebec(self):
+        """Quebec-style numbered company: '9425-7524 Québec inc.'"""
+        text = "la société 9425-7524 Québec inc. et sa filiale"
+        org = _of_type(detect_regex(text), "ORG")
+        assert len(org) >= 1
+        assert any("9425-7524" in m.text for m in org)
+
+    def test_allcaps_header_with_abbreviation(self):
+        """ALL CAPS header: 'LES ENTREPRISES DE RESTAURATION B.N. LTÉE'"""
+        text = "LES ENTREPRISES DE RESTAURATION B.N. LTÉE"
+        org = _of_type(detect_regex(text), "ORG")
+        assert len(org) >= 1
+        assert any("B.N." in m.text for m in org)
+
+    def test_no_false_positive_french_body_text(self):
+        """Normal French text without company names should not match."""
+        texts = [
+            "La direction est responsable de la préparation et de la présentation.",
+            "Les notes complémentaires font partie intégrante de ces états financiers.",
+            "Le rapport comprend les informations financières historiques.",
+        ]
+        for text in texts:
+            org = _of_type(detect_regex(text), "ORG")
+            assert len(org) == 0, f"False positive in: {text}"
+
+
+class TestRotationFilter:
+    """Tests for _is_rotated_word in the text extraction pipeline."""
+
+    def test_periods_not_rotated(self):
+        """B.N. — periods at different y-position should not flag rotation."""
+        from core.ingestion.loader import _is_rotated_word
+        # Simulated from real PDF data: B=545.12, .=540.89, N=545.01, .=540.89
+        y_centers = [545.12, 540.89, 545.01, 540.89]
+        heights = [10.73, 2.6, 10.95, 2.6]
+        assert not _is_rotated_word(y_centers, heights)
+
+    def test_comma_not_rotated(self):
+        """'2023,' — trailing comma should not flag rotation."""
+        from core.ingestion.loader import _is_rotated_word
+        y_centers = [518.83, 518.77, 518.83, 518.77, 514.67]
+        heights = [7.57, 7.69, 7.57, 7.69, 2.93]
+        assert not _is_rotated_word(y_centers, heights)
+
+    def test_apostrophe_not_rotated(self):
+        """'l'exercice' — apostrophe at different y-pos should not flag rotation."""
+        from core.ingestion.loader import _is_rotated_word
+        y_centers = [461.33, 463.4, 459.95, 459.94, 459.97, 459.95, 460.74, 461.33, 460.74, 459.87]
+        heights = [7.77, 3.26, 5.31, 5.0, 5.31, 5.16, 5.3, 7.77, 5.3, 5.31]
+        assert not _is_rotated_word(y_centers, heights)
+
+    def test_accented_capital_not_rotated(self):
+        """'Équipements' — accented É with taller bbox should not flag rotation."""
+        from core.ingestion.loader import _is_rotated_word
+        y_centers = [203.39, 199.88, 200.91, 202.37, 199.88, 200.99, 201.06, 200.99, 201.06, 201.78, 200.99]
+        heights = [9.83, 7.51, 5.14, 7.77, 7.51, 5.31, 5.16, 5.31, 5.16, 6.72, 5.3]
+        assert not _is_rotated_word(y_centers, heights)
+
+    def test_truly_rotated_detected(self):
+        """Simulated 30° rotated text should be detected as rotated."""
+        from core.ingestion.loader import _is_rotated_word
+        # 8 chars at 30° rotation: progressive y-shift of ~3pt per char
+        y_centers = [100.0, 103.0, 106.0, 109.0, 112.0, 115.0, 118.0, 121.0]
+        heights = [6.0] * 8
+        assert _is_rotated_word(y_centers, heights)
+
+    def test_single_char_not_rotated(self):
+        """Single character should never be considered rotated."""
+        from core.ingestion.loader import _is_rotated_word
+        assert not _is_rotated_word([100.0], [6.0])
 
 class TestFalsePositives:
     def test_clean_text(self):
@@ -394,4 +467,188 @@ class TestMultipleTypes:
         assert "SSN" in types
         assert "PHONE" in types
         assert "EMAIL" in types
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Cross-line ORG boundary detection
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestCrossLineOrg:
+    """Tests for _detect_cross_line_orgs — company names spanning line breaks."""
+
+    def _matches(self, text):
+        from core.detection.pipeline import _detect_cross_line_orgs
+        return _detect_cross_line_orgs(text)
+
+    def test_company_split_at_connecting_word(self):
+        """Company name with connecting word on the next line."""
+        text = "Nous avons audite Les Entreprises\nde Restauration B.N. Ltee pour"
+        matches = self._matches(text)
+        assert len(matches) >= 1
+        assert any("Entreprises" in m.text and "Ltee" in m.text for m in matches)
+
+    def test_suffix_on_next_line(self):
+        """Legal suffix (Inc) appears on the next line."""
+        text = "le rapport de Societe Generale\ndu Transport Inc dans le cadre"
+        matches = self._matches(text)
+        assert len(matches) >= 1
+        assert any("Inc" in m.text for m in matches)
+
+    def test_all_caps_across_lines(self):
+        """ALL CAPS company name split across two lines."""
+        text = "LES ENTREPRISES DE RESTAURATION\nB.N. LTEE"
+        matches = self._matches(text)
+        assert len(matches) >= 1
+        assert any("LTEE" in m.text and "ENTREPRISES" in m.text for m in matches)
+
+    def test_numbered_company_across_lines(self):
+        """Quebec numbered company wrapping across a line break."""
+        text = "la societe 9425-7524\nQuebec inc. a ete constituee"
+        matches = self._matches(text)
+        assert len(matches) >= 1
+        assert any("9425-7524" in m.text and "inc" in m.text for m in matches)
+
+    def test_no_false_positive_normal_text(self):
+        """Normal French prose should not trigger cross-line ORG detection."""
+        text = "il fait beau aujourd hui\net dans le jardin les fleurs"
+        matches = self._matches(text)
+        assert len(matches) == 0
+
+    def test_company_fully_on_one_line_not_duplicated(self):
+        """Company name entirely on one line should NOT be detected here."""
+        text = "Les Entreprises de Restauration B.N. Ltee\net les autres"
+        matches = self._matches(text)
+        assert len(matches) == 0
+
+    def test_no_match_when_no_newlines(self):
+        """Text without newlines produces no cross-line matches."""
+        text = "Les Entreprises de Restauration B.N. Ltee"
+        matches = self._matches(text)
+        assert len(matches) == 0
+
+    def test_gmbh_across_lines(self):
+        """German GmbH suffix on next line."""
+        text = "Die Gesellschaft Muller und Schmidt\nTechnik GmbH hat berichtet"
+        matches = self._matches(text)
+        assert len(matches) >= 1
+        assert any("GmbH" in m.text for m in matches)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Linked-group (multi-line siblings) pipeline tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestLinkedGroup:
+    """Tests that multi-line detections produce per-line sibling regions
+    sharing a linked_group ID."""
+
+    def _make_page_data(self, full_text, blocks):
+        from models.schemas import PageData, TextBlock, BBox
+        text_blocks = []
+        for i, (txt, x0, y0, x1, y1) in enumerate(blocks):
+            text_blocks.append(TextBlock(
+                text=txt,
+                bbox=BBox(x0=x0, y0=y0, x1=x1, y1=y1),
+                word_index=i,
+            ))
+        return PageData(
+            page_number=1,
+            width=612.0,
+            height=792.0,
+            bitmap_path="/tmp/dummy.png",
+            text_blocks=text_blocks,
+            full_text=full_text,
+        )
+
+    def test_multiline_org_creates_linked_siblings(self):
+        """A 2-line ORG match should produce 2 regions with same linked_group."""
+        from core.detection.pipeline import _merge_detections
+        from core.detection.regex_detector import RegexMatch
+        from models.schemas import PIIType
+
+        # Simulate: "Societe Generale\ndu Transport Inc"
+        # Line 1: y=100..110, Line 2: y=120..130
+        text = "Societe Generale\ndu Transport Inc"
+        blocks = [
+            ("Societe", 10, 100, 60, 110),
+            ("Generale", 65, 100, 120, 110),
+            ("du", 10, 120, 25, 130),
+            ("Transport", 30, 120, 90, 130),
+            ("Inc", 95, 120, 115, 130),
+        ]
+        page_data = self._make_page_data(text, blocks)
+
+        regex_matches = [
+            RegexMatch(
+                start=0, end=len(text),
+                text=text, pii_type=PIIType.ORG, confidence=0.90,
+            ),
+        ]
+
+        regions = _merge_detections(regex_matches, [], [], page_data)
+        org_regions = [r for r in regions if r.pii_type == PIIType.ORG]
+
+        # Should have 2 linked siblings (one per line)
+        assert len(org_regions) == 2
+        assert org_regions[0].linked_group is not None
+        assert org_regions[0].linked_group == org_regions[1].linked_group
+        # Each sibling has a per-line bbox (not a merged tall rectangle)
+        assert org_regions[0].bbox.y1 <= 115  # line 1
+        assert org_regions[1].bbox.y0 >= 115  # line 2
+
+    def test_single_line_org_no_linked_group(self):
+        """A single-line ORG should have linked_group=None."""
+        from core.detection.pipeline import _merge_detections
+        from core.detection.regex_detector import RegexMatch
+        from models.schemas import PIIType
+
+        text = "Societe Generale Inc"
+        blocks = [
+            ("Societe", 10, 100, 60, 110),
+            ("Generale", 65, 100, 120, 110),
+            ("Inc", 125, 100, 145, 110),
+        ]
+        page_data = self._make_page_data(text, blocks)
+
+        regex_matches = [
+            RegexMatch(
+                start=0, end=len(text),
+                text=text, pii_type=PIIType.ORG, confidence=0.90,
+            ),
+        ]
+
+        regions = _merge_detections(regex_matches, [], [], page_data)
+        org_regions = [r for r in regions if r.pii_type == PIIType.ORG]
+        assert len(org_regions) == 1
+        assert org_regions[0].linked_group is None
+
+    def test_linked_siblings_share_text(self):
+        """Both siblings should carry the full match text."""
+        from core.detection.pipeline import _merge_detections
+        from core.detection.regex_detector import RegexMatch
+        from models.schemas import PIIType
+
+        text = "Les Entreprises\nde Restauration Ltee"
+        blocks = [
+            ("Les", 10, 100, 30, 110),
+            ("Entreprises", 35, 100, 100, 110),
+            ("de", 10, 120, 22, 130),
+            ("Restauration", 27, 120, 100, 130),
+            ("Ltee", 105, 120, 130, 130),
+        ]
+        page_data = self._make_page_data(text, blocks)
+
+        regex_matches = [
+            RegexMatch(
+                start=0, end=len(text),
+                text=text, pii_type=PIIType.ORG, confidence=0.90,
+            ),
+        ]
+
+        regions = _merge_detections(regex_matches, [], [], page_data)
+        org_regions = [r for r in regions if r.pii_type == PIIType.ORG]
+        assert len(org_regions) == 2
+        # Both carry the full text
+        for r in org_regions:
+            assert r.text == text
 

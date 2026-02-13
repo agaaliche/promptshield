@@ -214,6 +214,11 @@ class TestDetection:
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
+    async def test_reset_detection_missing_doc(self, client: AsyncClient):
+        resp = await client.post("/api/documents/no-doc/reset-detection")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
     async def test_get_regions_missing_doc(self, client: AsyncClient):
         resp = await client.get("/api/documents/no-doc/regions")
         assert resp.status_code == 404

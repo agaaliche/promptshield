@@ -122,6 +122,7 @@ class PIIRegion(BaseModel):
     char_start: int = 0
     char_end: int = 0
     action: RegionAction = RegionAction.PENDING
+    linked_group: str | None = None    # shared ID linking multi-line sibling regions
 
 
 # ---------------------------------------------------------------------------

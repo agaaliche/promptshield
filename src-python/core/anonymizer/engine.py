@@ -166,6 +166,9 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
             # Collect deferred text insertions for after redactions apply
             deferred: list[tuple[str, dict]] = []  # (text, style)
 
+            # Cache: linked_group → token_string (siblings share one token)
+            _group_tokens: dict[str, str] = {}
+
             for region in page_regions:
                 bbox = region.bbox
                 rect = fitz.Rect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
@@ -173,27 +176,34 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
                 if region.action == RegionAction.REMOVE:
                     replacement_text = "---"
                 elif region.action == RegionAction.TOKENIZE:
-                    token_string = vault.generate_token_string(region.pii_type)
+                    # Linked siblings share the same token
+                    grp = region.linked_group
+                    if grp and grp in _group_tokens:
+                        token_string = _group_tokens[grp]
+                    else:
+                        token_string = vault.generate_token_string(region.pii_type)
+                        if grp:
+                            _group_tokens[grp] = token_string
 
-                    mapping = TokenMapping(
-                        token_string=token_string,
-                        original_text=region.text,
-                        pii_type=region.pii_type,
-                        source_document=doc.original_filename,
-                        context_snippet=_get_context_snippet(
-                            doc.pages[page_num].full_text,
-                            region.char_start,
-                            region.char_end,
-                        ),
-                    )
-                    vault.store_token(mapping)
+                        mapping = TokenMapping(
+                            token_string=token_string,
+                            original_text=region.text,
+                            pii_type=region.pii_type,
+                            source_document=doc.original_filename,
+                            context_snippet=_get_context_snippet(
+                                doc.pages[page_num].full_text,
+                                region.char_start,
+                                region.char_end,
+                            ),
+                        )
+                        vault.store_token(mapping)
+
+                        token_manifest.append({
+                            "token_string": token_string,
+                            "original_text": region.text,
+                            "page_number": page_num + 1,
+                        })
                     replacement_text = token_string
-
-                    token_manifest.append({
-                        "token_string": token_string,
-                        "original_text": region.text,
-                        "page_number": page_num + 1,
-                    })
                 else:
                     continue
 
@@ -208,7 +218,7 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
 
                 if region.action == RegionAction.REMOVE:
                     regions_removed += 1
-                else:
+                elif region.action == RegionAction.TOKENIZE:
                     tokens_created += 1
 
             # Wipe all original text under the white rects
@@ -442,6 +452,9 @@ def _anonymize_docx_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeRes
         # Track replacements
         replacements: dict[str, str] = {}
 
+        # Cache: linked_group → token_string (siblings share one token)
+        _group_tokens: dict[str, str] = {}
+
         for region in sorted_regions:
             original_text = region.text
 
@@ -451,7 +464,16 @@ def _anonymize_docx_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeRes
                 regions_removed += 1
 
             elif region.action == RegionAction.TOKENIZE:
+                # Linked siblings share the same token
+                grp = region.linked_group
+                if grp and grp in _group_tokens:
+                    # Sibling reuse — skip vault/manifest
+                    replacements[original_text] = _group_tokens[grp]
+                    tokens_created += 1
+                    continue
                 token_string = vault.generate_token_string(region.pii_type)
+                if grp:
+                    _group_tokens[grp] = token_string
 
                 mapping = TokenMapping(
                     token_string=token_string,
@@ -550,6 +572,9 @@ def _anonymize_xlsx_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeRes
         # Track replacements
         replacements: dict[str, str] = {}
 
+        # Cache: linked_group → token_string (siblings share one token)
+        _group_tokens: dict[str, str] = {}
+
         for region in sorted_regions:
             original_text = region.text
 
@@ -559,7 +584,15 @@ def _anonymize_xlsx_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeRes
                 regions_removed += 1
 
             elif region.action == RegionAction.TOKENIZE:
+                # Linked siblings share the same token
+                grp = region.linked_group
+                if grp and grp in _group_tokens:
+                    replacements[original_text] = _group_tokens[grp]
+                    tokens_created += 1
+                    continue
                 token_string = vault.generate_token_string(region.pii_type)
+                if grp:
+                    _group_tokens[grp] = token_string
 
                 mapping = TokenMapping(
                     token_string=token_string,
@@ -644,6 +677,9 @@ def _anonymize_image_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeRe
         full_text = page_data.full_text
 
         # Process all annotated regions
+        # Cache: linked_group → token_string (siblings share one token)
+        _group_tokens: dict[str, str] = {}
+
         for region in doc.regions:
             if region.action == RegionAction.REMOVE:
                 # Draw white rectangle (clean removal)
@@ -655,16 +691,28 @@ def _anonymize_image_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeRe
                 regions_removed += 1
 
             elif region.action == RegionAction.TOKENIZE:
-                token_string = vault.generate_token_string(region.pii_type)
+                # Linked siblings share the same token
+                grp = region.linked_group
+                if grp and grp in _group_tokens:
+                    token_string = _group_tokens[grp]
+                else:
+                    token_string = vault.generate_token_string(region.pii_type)
+                    if grp:
+                        _group_tokens[grp] = token_string
 
-                mapping = TokenMapping(
-                    token_string=token_string,
-                    original_text=region.text,
-                    pii_type=region.pii_type,
-                    source_document=doc.original_filename,
-                    context_snippet=_get_context_snippet(full_text, region.char_start, region.char_end),
-                )
-                vault.store_token(mapping)
+                    mapping = TokenMapping(
+                        token_string=token_string,
+                        original_text=region.text,
+                        pii_type=region.pii_type,
+                        source_document=doc.original_filename,
+                        context_snippet=_get_context_snippet(full_text, region.char_start, region.char_end),
+                    )
+                    vault.store_token(mapping)
+
+                    token_manifest.append({
+                        "token_string": token_string,
+                        "original_text": region.text,
+                    })
 
                 # Draw white rectangle then add token text
                 bbox = region.bbox
@@ -690,11 +738,6 @@ def _anonymize_image_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeRe
                     font=font,
                 )
                 tokens_created += 1
-
-                token_manifest.append({
-                    "token_string": token_string,
-                    "original_text": region.text,
-                })
 
         # Save anonymized image with original extension
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

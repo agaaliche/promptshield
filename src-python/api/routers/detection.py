@@ -294,9 +294,11 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
                 updated_indices.add(ni)
                 updated_count += 1
 
+        newly_added_ids: set[str] = set()
         for ni, nr in enumerate(new_regions):
             if ni not in updated_indices:
                 existing_on_scanned.append(nr)
+                newly_added_ids.add(nr.id)
                 added_count += 1
 
         # ── Prune stale auto-detected regions ──
@@ -311,18 +313,22 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
             if r.id in matched_existing_ids:
                 # Was matched (updated) by a new detection — keep
                 pruned.append(r)
+            elif r.id in newly_added_ids:
+                # Newly added this run — keep
+                pruned.append(r)
             elif r.action != RegionAction.PENDING:
                 # User already acted on it — keep
                 pruned.append(r)
             elif r.source == DetectionSource.MANUAL:
                 # Manually created — keep
                 pruned.append(r)
-            elif r in new_regions:
-                # Newly added this run — keep
-                pruned.append(r)
             else:
                 # Old auto-detected, still PENDING, no new match — remove
                 removed_count += 1
+                logger.debug(
+                    "Pruning stale region %s: [%s] '%s' (source=%s)",
+                    r.id, r.pii_type, r.text[:40] if r.text else "", r.source,
+                )
         existing_on_scanned = pruned
 
         merged_regions = existing_other + existing_on_scanned
@@ -376,6 +382,102 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
             detection_progress[doc_id]["status"] = "error"
             detection_progress[doc_id]["error"] = str(e)
         raise HTTPException(500, detail="Redetect failed. Check server logs for details.")
+    finally:
+        release_detection_lock()
+
+
+@router.post("/documents/{doc_id}/reset-detection")
+async def reset_detection(doc_id: str):
+    """Clear ALL regions for a document and re-run fresh detection from scratch.
+
+    Unlike ``/redetect`` (which merges), this wipes every region — including
+    user-acted ones — and runs the detection pipeline as if the document had
+    just been uploaded.  Use this when persisted data from an older detection
+    run is corrupt or stale.
+    """
+    import asyncio
+    import traceback
+
+    doc = get_doc(doc_id)
+
+    if not acquire_detection_lock(doc_id):
+        raise HTTPException(409, detail="Detection already in progress. Please wait.")
+
+    try:
+        from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages
+
+        old_count = len(doc.regions)
+        doc.status = DocumentStatus.DETECTING
+        doc.regions = []
+
+        engine = get_active_llm_engine()
+        total_pages = len(doc.pages)
+
+        detection_progress[doc_id] = {
+            "doc_id": doc_id,
+            "status": "running",
+            "current_page": 0,
+            "total_pages": total_pages,
+            "pages_done": 0,
+            "regions_found": 0,
+            "elapsed_seconds": 0.0,
+            "page_statuses": [
+                {"page": p.page_number, "status": "pending", "regions": 0}
+                for p in doc.pages
+            ],
+            "_started_at": _time.time(),
+        }
+
+        def _run():
+            all_regions: list[PIIRegion] = []
+            progress = detection_progress[doc_id]
+            for idx, page in enumerate(doc.pages):
+                progress["current_page"] = page.page_number
+                progress["page_statuses"][idx]["status"] = "running"
+                progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
+
+                regions = detect_pii_on_page(page, llm_engine=engine)
+                all_regions.extend(regions)
+
+                progress["page_statuses"][idx]["status"] = "done"
+                progress["page_statuses"][idx]["regions"] = len(regions)
+                progress["pages_done"] = idx + 1
+                progress["regions_found"] = len(all_regions)
+                progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
+            return all_regions
+
+        all_regions = await asyncio.to_thread(_run)
+        doc.regions = propagate_regions_across_pages(all_regions, doc.pages)
+        doc.status = DocumentStatus.REVIEWING
+        save_doc(doc)
+
+        if doc_id in detection_progress:
+            detection_progress[doc_id]["status"] = "complete"
+            detection_progress[doc_id]["regions_found"] = len(doc.regions)
+            detection_progress[doc_id]["elapsed_seconds"] = (
+                _time.time() - detection_progress[doc_id].get("_started_at", _time.time())
+            )
+
+        logger.info(
+            "Reset detection for '%s': cleared %d old regions, found %d fresh",
+            doc.original_filename, old_count, len(doc.regions),
+        )
+
+        return {
+            "doc_id": doc_id,
+            "cleared": old_count,
+            "total_regions": len(doc.regions),
+            "regions": [r.model_dump(mode="json") for r in doc.regions],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"Reset detection failed: {e}\n{tb}")
+        if doc_id in detection_progress:
+            detection_progress[doc_id]["status"] = "error"
+            detection_progress[doc_id]["error"] = str(e)
+        raise HTTPException(500, detail="Reset detection failed. Check server logs for details.")
     finally:
         release_detection_lock()
 

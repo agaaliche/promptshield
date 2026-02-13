@@ -43,6 +43,7 @@ import {
   updateRegionLabel,
   updateRegionText,
   redetectPII,
+  resetDetection,
   deleteRegion,
   batchDeleteRegions,
   logError,
@@ -517,6 +518,27 @@ export default function DocumentViewer() {
       setRedetecting(false);
     }
   }, [activeDocId, activePage, pushUndo, setRegions, setIsProcessing, setStatusMessage]);
+
+  // ── Reset detection (clear & rescan from scratch) ──
+  const handleResetDetection = useCallback(async () => {
+    if (!activeDocId) return;
+    setIsProcessing(true);
+    setRedetecting(true);
+    setStatusMessage("Resetting detection — clearing all regions and rescanning…");
+    try {
+      pushUndo();
+      const result = await resetDetection(activeDocId);
+      setRegions(resolveAllOverlaps(result.regions));
+      setStatusMessage(
+        `Detection reset: cleared ${result.cleared} old regions, found ${result.total_regions} fresh`
+      );
+    } catch (err) {
+      setStatusMessage(`Reset detection failed: ${err}`);
+    } finally {
+      setIsProcessing(false);
+      setRedetecting(false);
+    }
+  }, [activeDocId, pushUndo, setRegions, setIsProcessing, setStatusMessage]);
 
   // ── Anonymize ──
   const handleAnonymize = useCallback(async () => {
@@ -1209,6 +1231,10 @@ export default function DocumentViewer() {
                 setShowAutodetect(false);
                 handleAutodetect(opts);
               }}
+              onReset={() => {
+                setShowAutodetect(false);
+                handleResetDetection();
+              }}
               onClose={() => setShowAutodetect(false)}
             />
         )}
@@ -1547,7 +1573,19 @@ export default function DocumentViewer() {
               const by1 = Math.max(...selRegions.map((r) => r.bbox.y1 * sy));
               const pad = 6;
               const types = new Set(selRegions.map((r) => r.pii_type));
-              const label = types.size === 1 ? `${selRegions.length} × ${[...types][0]}` : `${selRegions.length} regions (multiple types)`;
+              // Linked group: all siblings share the same linked_group and text — show consolidated label
+              const linkedGroups = new Set(selRegions.map((r) => r.linked_group).filter(Boolean));
+              let label: string;
+              if (linkedGroups.size === 1 && selRegions.every((r) => r.linked_group)) {
+                // All selected regions belong to one linked group — show type + combined text
+                const type = selRegions[0].pii_type;
+                const text = selRegions[0].text.replace(/\n/g, " ");
+                label = `${type}: ${text}`;
+              } else if (types.size === 1) {
+                label = `${selRegions.length} × ${[...types][0]}`;
+              } else {
+                label = `${selRegions.length} regions (multiple types)`;
+              }
               return (
                 <>
                   {/* Bounding rectangle */}

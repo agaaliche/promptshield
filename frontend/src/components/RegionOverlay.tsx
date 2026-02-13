@@ -176,10 +176,9 @@ function RegionOverlay({
   const showTab = (hovered && !isMultiSelected) || showDetails;
   const showFrame = hovered || isSelected || isMultiSelected || showEditPanel;
 
-  // Toolbar drag handlers (absolute coordinates relative to contentArea)
+  // Toolbar drag handlers (fixed/viewport coordinates, same as cursor toolbar)
   useEffect(() => {
     if (!isDraggingToolbar) return;
-    const GAP = 2;
     const PAD = 8;
     const handleMouseMove = (e: MouseEvent) => {
       const tb = toolbarRef.current;
@@ -189,53 +188,16 @@ function RegionOverlay({
       let newX = toolbarDragStart.current.startX + dx;
       let newY = toolbarDragStart.current.startY + dy;
 
-      // Clamp within document (image) bounds + 4px padding
+      // Clamp within content area (viewport coords, same bounds as cursor toolbar)
       const area = portalTarget;
-      const img = imageContainerEl;
-      if (area && img) {
+      if (area) {
         const areaRect = area.getBoundingClientRect();
-        const imgRect = img.getBoundingClientRect();
-        const imgLeft = imgRect.left - areaRect.left;
-        const imgTop = imgRect.top - areaRect.top;
-        const minX = imgLeft + PAD;
-        const minY = imgTop + PAD;
-        const maxX = imgLeft + imgRect.width - tb.offsetWidth - PAD;
-        const maxY = imgTop + imgRect.height - tb.offsetHeight - PAD;
+        const minX = areaRect.left + PAD;
+        const minY = areaRect.top + PAD;
+        const maxX = areaRect.right - tb.offsetWidth - PAD;
+        const maxY = areaRect.bottom - tb.offsetHeight - PAD;
         newX = Math.max(minX, Math.min(maxX, newX));
         newY = Math.max(minY, Math.min(maxY, newY));
-
-        // Avoid overlapping the cursor toolbar
-        const cursorTb = document.querySelector('[data-cursor-toolbar]');
-        if (cursorTb) {
-          const ctRect = cursorTb.getBoundingClientRect();
-          const cursorRect = {
-            left: areaRect.left + newX,
-            top: areaRect.top + newY,
-            right: areaRect.left + newX + tb.offsetWidth,
-            bottom: areaRect.top + newY + tb.offsetHeight,
-          };
-          if (
-            cursorRect.left < ctRect.right + GAP &&
-            cursorRect.right > ctRect.left - GAP &&
-            cursorRect.top < ctRect.bottom + GAP &&
-            cursorRect.bottom > ctRect.top - GAP
-          ) {
-            const pushLeft = cursorRect.right - (ctRect.left - GAP);
-            const pushRight = (ctRect.right + GAP) - cursorRect.left;
-            const pushUp = cursorRect.bottom - (ctRect.top - GAP);
-            const pushDown = (ctRect.bottom + GAP) - cursorRect.top;
-            const minPush = Math.min(pushLeft, pushRight, pushUp, pushDown);
-            if (minPush === pushLeft) newX -= pushLeft;
-            else if (minPush === pushRight) newX += pushRight;
-            else if (minPush === pushUp) newY -= pushUp;
-            else newY += pushDown;
-            newX = Math.max(minX, Math.min(maxX, newX));
-            newY = Math.max(minY, Math.min(maxY, newY));
-          }
-        }
-      } else {
-        newX = Math.max(0, newX);
-        newY = Math.max(0, newY);
       }
       setToolbarPos({ x: newX, y: newY });
     };
@@ -248,7 +210,7 @@ function RegionOverlay({
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isDraggingToolbar, portalTarget, imageContainerEl]);
+  }, [isDraggingToolbar, portalTarget]);
 
   // Save toolbar offset to localStorage + module cache
   useEffect(() => {
@@ -487,7 +449,7 @@ function RegionOverlay({
             textOverflow: "ellipsis",
           }}
         >
-          {region.pii_type}{region.text ? `: ${region.text}` : ""}
+          {region.pii_type}{region.text ? `: ${region.text.replace(/\n/g, " ")}` : ""}
         </div>
       )}
 
@@ -500,16 +462,17 @@ function RegionOverlay({
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
           style={{
-            position: "absolute",
-            left: toolbarPos?.x ?? 12,
-            top: toolbarPos?.y ?? 12,
-            zIndex: 15,
+            position: "fixed",
+            left: toolbarPos?.x ?? 120,
+            top: toolbarPos?.y ?? 120,
+            zIndex: 30,
             background: "var(--bg-secondary)",
             borderRadius: 8,
             boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
+            userSelect: "none",
             cursor: isDraggingToolbar ? CURSOR_GRABBING : "default",
           }}
         >
@@ -521,8 +484,8 @@ function RegionOverlay({
               toolbarDragStart.current = {
                 mouseX: e.clientX,
                 mouseY: e.clientY,
-              startX: toolbarPos?.x ?? 12,
-              startY: toolbarPos?.y ?? 12,
+              startX: toolbarPos?.x ?? 120,
+              startY: toolbarPos?.y ?? 120,
               };
             }}
             style={{

@@ -15,6 +15,7 @@ swap between spaCy and BERT transparently.
 from __future__ import annotations
 
 import logging
+import re
 from typing import NamedTuple, Optional
 
 from models.schemas import PIIType
@@ -89,7 +90,7 @@ AVAILABLE_MODELS: dict[str, dict] = {
             "DATEOFBIRTH": PIIType.DATE,
             "DRIVERLICENSENUM": PIIType.DRIVER_LICENSE,
             "STREET": PIIType.ADDRESS,
-            "CITY": PIIType.LOCATION,
+            "CITY": PIIType.ADDRESS,
             "ZIPCODE": PIIType.ADDRESS,
             "BUILDINGNUM": PIIType.ADDRESS,
             "ACCOUNTNUM": PIIType.CUSTOM,
@@ -135,9 +136,9 @@ AVAILABLE_MODELS: dict[str, dict] = {
             "Buildingnumber": PIIType.ADDRESS,
             "Secondaryaddress": PIIType.ADDRESS,
             "Zipcode": PIIType.ADDRESS,
-            "City": PIIType.LOCATION,
-            "State": PIIType.LOCATION,
-            "County": PIIType.LOCATION,
+            "City": PIIType.ADDRESS,
+            "State": PIIType.ADDRESS,
+            "County": PIIType.ADDRESS,
             "Nearbygpscoordinate": PIIType.LOCATION,
             # Organization
             "Companyname": PIIType.ORG,
@@ -161,6 +162,226 @@ AVAILABLE_MODELS: dict[str, dict] = {
         },
     },
 }
+
+# ---------------------------------------------------------------------------
+# False-positive filters
+# ---------------------------------------------------------------------------
+
+# Words that BERT models frequently misclassify as PERSON.
+# Covers all four supported languages (EN/FR/IT/DE).
+_PERSON_NOISE: set[str] = {
+    # English
+    "the", "a", "an", "this", "that", "it", "i", "we", "you", "he", "she",
+    "my", "your", "his", "her", "our", "their", "its",
+    "mr", "mrs", "ms", "dr", "prof",
+    "dear", "hi", "hello", "yes", "no", "ok", "please", "thank", "thanks",
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "page", "section", "table", "figure", "chapter", "appendix",
+    "total", "amount", "balance", "date", "number", "type",
+    "note", "notes", "net", "tax", "other", "non",
+    # English job titles / roles
+    "chairman", "chairwoman", "chairperson", "chair",
+    "president", "vice", "director", "officer", "manager",
+    "chief", "executive", "ceo", "cfo", "coo", "cto", "cio",
+    "secretary", "treasurer", "counsel", "attorney",
+    "partner", "associate", "analyst", "consultant",
+    "md", "svp", "evp", "vp",
+    "head", "lead", "senior", "junior",
+    # English generic business terms
+    "q1", "q2", "q3", "q4", "fy", "ytd", "mtd",
+    "n/a", "na", "tbd", "tba", "etc", "pdf", "doc",
+    "inc", "llc", "ltd", "corp",
+    "quarterly", "annual", "monthly", "weekly", "daily",
+    "next", "last", "previous", "current", "recent",
+    "today", "tomorrow", "yesterday",
+    "above", "below", "subtotal", "grand",
+    # English accounting / financial terms often tagged PERSON
+    "assets", "asset", "liabilities", "liability", "equity",
+    "revenue", "revenues", "expenses", "expense", "income",
+    "profit", "loss", "cash", "capital", "debt",
+    "depreciation", "amortization", "provision", "provisions",
+    "interest", "dividend", "dividends",
+    "current", "long", "short", "term",
+    "goodwill", "inventory", "receivable", "receivables",
+    "payable", "payables", "deferred", "retained",
+    "earnings", "cost", "costs", "margin", "surplus", "deficit",
+    # French
+    "monsieur", "madame", "mademoiselle", "mme", "mlle",
+    "le", "la", "les", "un", "une", "des", "du", "de",
+    "ce", "cette", "son", "sa", "ses", "notre", "votre", "leur",
+    "il", "elle", "nous", "vous", "ils", "elles", "on",
+    "janvier", "février", "fevrier", "mars", "avril", "mai", "juin",
+    "juillet", "août", "aout", "septembre", "octobre", "novembre",
+    "décembre", "decembre",
+    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+    "qui", "que", "où", "ou", "quoi", "dont", "avec", "sans", "pour", "par",
+    "dans", "sur", "sous", "vers", "chez", "dès",
+    "actif", "passif", "actifs", "passifs",
+    "court", "long", "terme",
+    "encaisse", "immobilisations", "immobilisation",
+    "amortissement", "emprunt", "solde",
+    "résultat", "resultat", "résultats", "resultats",
+    "bénéfice", "benefice", "perte", "pertes",
+    "bilan", "exercice", "exercices",
+    "charges", "produits", "compte", "comptes",
+    "société", "societe", "entreprise",
+    "principales", "principaux", "principale", "principal",
+    "général", "generale", "generaux",
+    "comptables", "comptable", "financier", "financiere",
+    # Italian
+    "signor", "signore", "signora", "signorina", "sig", "dott", "avv",
+    "attivo", "passivo", "bilancio", "esercizio",
+    # German
+    "herr", "frau",
+}
+
+# Regex to check if text is purely numeric / punctuation (no real name)
+_DIGITS_ONLY_RE = re.compile(r"^[\d\s\.,;:\-/]+$")
+
+# ---------------------------------------------------------------------------
+# ORG false-positive filter
+# ---------------------------------------------------------------------------
+
+_ORG_NOISE: set[str] = {
+    # English generic business / accounting / legal terms
+    "department", "section", "division", "group", "team",
+    "committee", "board", "council", "commission",
+    "act", "law", "regulation", "policy", "standard",
+    "agreement", "contract", "report", "summary",
+    "schedule", "exhibit", "annex", "appendix",
+    "article", "clause", "provision", "amendment",
+    "table", "figure", "chart", "graph", "page",
+    "total", "subtotal", "grand", "amount", "balance",
+    "net", "tax", "note", "notes", "other", "non",
+    "assets", "asset", "liabilities", "liability", "equity",
+    "revenue", "revenues", "expenses", "expense", "income",
+    "profit", "loss", "cash", "capital", "debt",
+    "depreciation", "amortization", "provision", "provisions",
+    "interest", "dividend", "dividends",
+    "goodwill", "inventory", "receivable", "receivables",
+    "payable", "payables", "deferred", "retained",
+    "earnings", "cost", "costs", "margin", "surplus", "deficit",
+    "current", "long", "short", "term",
+    "quarterly", "annual", "monthly", "weekly", "daily",
+    "q1", "q2", "q3", "q4", "fy", "ytd", "mtd",
+    "inc", "llc", "ltd", "corp", "co", "plc", "sa", "se",
+    # French accounting / business / legal terms
+    "société", "societe", "entreprise", "compagnie", "filiale",
+    "département", "departement", "service", "bureau", "direction",
+    "division", "commission", "comité", "comite",
+    "conseil", "ministère", "ministere", "gouvernement",
+    "article", "clause", "alinéa", "alinea", "annexe",
+    "tableau", "graphique",
+    "loi", "décret", "decret", "arrêté", "arrete", "règlement", "reglement",
+    "contrat", "accord", "convention", "rapport", "résumé", "resume",
+    "actif", "passif", "actifs", "passifs",
+    "court", "long", "terme",
+    "encaisse", "emprunt", "immobilisation", "immobilisations",
+    "amortissement", "solde",
+    "résultat", "resultat", "résultats", "resultats",
+    "bénéfice", "benefice", "perte", "pertes",
+    "bilan", "exercice", "exercices",
+    "charges", "produits", "compte", "comptes",
+    "exploitation", "financement", "investissement",
+    "achats", "coût", "cout", "frais",
+    "client", "fournisseur",
+    "principales", "principaux", "principale", "principal",
+    "général", "generale", "generaux", "générale", "généraux",
+    "comptables", "comptable", "comptabilité", "comptabilite",
+    "financier", "financiere", "financiers", "financieres",
+    "financière", "financières",
+    "corporelles", "corporels", "corporel", "corporelle",
+    "méthodes", "methodes", "méthode", "methode",
+    "statuts", "statut", "nature",
+    "activités", "activites", "activité", "activite",
+    "éléments", "elements", "élément", "element",
+    "informations", "information",
+    "établissement", "etablissement", "établissements", "etablissements",
+    "opérations", "operations", "opération", "operation",
+    "complémentaires", "complementaires", "complémentaire", "complementaire",
+    "notes", "note",
+    "appliquée", "applique", "appliquées", "appliques",
+    "appliqué", "appliqués",
+    "groupe", "section",
+    # Partial short terms
+    "fr", "emp", "lo", "en", "per", "ex", "amor", "immob",
+    "fourn", "four",
+    # Italian
+    "dipartimento", "servizio", "ufficio", "direzione",
+    "sezione", "articolo", "clausola", "allegato", "grafico",
+    "legge", "decreto", "ordinanza", "regolamento",
+    "contratto", "accordo", "convenzione", "rapporto", "relazione",
+    # German
+    "gesellschaft", "unternehmen", "abteilung",
+    # Spanish
+    "empresa", "compañía", "compania", "división",
+}
+
+
+def _is_org_noise(text: str) -> bool:
+    """Return True if a BERT ORG entity is likely a false positive."""
+    clean = text.strip()
+    low = clean.lower()
+
+    # Single stopword
+    if low in _ORG_NOISE:
+        return True
+    # Too short (≤2 chars)
+    if len(clean) <= 2:
+        return True
+    # All-uppercase and very short (e.g. "SA", "TVA", "BN")
+    if clean.isupper() and len(clean) <= 4:
+        return True
+    # Pure digits / punctuation
+    if _DIGITS_ONLY_RE.match(clean):
+        return True
+    # Starts with a digit — not an org name
+    if clean and clean[0].isdigit():
+        return True
+    # All-lowercase — real org names are capitalised
+    words = clean.split()
+    if clean == clean.lower() and len(words) <= 2:
+        return True
+    # Single very short word (≤3 chars)
+    if len(words) == 1 and len(words[0]) <= 3:
+        return True
+    # Multi-word: every word is a noise term → not a real org
+    if len(words) >= 2 and all(w.lower() in _ORG_NOISE for w in words):
+        return True
+    return False
+
+
+def _is_person_noise(text: str) -> bool:
+    """Return True if a BERT PERSON entity is likely a false positive."""
+    clean = text.strip()
+    low = clean.lower()
+
+    # Single stopword
+    if low in _PERSON_NOISE:
+        return True
+    # All-uppercase and very short (e.g. "TVA", "BN", "SA")
+    if clean.isupper() and len(clean) <= 5:
+        return True
+    # Starts with a digit — not a name
+    if clean and clean[0].isdigit():
+        return True
+    # Pure digits / punctuation
+    if _DIGITS_ONLY_RE.match(clean):
+        return True
+    # Single very short word (≤3 chars)
+    words = clean.split()
+    if len(words) == 1 and len(words[0]) <= 3:
+        return True
+    # Multi-word: every word is a stopword → noise
+    if len(words) >= 2 and all(w.lower() in _PERSON_NOISE for w in words):
+        return True
+    # All-lowercase text — real names are capitalised
+    if clean == clean.lower() and len(words) <= 3:
+        return True
+    return False
+
 
 # ---------------------------------------------------------------------------
 # Module-level state (lazy-loaded)
@@ -249,19 +470,28 @@ def _process_chunk(pipe, text: str, global_offset: int) -> list[NERMatch]:
         if len(word.strip()) < 2:
             continue
 
+        # Filter PERSON false positives (stopwords, digits, short tokens, etc.)
+        if pii_type == PIIType.PERSON and _is_person_noise(word):
+            continue
+
+        # Filter ORG false positives (accounting terms, generic business words, etc.)
+        if pii_type == PIIType.ORG and _is_org_noise(word):
+            continue
+
         matches.append(NERMatch(
             start=global_offset + start,
             end=global_offset + end,
             text=word,
             pii_type=pii_type,
             confidence=round(score, 4),
-        ))
+        )) 
 
     return matches
 
 
-def _deduplicate_matches(matches: list[NERMatch]) -> list[NERMatch]:
-    """Remove duplicates arising from overlapping chunks."""
+def _deduplicate_matches(matches: list[NERMatch], source_text: str = "") -> list[NERMatch]:
+    """Remove duplicates arising from overlapping chunks and merge
+    adjacent ADDRESS fragments into one region."""
     if not matches:
         return []
 
@@ -276,7 +506,39 @@ def _deduplicate_matches(matches: list[NERMatch]) -> list[NERMatch]:
         else:
             deduped.append(m)
 
-    return deduped
+    # Merge adjacent ADDRESS fragments (STREET + CITY + BUILDINGNUM + ZIPCODE)
+    # that sit close together.  Also absorb LOCATION entities sandwiched
+    # between two ADDRESS entities (city / state names).
+    merged: list[NERMatch] = [deduped[0]] if deduped else []
+    for m in deduped[1:]:
+        prev = merged[-1]
+        can_merge = False
+        if prev.pii_type == PIIType.ADDRESS and m.pii_type in (PIIType.ADDRESS, PIIType.LOCATION):
+            can_merge = True
+        elif prev.pii_type == PIIType.ADDRESS and m.pii_type != PIIType.ADDRESS:
+            # Check if this non-ADDRESS is sandwiched — peek ahead handled by
+            # absorbing LOCATION into ADDRESS, so next iteration chain continues.
+            pass
+        if can_merge:
+            gap = m.start - prev.end
+            if 0 <= gap <= 50:
+                best_conf = max(prev.confidence, m.confidence)
+                # Rebuild text from source if available, else concatenate
+                if source_text:
+                    combined_text = source_text[prev.start:m.end]
+                else:
+                    combined_text = prev.text + " " + m.text
+                merged[-1] = NERMatch(
+                    start=prev.start,
+                    end=m.end,
+                    text=combined_text,
+                    pii_type=PIIType.ADDRESS,
+                    confidence=best_conf,
+                )
+                continue
+        merged.append(m)
+
+    return merged
 
 
 def detect_bert_ner(text: str, model_id: str | None = None) -> list[NERMatch]:
@@ -289,7 +551,11 @@ def detect_bert_ner(text: str, model_id: str | None = None) -> list[NERMatch]:
     pipe = _load_pipeline(model_id)
 
     if len(text) <= _CHUNK_SIZE:
-        return _process_chunk(pipe, text, global_offset=0)
+        # Single chunk — still run dedup/ADDRESS-merge pass
+        return _deduplicate_matches(
+            _process_chunk(pipe, text, global_offset=0),
+            source_text=text,
+        )
 
     all_matches: list[NERMatch] = []
     offset = 0
@@ -303,7 +569,7 @@ def detect_bert_ner(text: str, model_id: str | None = None) -> list[NERMatch]:
         if end == len(text):
             break
 
-    return _deduplicate_matches(all_matches)
+    return _deduplicate_matches(all_matches, source_text=text)
 
 
 # ---------------------------------------------------------------------------

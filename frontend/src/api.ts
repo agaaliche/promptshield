@@ -12,6 +12,7 @@ import type {
   PIIRegion,
   RedetectResult,
   RegionAction,
+  ResetDetectionResult,
   TokenMapping,
   UploadResponse,
   VaultStats,
@@ -155,6 +156,15 @@ export async function redetectPII(
     method: "POST",
     body: JSON.stringify(options),
   });
+}
+
+export async function resetDetection(
+  docId: string
+): Promise<ResetDetectionResult> {
+  return request<ResetDetectionResult>(
+    `/api/documents/${docId}/reset-detection`,
+    { method: "POST" }
+  );
 }
 
 export async function getRegions(

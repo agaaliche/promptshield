@@ -158,14 +158,40 @@ def _is_rotated_word(char_y_centers: list[float], char_heights: list[float]) -> 
     For horizontal text, all characters share roughly the same y-centre.
     For rotated/diagonal text (watermarks), the y-centres of successive
     characters shift significantly — the vertical spread of centres will
-    exceed half the average character height.
+    exceed a fraction of the average character height.
+
+    Punctuation marks (periods, commas, apostrophes) and accent marks have
+    much smaller bounding boxes positioned at different baselines than the
+    main letter glyphs.  Without filtering them out, a word like ``B.N.``
+    or ``l'exercice`` would look "rotated" even though it's perfectly
+    horizontal.  We therefore exclude characters whose height is less than
+    70 % of the median character height before computing the spread.
     """
     if len(char_y_centers) < 2:
         return False
-    y_spread = max(char_y_centers) - min(char_y_centers)
-    avg_h = sum(char_heights) / len(char_heights) if char_heights else 1.0
+
+    # --- filter out small characters (punctuation / accents / superscripts) ---
+    sorted_h = sorted(char_heights)
+    n = len(sorted_h)
+    median_h = sorted_h[n // 2] if n % 2 == 1 else (sorted_h[n // 2 - 1] + sorted_h[n // 2]) / 2.0
+    height_threshold = median_h * 0.70
+
+    filtered_yc: list[float] = []
+    filtered_h: list[float] = []
+    for yc, h in zip(char_y_centers, char_heights):
+        if h >= height_threshold:
+            filtered_yc.append(yc)
+            filtered_h.append(h)
+
+    if len(filtered_yc) < 2:
+        return False
+
+    y_spread = max(filtered_yc) - min(filtered_yc)
+    avg_h = sum(filtered_h) / len(filtered_h)
     # Horizontal text: y_spread ≈ 0.  45° rotated: y_spread ≈ word width.
-    return y_spread > avg_h * 0.5
+    # Threshold raised to 0.65 to tolerate accented capitals (É, Ô, …) whose
+    # taller bounding-box shifts the y-centre slightly.
+    return y_spread > avg_h * 0.65
 
 
 def _extract_text_blocks_from_page(pdf_page: pdfium.PdfPage, page_index: int) -> list[TextBlock]:

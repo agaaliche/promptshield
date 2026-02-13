@@ -546,12 +546,13 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # ORG — company patterns
     # ──────────────────────────────────────────────────────────────────
     # French legal: "CompanyName SA/SAS/SARL/EURL/SCI/SNC/SE/SENC"
-    # Uses \s+ to match across line breaks in titles; _IC for ALL CAPS.
+    # _NOFLAGS so first char of each word must be uppercase.
+    # SA/SE are case-sensitive to avoid matching French "sa"/"se".
     (
         r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}"
         r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}){0,4}"
-        r"\s+(?:SA|SAS|SARL|EURL|SCI|SNC|SE|SENC|S\.?E\.?N\.?C\.?)\b",
-        PIIType.ORG, 0.90, _IC,
+        r"\s+(?:(?i:SAS|SARL|EURL|SCI|SNC|SENC|S\.?E\.?N\.?C\.?)|SA|SE)\b",
+        PIIType.ORG, 0.90, _NOFLAGS,
     ),
     # Multi-language legal suffixes:
     # EN: Inc, Corp, LLC, Ltd, LLP, PLC, Co, LP
@@ -565,17 +566,17 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
     (
         r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}"
         r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}){0,4}"
-        r"\s+(?:"
-        r"Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP"
+        r"\s+(?:(?i:"
+        r"Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP|SAS"
         r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH"
         r"|BV|B\.?V\.?|NV|N\.?V\.?|V\.?O\.?F\.?|C\.?V\.?"
-        r"|S\.?A\.?R?\.?L?\.?|S\.?L\.?U?\.?|S\.?C\.?|S\.?R\.?L\.?"
+        r"|S\.?A\.?R\.?L\.?|S\.A\.?|S\.?L\.?U?\.?|S\.?C\.?|S\.?R\.?L\.?"
         r"|S\.?p\.?A\.?|S\.?a\.?s\.?|S\.?n\.?c\.?|S\.?s\.?"
         r"|S\.?Coop\.?"
         r"|Lt[ée]e|Limit[ée]e|Lda|Ltda"
-        r"|A/S|ApS|AS|ASA|AB|Oy|Oyj|HB|KB"
-        r")\b\.?",
-        PIIType.ORG, 0.88, _IC,
+        r"|A/S|ApS|ASA|AB|Oy|Oyj|HB|KB"
+        r")|SA|SE|AS)\b\.?",
+        PIIType.ORG, 0.88, _NOFLAGS,
     ),
     # Multilingual "Group/Company/Society X" prefix pattern
     # FR: Groupe, Société, Compagnie, Établissements, Cabinet, Maison
@@ -607,6 +608,7 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
     # Allows articles/prepositions between capitalised words,
     # ending with a legal suffix. After connecting words, next word
     # can start with lowercase (e.g., "de restauration").
+    # Also allows plain lowercase words (body text: "Les entreprises … ltée").
     (
         r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"  # First word: must start with capital
         r"(?:"  # Then repeat 1-5 times:
@@ -626,19 +628,20 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
         r"|van|het|voor|bij|op"
         r")"
         r"\s+[a-zA-ZÀ-üÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"  # After connecting word, allow lowercase start
+        r"|\s+[a-zà-ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"  # OR plain lowercase word (body text)
         r"){1,5}"
-        r"\s+(?i:"  # Make suffix case-insensitive
-        r"Lt[ée]e|Limit[ée]e|Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP"
-        r"|SA|SAS|SARL|EURL|SCI|SNC|SE|SENC|S\.?E\.?N\.?C\.?"
+        r"\s+(?:(?i:"  # Make suffix case-insensitive (SA/SE/AS are case-sensitive outside)
+        r"Lt[ée]e|Limit[ée]e|Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP|SAS"
+        r"|SARL|EURL|SCI|SNC|SENC|S\.?E\.?N\.?C\.?"
         r"|Enr\.?g?\.?"
         r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH"
         r"|BV|B\.?V\.?|NV|N\.?V\.?|V\.?O\.?F\.?|C\.?V\.?"
-        r"|S\.?A\.?R?\.?L?\.?|S\.?L\.?U?\.?|S\.?C\.?|S\.?R\.?L\.?"
+        r"|S\.?A\.?R\.?L\.?|S\.A\.?|S\.?L\.?U?\.?|S\.?C\.?|S\.?R\.?L\.?"
         r"|S\.?p\.?A\.?|S\.?a\.?s\.?|S\.?n\.?c\.?|S\.?s\.?"
         r"|S\.?Coop\.?"
         r"|Lda|Ltda"
-        r"|A/S|ApS|AS|ASA|AB|Oy|Oyj|HB|KB"
-        r")\b\.?",
+        r"|A/S|ApS|ASA|AB|Oy|Oyj|HB|KB"
+        r")|SA|SE|AS)\b\.?",
         PIIType.ORG, 0.90, _NOFLAGS,
     ),
     # Numbered companies (Quebec/Canada style with dashes, also DE HRB numbers)
@@ -647,14 +650,15 @@ PATTERNS: list[tuple[str, PIIType, float, int]] = [
     (
         r"\b\d{3,10}(?:-\d{3,10})?"  # 3-10 digits, optionally followed by dash and more digits
         r"\s+(?:[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,20}\s+){1,3}"  # Require 1-3 words (min 3 chars each)
-        r"(?:Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP"
+        r"(?:(?i:Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP|SAS"
         r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH"
         r"|BV|B\.?V\.?|NV|N\.?V\.?"
-        r"|S\.?A\.?R?\.?L?\.?|S\.?L\.?U?\.?|S\.?C\.?|S\.?R\.?L\.?"
+        r"|S\.?A\.?R\.?L\.?|S\.A\.?|S\.?L\.?U?\.?|S\.?C\.?|S\.?R\.?L\.?"
         r"|S\.?p\.?A\.?|S\.?a\.?s\.?|S\.?n\.?c\.?"
         r"|Lt[ée]e|Limit[ée]e|Lda|Ltda|Enr\.?g?\.?"
-        r"|A/S|ApS|AS|ASA|AB|Oy|Oyj)\b\.?",
-        PIIType.ORG, 0.90, _IC,
+        r"|A/S|ApS|ASA|AB|Oy|Oyj"
+        r")|SA|SE|AS)\b\.?",
+        PIIType.ORG, 0.90, _NOFLAGS,
     ),
 
     # ──────────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ interface AutodetectPanelProps {
     regexTypes: string[];
     nerTypes: string[];
   }) => void;
+  onReset: () => void;
   onClose: () => void;
 }
 
@@ -25,6 +26,7 @@ export default function AutodetectPanel({
   activePage,
   llmStatus,
   onDetect,
+  onReset,
   onClose,
 }: AutodetectPanelProps) {
   const [fuzziness, setFuzziness] = useState(0.55);
@@ -311,7 +313,7 @@ export default function AutodetectPanel({
       </>)}
 
       {/* Run button */}
-      <div style={{ padding: "10px 14px 14px" }}>
+      <div style={{ padding: "10px 14px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
         <button
           className="btn-primary"
           onClick={handleRun}
@@ -320,6 +322,20 @@ export default function AutodetectPanel({
         >
           <ScanSearch size={14} />
           {isProcessing ? "Detecting…" : `Run on ${scope === "page" ? `page ${activePage}` : "all pages"}`}
+        </button>
+        <button
+          className="btn-ghost btn-sm"
+          onClick={() => { onClose(); onReset(); }}
+          disabled={isProcessing}
+          style={{
+            width: "100%",
+            fontSize: 11,
+            color: "var(--text-muted)",
+            padding: "6px 0",
+          }}
+          title="Clear ALL existing detections and run a fresh scan from scratch"
+        >
+          Reset detection (clear &amp; rescan)
         </button>
       </div>
     </div>

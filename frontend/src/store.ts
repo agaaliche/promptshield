@@ -193,16 +193,31 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
   regions: [],
   setRegions: (regions) => set({ regions }),
   updateRegionAction: (regionId, action) =>
-    set((s) => ({
-      regions: s.regions.map((r) =>
-        r.id === regionId ? { ...r, action } : r
-      ),
-    })),
+    set((s) => {
+      // Propagate action to linked siblings
+      const target = s.regions.find((r) => r.id === regionId);
+      const group = target?.linked_group;
+      const isLinked = (r: PIIRegion) =>
+        r.id === regionId || (group != null && r.linked_group === group);
+      return {
+        regions: s.regions.map((r) => (isLinked(r) ? { ...r, action } : r)),
+      };
+    }),
   removeRegion: (regionId) =>
-    set((s) => ({
-      regions: s.regions.filter((r) => r.id !== regionId),
-      selectedRegionIds: s.selectedRegionIds.filter((id) => id !== regionId),
-    })),
+    set((s) => {
+      // Remove linked siblings too
+      const target = s.regions.find((r) => r.id === regionId);
+      const group = target?.linked_group;
+      const isLinked = (r: PIIRegion) =>
+        r.id === regionId || (group != null && r.linked_group === group);
+      const removedIds = s.regions.filter(isLinked).map((r) => r.id);
+      return {
+        regions: s.regions.filter((r) => !isLinked(r)),
+        selectedRegionIds: s.selectedRegionIds.filter(
+          (id) => !removedIds.includes(id)
+        ),
+      };
+    }),
   updateRegionBBox: (regionId, bbox) =>
     set((s) => ({
       regions: s.regions.map((r) =>
@@ -219,16 +234,25 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
   setSelectedRegionIds: (ids) => set({ selectedRegionIds: ids }),
   toggleSelectedRegionId: (id, additive) =>
     set((s) => {
+      // Resolve linked siblings — clicking one part of a multi-line
+      // region selects all parts sharing the same linked_group.
+      const clicked = s.regions.find((r) => r.id === id);
+      const group = clicked?.linked_group;
+      const groupIds = group
+        ? s.regions.filter((r) => r.linked_group === group).map((r) => r.id)
+        : [id];
+
       if (additive) {
-        // Ctrl+click: toggle in/out
+        // Ctrl+click: toggle the whole group in/out
+        const allSelected = groupIds.every((gid) => s.selectedRegionIds.includes(gid));
         return {
-          selectedRegionIds: s.selectedRegionIds.includes(id)
-            ? s.selectedRegionIds.filter((x) => x !== id)
-            : [...s.selectedRegionIds, id],
+          selectedRegionIds: allSelected
+            ? s.selectedRegionIds.filter((x) => !groupIds.includes(x))
+            : [...new Set([...s.selectedRegionIds, ...groupIds])],
         };
       }
-      // Plain click: single-select
-      return { selectedRegionIds: [id] };
+      // Plain click: single-select the whole group
+      return { selectedRegionIds: groupIds };
     }),
   clearSelection: () => set({ selectedRegionIds: [] }),
 

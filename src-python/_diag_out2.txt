@@ -1,0 +1,6 @@
+﻿Page 6: 10 regions
+{"confidence": 0.9, "source": "REGEX", "text": "LES ENTREPRISES DE RESTAURATION B.N. LT╔E"}
+{"confidence": 0.9, "source": "REGEX", "text": "sociÚtÚ"}
+{"confidence": 0.9, "source": "REGEX", "text": "le"}
+{"confidence": 0.9, "source": "REGEX", "text": "le"}
+{"confidence": 0.9, "source": "REGEX", "text": "le"}

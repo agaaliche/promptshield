@@ -458,11 +458,17 @@ def _render_page_bitmap(pdf_page: pdfium.PdfPage, page_index: int, doc_id: str) 
 def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
     """Process a PDF file into page data.
 
-    Pages are processed sequentially with a single ``PdfDocument`` handle.
-    PDFium's C library is **not** thread-safe (concurrent handles cause
-    heap corruption / native breakpoint crashes on Windows), so parallel
-    page processing is intentionally avoided here.
+    **Phase 1 — sequential (PDFium):** render bitmaps and extract text
+    for every page using a single ``PdfDocument`` handle.  PDFium's C
+    library is *not* thread-safe (concurrent handles cause heap
+    corruption / native breakpoint crashes on Windows).
+
+    **Phase 2 — parallel OCR (Tesseract):** pages whose embedded text is
+    too sparse are sent to OCR in parallel threads.  Tesseract is a
+    separate process per invocation and fully thread-safe, so this
+    recovers most of the I1 parallelism for scanned/image-based PDFs.
     """
+    # ── Phase 1: sequential PDFium extraction ──────────────────────
     doc = pdfium.PdfDocument(str(pdf_path))
     try:
         n_pages = len(doc)
@@ -470,6 +476,8 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
             return []
 
         pages: list[PageData] = []
+        ocr_needed: list[int] = []  # indices into *pages* that need OCR
+
         for page_index in range(n_pages):
             pdf_page = doc[page_index]
             width = pdf_page.get_width()
@@ -477,14 +485,7 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
 
             bitmap_path = _render_page_bitmap(pdf_page, page_index, doc_id)
             text_blocks = _extract_text_blocks_from_page(pdf_page, page_index)
-
             full_text = _build_full_text(text_blocks)
-            if len(full_text.strip()) < 20:
-                logger.info(f"Page {page_index + 1}: sparse text ({len(full_text)} chars), running OCR")
-                ocr_blocks = ocr_page_image(bitmap_path, width, height)
-                if ocr_blocks:
-                    text_blocks = ocr_blocks
-                    full_text = _build_full_text(text_blocks)
 
             pages.append(PageData(
                 page_number=page_index + 1,
@@ -495,9 +496,46 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
                 full_text=full_text,
             ))
 
-        return pages
+            if len(full_text.strip()) < 20:
+                ocr_needed.append(page_index)
+
     finally:
         doc.close()
+
+    # ── Phase 2: parallel OCR for sparse-text pages ────────────────
+    if not ocr_needed:
+        return pages
+
+    def _ocr_one(idx: int) -> tuple[int, list[TextBlock]]:
+        p = pages[idx]
+        logger.info(f"Page {p.page_number}: sparse text ({len(p.full_text)} chars), running OCR")
+        blocks = ocr_page_image(Path(p.bitmap_path), p.width, p.height)
+        return idx, blocks
+
+    if len(ocr_needed) == 1:
+        # Single page — skip thread overhead
+        idx, ocr_blocks = _ocr_one(ocr_needed[0])
+        if ocr_blocks:
+            pages[idx] = pages[idx].model_copy(update={
+                "text_blocks": ocr_blocks,
+                "full_text": _build_full_text(ocr_blocks),
+            })
+    else:
+        import os
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        workers = min(4, os.cpu_count() or 2, len(ocr_needed))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_ocr_one, i): i for i in ocr_needed}
+            for fut in as_completed(futures):
+                idx, ocr_blocks = fut.result()
+                if ocr_blocks:
+                    pages[idx] = pages[idx].model_copy(update={
+                        "text_blocks": ocr_blocks,
+                        "full_text": _build_full_text(ocr_blocks),
+                    })
+
+    return pages
 
 
 def _process_image(image_path: Path, doc_id: str) -> list[PageData]:

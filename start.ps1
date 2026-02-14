@@ -93,8 +93,18 @@ if (-not $Back) {
 
 # ── Start backend ──────────────────────────────────────────────────────────
 if (-not $Front) {
-    Write-Host "`n=== Starting backend (uvicorn :$BackendPort) ===" -ForegroundColor Cyan
-    $backendArgs = "-m uvicorn api.server:app --host 127.0.0.1 --port $BackendPort"
+    Write-Host "`n=== Starting backend (uvicorn :$BackendPort with hot-reload) ===" -ForegroundColor Cyan
+    # Use --reload for hot-reload during development (picks up code changes automatically)
+    # Pass arguments as an array to avoid PowerShell argument parsing issues
+    $backendArgs = @(
+        "-m", "uvicorn", "api.server:app",
+        "--host", "127.0.0.1",
+        "--port", "$BackendPort",
+        "--reload",
+        "--reload-dir", "core",
+        "--reload-dir", "api", 
+        "--reload-dir", "models"
+    )
     Start-Process -FilePath $PythonExe `
         -ArgumentList $backendArgs `
         -WorkingDirectory $BackendDir `

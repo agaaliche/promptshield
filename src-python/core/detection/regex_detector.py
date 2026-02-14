@@ -191,9 +191,9 @@ def _in_excluded_context(text: str, match_start: int, match_end: int) -> bool:
 
 
 # Compile standalone patterns once at import time
-_COMPILED_PATTERNS: list[tuple[re.Pattern, PIIType, float]] = [
-    (re.compile(pattern, flags), pii_type, conf)
-    for pattern, pii_type, conf, flags in _PATTERNS
+_COMPILED_PATTERNS: list[tuple[re.Pattern, PIIType, float, frozenset[str] | None]] = [
+    (re.compile(pattern, flags), pii_type, conf, langs)
+    for pattern, pii_type, conf, flags, langs in _PATTERNS
 ]
 
 def _validate_match(text: str, matched_text: str, pii_type: PIIType,
@@ -241,7 +241,8 @@ def _validate_match(text: str, matched_text: str, pii_type: PIIType,
     return -1.0  # no adjustment
 
 
-def detect_regex(text: str, allowed_types: list[str] | None = None) -> list[RegexMatch]:
+def detect_regex(text: str, allowed_types: list[str] | None = None,
+                 detection_language: str | None = None) -> list[RegexMatch]:
     """
     Scan text with all regex patterns and return matches.
 
@@ -249,16 +250,25 @@ def detect_regex(text: str, allowed_types: list[str] | None = None) -> list[Rege
         text: The text to scan.
         allowed_types: Optional list of PIIType values to include (e.g. ["EMAIL", "SSN"]).
                        If None, all types are included.
+        detection_language: ISO 639-1 language code (e.g. "fr", "en").
+                           When set, only patterns tagged for that language (or
+                           tagged with None = all languages) are executed.
+                           When None or "auto", all patterns run.
 
     Applies validation, context-keyword boosting, and exclusion
     filtering to reduce false positives. Returns non-overlapping
     matches sorted by position.
     """
     _allowed = set(allowed_types) if allowed_types else None
+    # Normalise language filter
+    _lang = detection_language if detection_language and detection_language != "auto" else None
     all_matches: list[RegexMatch] = []
 
-    for compiled_re, pii_type, base_confidence in _COMPILED_PATTERNS:
+    for compiled_re, pii_type, base_confidence, langs in _COMPILED_PATTERNS:
         if _allowed and pii_type.value not in _allowed:
+            continue
+        # Language filter: skip pattern if it doesn't match the document lang
+        if _lang and langs is not None and _lang not in langs:
             continue
         for m in compiled_re.finditer(text):
             matched_text = m.group()
@@ -286,8 +296,10 @@ def detect_regex(text: str, allowed_types: list[str] | None = None) -> list[Rege
             ))
 
     # ── Label-value patterns (capture-group extraction) ──
-    for compiled_re, pii_type, base_confidence in _LABEL_NAME_PATTERNS:
+    for compiled_re, pii_type, base_confidence, langs in _LABEL_NAME_PATTERNS:
         if _allowed and pii_type.value not in _allowed:
+            continue
+        if _lang and langs is not None and _lang not in langs:
             continue
         for m in compiled_re.finditer(text):
             value_text = m.group(1)

@@ -35,6 +35,7 @@ class SettingsUpdate(BaseModel):
     tesseract_cmd: Optional[str] = None
     ner_backend: Optional[str] = None
     ner_model_preference: Optional[str] = None
+    detection_language: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_api_url: Optional[str] = None
     llm_api_key: Optional[str] = None

@@ -205,7 +205,9 @@ function App() {
           } else if (!state.activeDocId) {
             setActiveDocId(docs[0].doc_id);
           }
-          setCurrentView("viewer");
+          // Preserve the view the user was on before reload; default to viewer
+          const saved = state.currentView;
+          if (saved === "upload") setCurrentView("viewer");
         } else {
           setDocuments([]);
           if (state.activeDocId) {

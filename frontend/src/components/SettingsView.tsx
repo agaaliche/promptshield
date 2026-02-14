@@ -108,6 +108,7 @@ export default function SettingsView() {
           llm_detection_enabled: llmEnabled,
           ner_backend: s.ner_backend as string,
           detection_fuzziness: (s.detection_fuzziness as number) ?? 0.5,
+          detection_language: (s.detection_language as string) ?? "auto",
         });
         // Persist the corrected value if it changed
         if (s.llm_detection_enabled && !hasValidLlm) {
@@ -518,6 +519,49 @@ export default function SettingsView() {
             />{" "}
             Deep analysis (uses an LLM for harder-to-find information)
           </label>
+
+          {/* Detection language selector */}
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <span style={{ fontSize: 13, color: "var(--text-primary)" }}>
+                Detection language
+              </span>
+            </div>
+            <select
+              value={detectionSettings.detection_language ?? "auto"}
+              onChange={async (e) => {
+                const v = e.target.value;
+                setDetectionSettings({ detection_language: v });
+                try {
+                  await updateSettings({ detection_language: v });
+                } catch (err: any) {
+                  console.error("Failed to update detection language:", err);
+                }
+              }}
+              style={{
+                width: "100%",
+                padding: "6px 8px",
+                borderRadius: 6,
+                border: "1px solid var(--border-color)",
+                background: "var(--bg-secondary)",
+                color: "var(--text-primary)",
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              <option value="auto">Auto-detect per page</option>
+              <option value="en">English</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="es">Spanish</option>
+              <option value="it">Italian</option>
+              <option value="nl">Dutch</option>
+            </select>
+            <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
+              Filters regex patterns to only those relevant for the selected
+              language. &ldquo;Auto&rdquo; detects per page using stop-word analysis.
+            </p>
+          </div>
 
           {/* Detection fuzziness slider */}
           <div style={{ marginTop: 12 }}>

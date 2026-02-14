@@ -89,6 +89,10 @@ class AppConfig(BaseModel):
     # When ner_backend == "spacy": which spaCy model to prefer (trf > lg > sm)
     ner_model_preference: str = "trf"                   # trf > lg > sm
 
+    # Language for regex pattern filtering.
+    # "auto" = detect per page, specific code ("en","fr",...) = only that language.
+    detection_language: str = "auto"
+
     # Convenience alias — when ner_backend is a HF model id this mirrors it.
     @property
     def ner_hf_model(self) -> str:
@@ -139,7 +143,7 @@ class AppConfig(BaseModel):
         "confidence_threshold", "detection_fuzziness", "max_font_size_pt",
         "ocr_language", "ocr_dpi",
         "render_dpi", "tesseract_cmd",
-        "ner_backend", "ner_model_preference",
+        "ner_backend", "ner_model_preference", "detection_language",
         "llm_model_path",
         "llm_provider", "llm_api_url", "llm_api_model",
         "llm_batch_size", "llm_flash_attn",

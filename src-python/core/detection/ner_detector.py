@@ -301,14 +301,24 @@ def _is_false_positive_org_generic(
     Shared logic for all languages.  *generic_stopwords* is only used by
     English (pass ``None`` for FR/IT).
     """
-    clean = text.strip().lower()
-    if clean in org_stopwords:
+    clean = text.strip()
+    low = clean.lower()
+    if low in org_stopwords:
         return True
-    if generic_stopwords and clean in generic_stopwords:
+    if generic_stopwords and low in generic_stopwords:
         return True
     if len(clean) <= 2:
         return True
-    if text.isupper() and len(text.strip()) <= 4:
+    if clean.isupper() and len(clean) <= 4:
+        return True
+    # Pure digits / punctuation — never an org name (e.g. "195", "4002")
+    if clean.isdigit():
+        return True
+    if clean and clean[0].isdigit():
+        return True
+    # All-lowercase single/two-word — real org names are capitalised
+    words = clean.split()
+    if clean == low and len(words) <= 2:
         return True
     return False
 
@@ -562,6 +572,26 @@ _FR_PERSON_STOPWORDS: set[str] = {
     # Common vocabulary
     "qui", "que", "où", "ou", "quoi", "dont", "avec", "sans", "pour", "par",
     "dans", "sur", "sous", "vers", "chez", "dès", "des",
+    # French accounting / financial terms (never person names)
+    "mobilier", "immobilier",
+    "taux", "bilan", "exercice",
+    "actif", "passif", "capital",
+    "emprunt", "crédit", "credit", "débit", "debit",
+    "amortissement", "amortissements",
+    "provision", "provisions",
+    "dotation", "dotations",
+    "reprise", "reprises",
+    "charge", "charges", "produit", "produits",
+    "recette", "recettes",
+    "facture", "factures",
+    "titre", "titres", "fonds", "caisse",
+    "valeur", "valeurs",
+    "compte", "comptes",
+    "poste", "postes",
+    "dette", "dettes",
+    "résultat", "resultat",
+    "location", "acquisition",
+    "location-acquisition", "lave-vaisselle",
 }
 
 _FR_ORG_STOPWORDS: set[str] = {
@@ -581,6 +611,19 @@ _FR_ORG_STOPWORDS: set[str] = {
     "éléments", "elements", "élément", "element",
     "société", "societe", "sociétés", "societes",
     "elles", "ils", "elle", "il",  # pronouns sometimes tagged as ORG
+    # French accounting / financial terms
+    "excédent", "excedent", "clos", "clôt",
+    "taux", "location", "acquisition", "acquisitions",
+    "location-acquisition", "lave-vaisselle",
+    "dotation", "dotations", "reprise", "reprises",
+    "écart", "ecart", "écarts", "ecarts",
+    "valeur", "valeurs", "emprunt", "emprunts",
+    "titre", "titres", "fonds", "caisse",
+    "trésorerie", "tresorerie",
+    "recette", "recettes", "facture", "factures",
+    "poste", "postes", "créance", "creance",
+    "dette", "dettes", "subvention", "subventions",
+    "mobilier", "immobilier",
 }
 
 

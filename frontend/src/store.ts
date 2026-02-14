@@ -83,6 +83,7 @@ interface AppState {
     llm_detection_enabled: boolean;
     ner_backend: string;
     detection_fuzziness: number;
+    detection_language: string;
   };
   setDetectionSettings: (s: Partial<AppState["detectionSettings"]>) => void;
 
@@ -302,7 +303,7 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
     }),
 
   // Zoom
-  zoom: 1.0,
+  zoom: 0.8,
   setZoom: (z) => set({ zoom: Math.max(0.25, Math.min(4, z)) }),
 
   // LLM
@@ -316,6 +317,7 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
     llm_detection_enabled: true,
     ner_backend: "spacy",
     detection_fuzziness: 0.5,
+    detection_language: "auto",
   },
   setDetectionSettings: (s) =>
     set((state) => ({
@@ -335,8 +337,11 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
   setDocDetecting: (v) => set({ docDetecting: v }),
 
   // UI
-  currentView: "upload",
-  setCurrentView: (v) => set({ currentView: v }),
+  currentView: (localStorage.getItem("currentView") as "upload" | "viewer" | "detokenize" | "settings") || "upload",
+  setCurrentView: (v) => {
+    localStorage.setItem("currentView", v);
+    set({ currentView: v });
+  },
   isProcessing: false,
   setIsProcessing: (v) => set({ isProcessing: v }),
   statusMessage: "",

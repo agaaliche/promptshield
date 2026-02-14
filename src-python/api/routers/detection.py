@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time as _time
 from typing import Optional
 
@@ -27,6 +28,23 @@ from api.deps import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["detection"])
+
+
+# Legal suffixes for numbered companies (e.g., "9169270 Canada Inc.")
+# Match suffix anywhere in text (not just end) to handle parenthetical additions
+# like "9032 Québec Inc. (FSG)"
+_LEGAL_SUFFIXES_RE = re.compile(
+    r'\b(?:inc|corp|ltd|llc|llp|plc|co|lp|sas|sarl|gmbh|ag|bv|nv|'
+    r'lt[ée]e|limit[ée]e|enr|s\.?e\.?n\.?c\.?|'
+    r's\.?a\.?r?\.?l?\.?|s\.?p\.?a\.?|s\.?r\.?l\.?)\b\.?',
+    re.IGNORECASE
+)
+
+
+def _has_legal_suffix(text: str) -> bool:
+    """Check if text contains a legal company suffix."""
+    return bool(_LEGAL_SUFFIXES_RE.search(text.strip()))
+
 
 
 @router.get("/documents/{doc_id}/detection-progress")
@@ -111,6 +129,29 @@ async def detect_pii(doc_id: str):
         # Propagate: if text was detected on one page, flag it on every
         # other page where it also appears.
         doc.regions = propagate_regions_across_pages(all_regions, doc.pages)
+
+        # Final sweep: drop any ORG region with digit-only or very short text
+        # Exception: numbered companies with legal suffixes (e.g., "9169270 Canada Inc.")
+        from models.schemas import PIIType as _PIIType
+        _org_before = len(doc.regions)
+        doc.regions = [
+            r for r in doc.regions
+            if not (
+                r.pii_type == _PIIType.ORG
+                and (
+                    len(r.text.strip()) <= 2
+                    or r.text.strip().isdigit()
+                    or (
+                        r.text.strip()
+                        and r.text.strip()[0].isdigit()
+                        and not _has_legal_suffix(r.text)
+                    )
+                )
+            )
+        ]
+        _org_swept = _org_before - len(doc.regions)
+        if _org_swept:
+            logger.info(f"Final ORG sweep removed {_org_swept} digit/short ORG(s)")
 
         doc.status = DocumentStatus.REVIEWING
         logger.info(f"Detection complete for '{doc.original_filename}': {len(doc.regions)} regions")
@@ -346,6 +387,29 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
             ]
 
         doc.regions = all_regions
+
+        # Final sweep: drop any ORG region with digit-only or very short text
+        # Exception: numbered companies with legal suffixes (e.g., "9169270 Canada Inc.")
+        from models.schemas import PIIType as _PIIType
+        _org_before_r = len(doc.regions)
+        doc.regions = [
+            r for r in doc.regions
+            if not (
+                r.pii_type == _PIIType.ORG
+                and (
+                    len(r.text.strip()) <= 2
+                    or r.text.strip().isdigit()
+                    or (
+                        r.text.strip()
+                        and r.text.strip()[0].isdigit()
+                        and not _has_legal_suffix(r.text)
+                    )
+                )
+            )
+        ]
+        _org_swept_r = _org_before_r - len(doc.regions)
+        if _org_swept_r:
+            logger.info(f"Redetect: final ORG sweep removed {_org_swept_r} digit/short ORG(s)")
 
         doc.status = DocumentStatus.REVIEWING
         save_doc(doc)

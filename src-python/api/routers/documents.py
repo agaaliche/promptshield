@@ -62,9 +62,13 @@ async def upload_document(file: UploadFile = File(...)):
 
     try:
         doc = await ingest_document(upload_path, file.filename)
+    except RuntimeError as e:
+        # RuntimeError is raised for missing dependencies like LibreOffice
+        logger.error(f"Failed to process document: {e}")
+        raise HTTPException(400, str(e))
     except Exception as e:
         logger.error(f"Failed to process document: {e}")
-        raise HTTPException(500, "Failed to process document. Check server logs for details.")
+        raise HTTPException(500, f"Failed to process document: {e}")
 
     # Store file in persistent storage
     store = get_store()

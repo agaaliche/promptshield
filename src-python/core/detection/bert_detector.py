@@ -305,6 +305,28 @@ _ORG_NOISE: set[str] = {
     "appliquée", "applique", "appliquées", "appliques",
     "appliqué", "appliqués",
     "groupe", "section",
+    # French document headings / generic descriptive words (never org names)
+    "renseignements", "complémentaires", "complementaires",
+    "sommaire", "introduction", "conclusion", "observations",
+    "vérification", "verification", "certification", "attestation",
+    "présentation", "presentation", "description", "recommandations",
+    "recommandation", "constatations", "constatation",
+    "objectifs", "objectif", "mandat", "portée", "portee",
+    "responsabilités", "responsabilites", "responsabilité", "responsabilite",
+    "états", "etats", "état", "etat",
+    "résultats", "resultats", "résultat", "resultat",
+    "auditeurs", "auditeur", "auditrice", "auditrices",
+    "générales", "generales", "particulières", "particulieres",
+    "supplémentaires", "supplementaires", "relatives", "relatifs",
+    "aux", "sur", "des", "les", "par",
+    # English document headings / generic descriptive words
+    "additional", "supplementary", "complementary", "preliminary",
+    "consolidated", "independent", "overview", "background",
+    "disclosures", "disclosure", "requirements", "requirement",
+    "management", "discussion", "analysis", "review",
+    "assessment", "evaluation", "examination", "verification",
+    "certification", "statement", "statements", "financial",
+    "auditors", "auditor", "general", "specific",
     # Partial short terms
     "fr", "emp", "lo", "en", "per", "ex", "amor", "immob",
     "fourn", "four",
@@ -338,8 +360,16 @@ def _is_org_noise(text: str) -> bool:
     if _DIGITS_ONLY_RE.match(clean):
         return True
     # Starts with a digit — not an org name
+    # EXCEPT numbered company patterns (e.g., "9169270 Canada inc.")
     if clean and clean[0].isdigit():
-        return True
+        _legal_suffixes = (
+            "inc", "inc.", "corp", "corp.", "ltd", "ltd.", "llc",
+            "ltée", "ltee", "limitée", "limitee", "enr", "enr.",
+            "sas", "sarl", "sa", "se", "senc", "s.e.n.c.",
+            "gmbh", "ag", "bv", "b.v.", "nv", "n.v.",
+        )
+        if not any(low.endswith(suffix) for suffix in _legal_suffixes):
+            return True
     # All-lowercase — real org names are capitalised
     words = clean.split()
     if clean == clean.lower() and len(words) <= 2:

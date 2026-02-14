@@ -29,7 +29,7 @@ from core.detection.bert_detector import (
     detect_bert_ner,
     is_bert_ner_available,
 )
-from core.detection.language import resolve_auto_model, SUPPORTED_LANGUAGES
+from core.detection.language import resolve_auto_model, detect_language, SUPPORTED_LANGUAGES
 from core.detection.llm_detector import LLMMatch, detect_llm
 from models.schemas import (
     BBox,
@@ -163,7 +163,7 @@ _MAX_WORDS_BY_TYPE: dict[str, int] = {
     "IBAN":           8,
     "PHONE":          8,
     "ORG":            8,
-    "ADDRESS":       10,
+    "ADDRESS":        7,
 }
 _MAX_WORDS_DEFAULT = 4        # Fallback for unknown types
 
@@ -205,7 +205,7 @@ def _detect_cross_line_orgs(full_text: str) -> list[RegexMatch]:
 
     org_patterns: list[tuple[_re.Pattern, PIIType, float]] = [
         (_re.compile(p, f), pt, c)
-        for p, pt, c, f in _PAT
+        for p, pt, c, f, _langs in _PAT
         if pt == PIIType.ORG
     ]
     if not org_patterns:
@@ -450,7 +450,8 @@ def _redetect_pii(text: str) -> tuple[PIIType, float, DetectionSource] | None:
 
     # Regex (fast, reliable for structured PII)
     if config.regex_enabled:
-        for m in detect_regex(text):
+        _lang = config.detection_language if config.detection_language != "auto" else detect_language(text)
+        for m in detect_regex(text, detection_language=_lang):
             if best is None or m.confidence > best[1]:
                 best = (m.pii_type, m.confidence, DetectionSource.REGEX)
 
@@ -521,10 +522,46 @@ def _enforce_region_shapes(
             continue
 
         # ── 3. Split at word gaps ────────────────────────────────────
+        # ADDRESS regions should never be split at intra-address gaps
+        # (commas, spaces between street / city / postal code).  Only
+        # enforce the word-count limit (≤10 words).
+        _wlimit = _max_words_for_type(region.pii_type)
+        if region.pii_type == PIIType.ADDRESS:
+            if len(triples) <= _wlimit:
+                result.append(region)
+                continue
+            # Exceeds word limit — split into chunks without gap logic
+            sorted_triples = sorted(
+                triples, key=lambda t: (t[2].bbox.y0, t[2].bbox.x0),
+            )
+            for ci in range(0, len(sorted_triples), _wlimit):
+                chunk = sorted_triples[ci:ci + _wlimit]
+                sub_bbox = _clamp_bbox(
+                    _bbox_from_block_triples(chunk), page_w, page_h,
+                )
+                if sub_bbox.x1 - sub_bbox.x0 < 1.0 or sub_bbox.y1 - sub_bbox.y0 < 1.0:
+                    continue
+                sub_text = " ".join(t[2].text for t in chunk)
+                cs = min(t[0] for t in chunk)
+                ce = max(t[1] for t in chunk)
+                result.append(PIIRegion(
+                    id=uuid.uuid4().hex[:16],
+                    page_number=region.page_number,
+                    bbox=sub_bbox,
+                    text=sub_text,
+                    pii_type=region.pii_type,
+                    confidence=region.confidence,
+                    source=region.source,
+                    char_start=cs,
+                    char_end=ce,
+                    action=region.action,
+                    linked_group=region.linked_group,
+                ))
+            continue
+
         gap_groups = _split_blocks_at_gaps(triples, page_data.full_text)
 
         # Fast path: single group, within word limit → keep original
-        _wlimit = _max_words_for_type(region.pii_type)
         if len(gap_groups) == 1 and len(gap_groups[0]) <= _wlimit:
             result.append(region)
             continue
@@ -823,6 +860,458 @@ def _char_offsets_to_line_bboxes(
     return bboxes
 
 
+# ---------------------------------------------------------------------------
+# Pipeline-level noise sets & helpers (module-level for cross-function use)
+# ---------------------------------------------------------------------------
+
+# ── ORG noise ─────────────────────────────────────────────────────────────
+_ORG_PIPELINE_NOISE: set[str] = {
+    # English
+    "department", "section", "division", "group", "team",
+    "committee", "board", "council", "commission",
+    "act", "law", "regulation", "policy", "standard",
+    "agreement", "contract", "report", "summary",
+    "schedule", "exhibit", "annex", "appendix",
+    "article", "clause", "provision", "amendment",
+    "table", "figure", "chart", "graph", "page",
+    "total", "subtotal", "grand", "amount", "balance",
+    "net", "tax", "note", "notes", "other", "non",
+    "assets", "asset", "liabilities", "liability", "equity",
+    "revenue", "revenues", "expenses", "expense", "income",
+    "profit", "loss", "cash", "capital", "debt",
+    "depreciation", "amortization", "provision", "provisions",
+    "interest", "dividend", "dividends",
+    "goodwill", "inventory", "receivable", "receivables",
+    "payable", "payables", "deferred", "retained",
+    "earnings", "cost", "costs", "margin", "surplus", "deficit",
+    "current", "long", "short", "term",
+    "inc", "llc", "ltd", "corp", "co", "plc", "sa", "se",
+    # French
+    "société", "societe", "entreprise", "compagnie", "filiale",
+    "département", "departement", "service", "bureau", "direction",
+    "division", "commission", "comité", "comite",
+    "conseil", "ministère", "ministere", "gouvernement",
+    "article", "clause", "alinéa", "alinea", "annexe",
+    "tableau", "graphique",
+    "loi", "décret", "decret", "arrêté", "arrete",
+    "règlement", "reglement",
+    "contrat", "accord", "convention", "rapport",
+    "résumé", "resume",
+    "actif", "passif", "actifs", "passifs",
+    "court", "long", "terme",
+    "encaisse", "emprunt", "immobilisation", "immobilisations",
+    "amortissement", "solde",
+    "résultat", "resultat", "résultats", "resultats",
+    "bénéfice", "benefice", "perte", "pertes",
+    "bilan", "exercice", "exercices", "clos", "clôt",
+    "excédent", "excedent", "excédents", "excedents",
+    "norme", "normes", "canadienne", "canadiennes", "canadien", "canadiens",
+    "charges", "produits", "compte", "comptes",
+    "exploitation", "financement", "investissement",
+    "achats", "coût", "cout", "frais",
+    "client", "fournisseur",
+    "taux", "location", "acquisition", "acquisitions",
+    "location-acquisition", "lave-vaisselle",
+    "dotation", "dotations", "reprise", "reprises",
+    "écart", "ecart", "écarts", "ecarts",
+    "valeur", "valeurs", "emprunt", "emprunts",
+    "titre", "titres", "fonds", "caisse",
+    "trésorerie", "tresorerie",
+    "recette", "recettes", "facture", "factures",
+    "poste", "postes", "créance", "creance", "créances", "creances",
+    "dette", "dettes", "subvention", "subventions",
+    "cra", "senc", "osbl", "obnl",  # French accounting abbreviations
+    # French accounting terms that appear in financial documents
+    "fournitures", "fourniture",
+    "instruments", "instrument",
+    "créances", "creances", "créance", "creance",
+    "douteuses", "douteuse", "douteux",
+    "catégorie", "categorie", "catégories", "categories",
+    "mère", "mere",  # parent (company)
+    "consolidés", "consolides", "consolidé", "consolide",
+    # French descriptive / asset-category words (never org names)
+    "organisme", "organismes",
+    "préparation", "preparation", "préparations", "preparations",
+    "renouvellement", "renouvellements",
+    "complexe", "nautique",
+    "équipements", "equipements", "équipement", "equipement",
+    "matériel", "materiel", "matériels", "materiels",
+    "informatique", "informatiques",
+    "installation", "installations",
+    "réservoirs", "reservoirs", "réservoir", "reservoir",
+    "pontons", "ponton", "quai", "quais",
+    "bâtiment", "batiment", "bâtiments", "batiments",
+    "principales", "principaux", "principale", "principal",
+    "général", "generale", "generaux", "générale", "généraux",
+    "comptables", "comptable", "comptabilité", "comptabilite",
+    "financier", "financiere", "financiers", "financieres",
+    "financière", "financières",
+    "corporelles", "corporels", "corporel", "corporelle",
+    "méthodes", "methodes", "méthode", "methode",
+    "statuts", "statut", "nature",
+    "activités", "activites", "activité", "activite",
+    "éléments", "elements", "élément", "element",
+    "informations", "information",
+    "établissement", "etablissement",
+    "établissements", "etablissements",
+    "opérations", "operations", "opération", "operation",
+    "complémentaires", "complementaires",
+    "complémentaire", "complementaire",
+    # French document headings / generic descriptive words (never org names)
+    "renseignements",
+    "sommaire", "introduction", "conclusion", "observations",
+    "vérification", "verification", "certification", "attestation",
+    "présentation", "presentation", "description", "recommandations",
+    "recommandation", "constatations", "constatation",
+    "objectifs", "objectif", "mandat", "portée", "portee",
+    "responsabilités", "responsabilites", "responsabilité", "responsabilite",
+    "états", "etats", "état", "etat",
+    "auditeurs", "auditeur", "auditrice", "auditrices",
+    "générales", "generales", "particulières", "particulieres",
+    "supplémentaires", "supplementaires", "relatives", "relatifs",
+    "aux", "sur", "des", "les", "par",
+    # English document headings / generic descriptive words
+    "additional", "supplementary", "complementary", "preliminary",
+    "consolidated", "independent", "overview", "background",
+    "disclosures", "disclosure", "requirements", "requirement",
+    "management", "discussion", "analysis", "review",
+    "assessment", "evaluation", "examination",
+    "statement", "statements", "financial",
+    "auditors", "auditor", "general", "specific",
+    "notes", "note",
+    "groupe", "section",
+    "société", "societe",
+    # Italian
+    "dipartimento", "servizio", "ufficio", "direzione",
+    "sezione", "articolo", "clausola", "allegato", "grafico",
+    "legge", "decreto", "ordinanza", "regolamento",
+    "contratto", "accordo", "convenzione",
+    "rapporto", "relazione",
+    # German / Spanish
+    "gesellschaft", "unternehmen", "abteilung",
+    "empresa", "compañía", "compania", "división",
+}
+
+
+def _is_org_pipeline_noise(text: str) -> bool:
+    clean = text.strip()
+    low = clean.lower()
+    if low in _ORG_PIPELINE_NOISE:
+        return True
+    # Strip French article prefixes: l', d', L', D'
+    _stripped = _re.sub(r"^[LlDd]['\u2019]\s*", "", clean)
+    if _stripped and _stripped.lower() in _ORG_PIPELINE_NOISE:
+        return True
+    if len(clean) <= 2:
+        return True
+    if clean.isupper() and len(clean) <= 5:
+        return True
+    # Strings starting with digits are usually noise (e.g., "123", "2024")
+    # EXCEPT numbered company patterns (e.g., "9169270 Canada inc.")
+    if clean and clean[0].isdigit():
+        # Check if it looks like a numbered company (has legal suffix)
+        # Use regex to find suffix anywhere (not just end) to handle
+        # cases like "9032 Québec Inc. (FSG)" where suffix precedes parenthetical
+        _legal_suffix_re = _re.compile(
+            r'\b(?:inc|corp|ltd|llc|llp|plc|co|lp|sas|sarl|gmbh|ag|bv|nv|'
+            r'lt[ée]e|limit[ée]e|enr|s\.?e\.?n\.?c\.?|'
+            r's\.?a\.?r?\.?l?\.?|s\.?p\.?a\.?|s\.?r\.?l\.?)\b\.?',
+            _re.IGNORECASE
+        )
+        if not _legal_suffix_re.search(clean):
+            return True
+    if clean.isdigit():
+        return True
+    words = clean.split()
+    # Single-word all-caps → document heading, not an org name
+    # Real org acronyms (IBM, NASA) are ≤5 chars caught above;
+    # longer single all-caps words (CREDIT, CLIENTS) are headings.
+    if len(words) == 1 and clean.isupper():
+        return True
+    # All-lowercase single/two-word — not a real org name
+    if clean == clean.lower() and len(words) <= 2:
+        return True
+    if len(words) == 1 and len(words[0]) <= 3:
+        return True
+    # Multi-word where every meaningful word is noise
+    if len(words) >= 2 and all(
+        w.lower() in _ORG_PIPELINE_NOISE
+        or all(c in "-\u2013\u2014/." for c in w)
+        for w in words
+    ):
+        return True
+    # "Portion N" pattern — accounting section references ("Portion 4")
+    if len(words) == 2 and words[0].lower() == "portion" and words[1].isdigit():
+        return True
+    # French article + acronym: "le MAMROT", "la CRA", "au MAMH"
+    # These are references to government bodies, not org names to redact
+    if len(words) == 2 and words[0].lower() in (
+        "le", "la", "les", "de", "du", "des", "au", "aux", "un", "une"
+    ) and words[1].isupper() and len(words[1]) >= 2:
+        return True
+    # "Société + verb" pattern: "Société détermine", "Société présente"
+    if len(words) >= 2 and words[0].lower() in ("société", "societe"):
+        # If second word is a French connector or common verb, it's a sentence fragment
+        w1 = words[1].lower()
+        # Common connectors and verbs that indicate sentence fragments (not org names)
+        _sentence_verbs = {
+            "et", "ou", "qui", "que", "est", "a", "sont", "ont", "peut", "doit",
+            "détermine", "determine", "présente", "presente", "utilise", "applique",
+            "établit", "etablit", "calcule", "comptabilise", "reconnaît", "reconnait",
+            "constate", "enregistre", "amortit", "provisionne", "rembourse",
+            "détient", "detient", "possède", "possede", "gère", "gere",
+            "exploite", "opère", "opere", "emploie", "embauche",
+            "vend", "achète", "achete", "loue", "fabrique", "produit",
+            "offre", "fournit", "distribue", "exporte", "importe",
+        }
+        if w1 in _sentence_verbs:
+            return True
+    # "X est/a/sont..." sentence fragments
+    if len(words) >= 3 and words[1].lower() in ("est", "a", "sont", "ont", "peut", "doit"):
+        return True
+    # "pour + noun" accounting phrase: "Provision pour créances"
+    if "pour" in [w.lower() for w in words]:
+        return True
+    # "X de catégorie Y" — accounting classification: "Actions de catégorie A"
+    if len(words) >= 3:
+        low_words = [w.lower() for w in words]
+        if "catégorie" in low_words or "categorie" in low_words:
+            return True
+    return False
+
+
+# ── LOCATION noise ────────────────────────────────────────────────────────
+_LOC_PIPELINE_NOISE: set[str] = {
+    # French facility / asset type words (not specific locations)
+    "complexe", "nautique", "piscine", "gymnase",
+    "terrain", "terrains",
+    "bâtiment", "batiment", "bâtiments", "batiments",
+    "local", "locaux",
+    "salle", "salles",
+    "atelier", "ateliers",
+    "entrepôt", "entrepot", "entrepôts", "entrepots",
+    "hangar", "hangars",
+    "garage", "garages",
+    "parking", "parkings",
+    "usine", "usines",
+    "magasin", "magasins",
+    # Accounting / financial terms sometimes tagged as LOC
+    "mobilier", "immobilier",
+    "corporel", "corporels", "corporelle", "corporelles",
+    "incorporel", "incorporels", "incorporelle", "incorporelles",
+    "immobilisation", "immobilisations",
+    "exploitation", "investissement", "financement",
+    "trésorerie", "tresorerie",
+    "stock", "stocks",
+    "taux", "montant", "solde",
+    "actif", "passif", "bilan",
+    "amortissement", "amortissements",
+    "dotation", "dotations",
+    "provision", "provisions",
+    "emprunt", "emprunts",
+    "résultat", "resultat", "résultats", "resultats",
+    # Generic / document structure
+    "page", "section", "chapitre", "annexe", "tableau",
+    "total", "note", "notes",
+    # English equivalents
+    "building", "buildings", "facility", "facilities",
+    "warehouse", "workshop", "premises",
+    "complex", "pool", "gymnasium",
+    "furniture", "equipment",
+}
+
+
+def _is_loc_pipeline_noise(text: str) -> bool:
+    clean = text.strip()
+    low = clean.lower()
+    if low in _LOC_PIPELINE_NOISE:
+        return True
+    if len(clean) <= 2:
+        return True
+    if clean.isdigit():
+        return True
+    if clean and clean[0].isdigit():
+        return True
+    # French "Location de/d'..." = "Rental of..." — not a place
+    if _re.match(r"^location\s+(?:de|d['’])", low):
+        return True
+    words = clean.split()
+    # Multi-word where every meaningful word is noise
+    if len(words) >= 2 and all(
+        w.lower() in _LOC_PIPELINE_NOISE
+        or all(c in "-\u2013\u2014/." for c in w)
+        for w in words
+    ):
+        return True
+    return False
+
+
+# ── PERSON noise ──────────────────────────────────────────────────────────
+_PERSON_PIPELINE_NOISE: set[str] = {
+    # French common nouns misclassified as person names
+    "mobilier", "immobilier",
+    "taux", "montant", "solde", "bilan",
+    # French accounting terms (single words mistaken for names)
+    "bénéfice", "benefice", "bénéfices", "benefices",
+    "revenus", "revenu",
+    "nette", "net", "nets", "nettes",
+    "intérêts", "interets", "intérêt", "interet",
+    "gain", "gains",
+    "coûts", "couts", "coût", "cout",
+    "honoraires", "honoraire",
+    "loyers", "loyer",
+    "salaires", "salaire",
+    "impôts", "impots", "impôt", "impot",
+    "taxes", "taxe",
+    "dividendes", "dividende",
+    "exercice", "résultat", "resultat",
+    "actif", "passif", "capital",
+    "emprunt", "crédit", "credit", "débit", "debit",
+    "amortissement", "amortissements",
+    "provision", "provisions",
+    "dotation", "dotations",
+    "reprise", "reprises",
+    "charge", "charges", "produit", "produits",
+    "recette", "recettes", "dépense", "depense", "dépenses", "depenses",
+    "facture", "factures",
+    "titre", "titres",
+    "fonds", "caisse",
+    "valeur", "valeurs",
+    "compte", "comptes",
+    "poste", "postes",
+    "dette", "dettes",
+    "subvention", "subventions",
+    "trésorerie", "tresorerie",
+    "location", "acquisition", "acquisitions",
+    "location-acquisition", "lave-vaisselle",
+    "clos", "clôt",
+    # Deduction / withholding terms
+    "retenue", "retenues",
+    "prélèvement", "prelevement", "prélèvements", "prelevements",
+    # Generic role / reader terms
+    "lecteur", "lectrice", "lecteurs", "lectrices",
+    "utilisateur", "utilisatrice", "destinataire",
+    # Accounting description terms
+    "corporel", "corporels", "corporelle", "corporelles",
+    "incorporel", "incorporels", "incorporelle", "incorporelles",
+    "courant", "courants", "courante", "courantes",
+    "financier", "financiere", "financiers", "financieres",
+    "financière", "financières",
+    "comptable", "comptables",
+    # Document structure
+    "page", "section", "chapitre", "annexe", "tableau",
+    "total", "note", "notes",
+    "introduction", "conclusion", "sommaire",
+    # English equivalents
+    "balance", "income", "expense", "revenue", "profit", "loss",
+    "asset", "assets", "rate", "amount",
+    "depreciation", "amortization",
+    "fund", "funds", "account", "accounts",
+    "furniture", "equipment",
+}
+
+
+def _is_person_pipeline_noise(text: str) -> bool:
+    clean = text.strip()
+    low = clean.lower()
+    if low in _PERSON_PIPELINE_NOISE:
+        return True
+    # Strip French article prefixes: "Le lecteur" -> "lecteur"
+    stripped = _re.sub(r"^(?:[Ll][ea]s?|[Dd][ue]s?|[Uu]n[e]?|[Ll]['’]|[Dd]['’])\s*", "", clean)
+    if stripped and stripped.lower() in _PERSON_PIPELINE_NOISE:
+        return True
+    if len(clean) <= 2:
+        return True
+    if clean.isdigit():
+        return True
+    if clean and clean[0].isdigit():
+        return True
+    # Dot-separated initials (B.N.R., A.C.M.E.) → abbreviation, not a person
+    if _re.fullmatch(r'[A-ZÀ-Ü](?:\.[A-ZÀ-Ü])+\.?', clean):
+        return True
+    # Short truncated words (4-6 chars, title-case, ending in consonant cluster)
+    # E.g., "Téléc" (truncated "Télécopieur"), "Réf" (truncated "Référence")
+    if len(clean) <= 6 and clean[0].isupper() and clean[-1] in 'bcdfghjklmnpqrstvwxzç':
+        return True
+    words = clean.split()
+    if len(words) == 1 and len(words[0]) <= 3:
+        return True
+    # Single-word all-caps → heading/label, not a person name
+    if len(words) == 1 and clean.isupper():
+        return True
+    # Multi-word where every meaningful word is noise
+    if len(words) >= 2 and all(
+        w.lower() in _PERSON_PIPELINE_NOISE
+        or all(c in "-\u2013\u2014/." for c in w)
+        for w in words
+    ):
+        return True
+    # Multi-word where every word also registers as ORG noise
+    # (e.g. "Filets Sports Gaspésiens" — product/category label, not a person)
+    if len(words) >= 2 and all(
+        _is_org_pipeline_noise(w) or w.lower() in _PERSON_PIPELINE_NOISE
+        for w in words
+    ):
+        return True
+    return False
+
+
+# ── ADDRESS number-only filter ────────────────────────────────────────────
+import re as _re
+_ADDR_ALPHA_RE = _re.compile(r"[A-Za-zÀ-ÿ]")
+
+
+_ADDR_DIGIT_RE = re.compile(r"\d")
+
+
+def _is_address_number_only(text: str) -> bool:
+    """Return True if an ADDRESS region is structurally invalid.
+
+    Real addresses always contain *both* alphabetic characters (street /
+    city name) **and** at least one digit (street number, postal code,
+    suite, etc.).
+
+    This rejects:
+    * Purely numeric / punctuation strings  – e.g. "(13 52)", "414 700"
+    * Purely alphabetic / punctuation strings – e.g. "Mouillage (Mooring)
+      / À l'Ancre" which is boating terminology, not an address.
+    """
+    clean = text.strip()
+    if not clean:
+        return True
+    has_alpha = _ADDR_ALPHA_RE.search(clean) is not None
+    has_digit = _ADDR_DIGIT_RE.search(clean) is not None
+    # Valid addresses need both letters and numbers
+    if not (has_alpha and has_digit):
+        return True
+    # Reject French mortgage/financial descriptions mistaken for addresses
+    # These contain terms like "hypothécaire", "remboursable", "mensuel"
+    low = clean.lower()
+    _mortgage_terms = (
+        "hypothécaire", "hypothecaire", "hypothèque", "hypotheque",
+        "remboursable", "remboursement", "remboursements",
+        "mensuel", "mensuels", "mensuelle", "mensuelles",
+        "trimestriel", "trimestriels", "trimestrielle", "trimestrielles",
+        "annuel", "annuels", "annuelle", "annuelles",
+        "échéance", "echeance", "échéances", "echeances",
+        "capital", "intérêt", "interet", "intérêts", "interets",
+        "emprunt", "emprunts", "prêt", "pret", "prêts", "prets",
+        "créancier", "creancier", "débiteur", "debiteur",
+    )
+    for term in _mortgage_terms:
+        if term in low:
+            return True
+    return False
+
+
+# ── Structured type minimum digit counts ─────────────────────────────────────
+_STRUCTURED_MIN_DIGITS: dict[PIIType, int] = {
+    PIIType.PHONE: 7,
+    PIIType.SSN: 7,
+    PIIType.DRIVER_LICENSE: 6,
+}
+
+
 def _merge_detections(
     regex_matches: list[RegexMatch],
     ner_matches: list[NERMatch],
@@ -870,6 +1359,34 @@ def _merge_detections(
         })
 
     for m in ner_matches:
+        # NER models often misclassify short digit sequences from financial
+        # tables as PHONE / SSN / DRIVER_LICENSE.  Require minimum digit
+        # counts for these structured types when they come only from NER.
+        if m.pii_type in (PIIType.PHONE, PIIType.SSN, PIIType.DRIVER_LICENSE):
+            digits = sum(c.isdigit() for c in m.text)
+            if m.pii_type == PIIType.PHONE and digits < 7:
+                logger.debug("Skipping NER PHONE with too few digits: %r", m.text)
+                continue
+            if m.pii_type == PIIType.SSN and digits < 7:
+                logger.debug("Skipping NER SSN with too few digits: %r", m.text)
+                continue
+            if m.pii_type == PIIType.DRIVER_LICENSE and digits < 6:
+                logger.debug("Skipping NER DRIVER_LICENSE with too few digits: %r", m.text)
+                continue
+            # Reject PHONE/SSN containing decimal points (financial numbers)
+            if m.pii_type in (PIIType.PHONE, PIIType.SSN) and "." in m.text:
+                logger.debug("Skipping NER %s with decimal point (financial): %r", m.pii_type.value, m.text)
+                continue
+            # Reject PHONE/SSN containing underscores (OCR artifact / table separator)
+            if m.pii_type in (PIIType.PHONE, PIIType.SSN) and "_" in m.text:
+                logger.debug("Skipping NER %s with underscore (OCR artifact): %r", m.pii_type.value, m.text)
+                continue
+        # NER misclassifies phone numbers as PASSPORT — passports don't have
+        # hyphens or parentheses (phone number formatting characters)
+        if m.pii_type == PIIType.PASSPORT:
+            if "-" in m.text or "(" in m.text or ")" in m.text:
+                logger.debug("Skipping NER PASSPORT with phone formatting: %r", m.text)
+                continue
         candidates.append({
             "start": m.start, "end": m.end, "text": m.text,
             "pii_type": m.pii_type, "confidence": m.confidence,
@@ -878,6 +1395,23 @@ def _merge_detections(
         })
 
     for m in (gliner_matches or []):
+        # GLiNER also misclassifies formatted numbers as SSN
+        if m.pii_type in (PIIType.PHONE, PIIType.SSN, PIIType.DRIVER_LICENSE):
+            # Reject if text contains a decimal point (currency amounts)
+            if "." in m.text and any(c.isdigit() for c in m.text):
+                digits = sum(c.isdigit() for c in m.text)
+                non_digit = len(m.text.strip()) - digits
+                # Currency-like: "3,399.43" — has commas/dots among digits
+                if "," in m.text or non_digit > 2:
+                    logger.debug("Skipping GLiNER %s (looks like currency): %r", m.pii_type, m.text)
+                    continue
+            digits = sum(c.isdigit() for c in m.text)
+            if m.pii_type == PIIType.PHONE and digits < 7:
+                continue
+            if m.pii_type == PIIType.SSN and digits < 7:
+                continue
+            if m.pii_type == PIIType.DRIVER_LICENSE and digits < 6:
+                continue
         candidates.append({
             "start": m.start, "end": m.end, "text": m.text,
             "pii_type": m.pii_type, "confidence": m.confidence,
@@ -965,137 +1499,165 @@ def _merge_detections(
         else:
             merged.append(cand)
 
-    # ── Pipeline-level ORG noise filter ──────────────────────────────────
-    # NER (spaCy, BERT) and GLiNER all feed into this merge step.
-    # Filter single-word ORG candidates from NER/GLiNER that are generic
-    # business / accounting / legal terms — not real organisation names.
-    _ORG_PIPELINE_NOISE: set[str] = {
-        # English
-        "department", "section", "division", "group", "team",
-        "committee", "board", "council", "commission",
-        "act", "law", "regulation", "policy", "standard",
-        "agreement", "contract", "report", "summary",
-        "schedule", "exhibit", "annex", "appendix",
-        "article", "clause", "provision", "amendment",
-        "table", "figure", "chart", "graph", "page",
-        "total", "subtotal", "grand", "amount", "balance",
-        "net", "tax", "note", "notes", "other", "non",
-        "assets", "asset", "liabilities", "liability", "equity",
-        "revenue", "revenues", "expenses", "expense", "income",
-        "profit", "loss", "cash", "capital", "debt",
-        "depreciation", "amortization", "provision", "provisions",
-        "interest", "dividend", "dividends",
-        "goodwill", "inventory", "receivable", "receivables",
-        "payable", "payables", "deferred", "retained",
-        "earnings", "cost", "costs", "margin", "surplus", "deficit",
-        "current", "long", "short", "term",
-        "inc", "llc", "ltd", "corp", "co", "plc", "sa", "se",
-        # French
-        "société", "societe", "entreprise", "compagnie", "filiale",
-        "département", "departement", "service", "bureau", "direction",
-        "division", "commission", "comité", "comite",
-        "conseil", "ministère", "ministere", "gouvernement",
-        "article", "clause", "alinéa", "alinea", "annexe",
-        "tableau", "graphique",
-        "loi", "décret", "decret", "arrêté", "arrete",
-        "règlement", "reglement",
-        "contrat", "accord", "convention", "rapport",
-        "résumé", "resume",
-        "actif", "passif", "actifs", "passifs",
-        "court", "long", "terme",
-        "encaisse", "emprunt", "immobilisation", "immobilisations",
-        "amortissement", "solde",
-        "résultat", "resultat", "résultats", "resultats",
-        "bénéfice", "benefice", "perte", "pertes",
-        "bilan", "exercice", "exercices",
-        "charges", "produits", "compte", "comptes",
-        "exploitation", "financement", "investissement",
-        "achats", "coût", "cout", "frais",
-        "client", "fournisseur",
-        "principales", "principaux", "principale", "principal",
-        "général", "generale", "generaux", "générale", "généraux",
-        "comptables", "comptable", "comptabilité", "comptabilite",
-        "financier", "financiere", "financiers", "financieres",
-        "financière", "financières",
-        "corporelles", "corporels", "corporel", "corporelle",
-        "méthodes", "methodes", "méthode", "methode",
-        "statuts", "statut", "nature",
-        "activités", "activites", "activité", "activite",
-        "éléments", "elements", "élément", "element",
-        "informations", "information",
-        "établissement", "etablissement",
-        "établissements", "etablissements",
-        "opérations", "operations", "opération", "operation",
-        "complémentaires", "complementaires",
-        "complémentaire", "complementaire",
-        "notes", "note",
-        "groupe", "section",
-        "société", "societe",
-        # Italian
-        "dipartimento", "servizio", "ufficio", "direzione",
-        "sezione", "articolo", "clausola", "allegato", "grafico",
-        "legge", "decreto", "ordinanza", "regolamento",
-        "contratto", "accordo", "convenzione",
-        "rapporto", "relazione",
-        # German / Spanish
-        "gesellschaft", "unternehmen", "abteilung",
-        "empresa", "compañía", "compania", "división",
-    }
-
-    def _is_org_pipeline_noise(text: str) -> bool:
-        clean = text.strip()
-        low = clean.lower()
-        if low in _ORG_PIPELINE_NOISE:
-            return True
-        if len(clean) <= 2:
-            return True
-        if clean.isupper() and len(clean) <= 4:
-            return True
-        if clean and clean[0].isdigit():
-            return True
-        if clean.isdigit():
-            return True
-        words = clean.split()
-        # All-lowercase single/two-word — not a real org name
-        if clean == clean.lower() and len(words) <= 2:
-            return True
-        if len(words) == 1 and len(words[0]) <= 3:
-            return True
-        # Multi-word where every word is noise
-        if len(words) >= 2 and all(
-            w.lower() in _ORG_PIPELINE_NOISE for w in words
-        ):
-            return True
-        return False
+    # ── Apply pipeline-level ORG noise filter ───────────────────────────
+    # DEBUG: Log all ORG candidates before filtering
+    for item in merged:
+        if item["pii_type"] == PIIType.ORG:
+            logger.warning(
+                "Page %d: ORG candidate BEFORE filter: text=%r source=%s conf=%.2f noise=%s",
+                page_data.page_number, item["text"], item["source"],
+                item["confidence"], _is_org_pipeline_noise(item["text"]),
+            )
 
     org_before = len(merged)
     merged = [
         item for item in merged
         if not (
             item["pii_type"] == PIIType.ORG
-            and item["source"] in (DetectionSource.NER, DetectionSource.GLINER)
             and _is_org_pipeline_noise(item["text"])
         )
     ]
     org_dropped = org_before - len(merged)
     if org_dropped:
-        logger.debug(
+        logger.warning(
             f"Page {page_data.page_number}: pipeline ORG filter "
-            f"dropped {org_dropped} NER/GLiNER noise ORG(s)"
+            f"dropped {org_dropped} noise ORG(s)"
+        )
+
+    # DEBUG: Log surviving ORG candidates after filtering
+    for item in merged:
+        if item["pii_type"] == PIIType.ORG:
+            logger.warning(
+                "Page %d: ORG SURVIVED filter: text=%r source=%s conf=%.2f",
+                page_data.page_number, item["text"], item["source"],
+                item["confidence"],
+            )
+
+    # ── Apply pipeline-level LOCATION noise filter ───────────────────
+    loc_before = len(merged)
+    merged = [
+        item for item in merged
+        if not (
+            item["pii_type"] == PIIType.LOCATION
+            and _is_loc_pipeline_noise(item["text"])
+        )
+    ]
+    loc_dropped = loc_before - len(merged)
+    if loc_dropped:
+        logger.info(
+            f"Page {page_data.page_number}: pipeline LOCATION filter "
+            f"dropped {loc_dropped} noise LOCATION(s)"
+        )
+
+    # ── Apply pipeline-level PERSON noise filter ─────────────────────
+    per_before = len(merged)
+    merged = [
+        item for item in merged
+        if not (
+            item["pii_type"] == PIIType.PERSON
+            and _is_person_pipeline_noise(item["text"])
+        )
+    ]
+
+    # ── Context-aware PERSON filter: page-header pattern ─────────────
+    # A multi-word PERSON from NER/GLINER at char position 0–5 is
+    # almost certainly a page header (company name), not a person name.
+    # Real person-name mentions appear *within* sentences, not at the
+    # very start of the page text.
+    merged = [
+        item for item in merged
+        if not (
+            item["pii_type"] == PIIType.PERSON
+            and item.get("source") in ("NER", "GLINER", "BERT")
+            and item.get("start", 99) <= 5
+            and len(item["text"].split()) >= 2
+        )
+    ]
+
+    per_dropped = per_before - len(merged)
+    if per_dropped:
+        logger.info(
+            f"Page {page_data.page_number}: pipeline PERSON filter "
+            f"dropped {per_dropped} noise PERSON(s)"
+        )
+
+    # ── Apply pipeline-level ADDRESS number-only filter ──────────────
+    addr_before = len(merged)
+    merged = [
+        item for item in merged
+        if not (
+            item["pii_type"] == PIIType.ADDRESS
+            and _is_address_number_only(item["text"])
+        )
+    ]
+    addr_dropped = addr_before - len(merged)
+    if addr_dropped:
+        logger.info(
+            f"Page {page_data.page_number}: pipeline ADDRESS filter "
+            f"dropped {addr_dropped} invalid ADDRESS(es)"
+        )
+
+    # ── Post-merge SSN / PHONE / DRIVER_LICENSE digit-count filter ────
+    # GLiNER & NER sometimes return multi-number spans that pass the
+    # pre-merge digit gate, then get split into sub-regions with fewer
+    # digits.  Also catches short REGEX SSN false positives.
+    struct_before = len(merged)
+    def _is_valid_structured(item: dict) -> bool:
+        ptype = item["pii_type"]
+        min_d = _STRUCTURED_MIN_DIGITS.get(ptype)
+        if min_d is None:
+            return True
+        txt = item["text"]
+        digits = sum(c.isdigit() for c in txt)
+        if digits < min_d:
+            return False
+        # Reject SSN that contain currency indicators ($, €, £)
+        if ptype == PIIType.SSN and any(c in txt for c in '$€£'):
+            return False
+        # Reject SSN / PHONE that span multiple lines (real IDs don't)
+        if ptype in (PIIType.SSN, PIIType.PHONE) and '\n' in txt:
+            return False
+        # Reject SSN that look like French-formatted financial numbers
+        # Pattern: 1-2 digits + space + 3 digits + space + 3 digits
+        # E.g., "1 176 658", "3 621 863" (thousands/millions with space separators)
+        if ptype == PIIType.SSN:
+            import re as _re_inner
+            if _re_inner.fullmatch(r'\d{1,2}\s+\d{3}\s+\d{3}', txt.strip()):
+                return False
+        return True
+
+    merged = [item for item in merged if _is_valid_structured(item)]
+    struct_dropped = struct_before - len(merged)
+    if struct_dropped:
+        logger.info(
+            f"Page {page_data.page_number}: post-merge structured filter "
+            f"dropped {struct_dropped} region(s) with too few digits"
         )
 
     # ── Merge adjacent ADDRESS fragments (any source) ────────────────
     # BERT models emit STREET, BUILDINGNUM, CITY, ZIPCODE as separate
     # entities.  Also absorb LOCATION entities (city / state names)
-    # sandwiched between ADDRESS fragments.  Allow cross-line merge up
-    # to 4 visual lines total (consistent with _MAX_LINES_BY_TYPE).
+    # adjacent to ADDRESS fragments in either direction.  Allow
+    # cross-line merge up to 4 visual lines total (consistent with
+    # _MAX_LINES_BY_TYPE).
     _addr_merged: list[dict] = []
     for item in merged:
-        if _addr_merged and _addr_merged[-1]["pii_type"] == PIIType.ADDRESS:
-            cur_is_addr = item["pii_type"] == PIIType.ADDRESS
-            cur_is_loc  = item["pii_type"] == PIIType.LOCATION
-            if cur_is_addr or cur_is_loc:
-                prev = _addr_merged[-1]
+        if _addr_merged:
+            prev = _addr_merged[-1]
+            prev_is_addr = prev["pii_type"] == PIIType.ADDRESS
+            prev_is_loc  = prev["pii_type"] == PIIType.LOCATION
+            cur_is_addr  = item["pii_type"] == PIIType.ADDRESS
+            cur_is_loc   = item["pii_type"] == PIIType.LOCATION
+
+            # Merge when: ADDRESS + ADDRESS, ADDRESS + LOCATION,
+            #             LOCATION + ADDRESS  (promote LOCATION → ADDRESS)
+            can_merge = False
+            if prev_is_addr and (cur_is_addr or cur_is_loc):
+                can_merge = True
+            elif prev_is_loc and cur_is_addr:
+                can_merge = True
+
+            if can_merge:
                 gap = item["start"] - prev["end"]
                 if 0 <= gap <= 60:
                     combined_text = page_data.full_text[prev["start"]:item["end"]]
@@ -1103,6 +1665,7 @@ def _merge_detections(
                     if newline_count <= 3:  # max 4 visual lines
                         prev["end"] = item["end"]
                         prev["text"] = combined_text
+                        prev["pii_type"] = PIIType.ADDRESS  # promote
                         prev["confidence"] = max(
                             prev["confidence"], item["confidence"]
                         )
@@ -1295,6 +1858,44 @@ def _merge_detections(
     # Resolve any remaining bounding-box overlaps
     regions = _resolve_bbox_overlaps(regions)
 
+    # ── FINAL safety net (ORG + LOCATION + PERSON + ADDRESS + SSN/PHONE/DL) ──
+    # Belt-and-suspenders: drop noise regions that slipped through.
+    _before_final = len(regions)
+
+    def _is_region_noise(r) -> bool:
+        if r.pii_type == PIIType.ORG and (
+            len(r.text.strip()) <= 2
+            or r.text.strip().isdigit()
+            # Digit-starts check is handled by _is_org_pipeline_noise with legal suffix exception
+            or _is_org_pipeline_noise(r.text)
+        ):
+            return True
+        if r.pii_type == PIIType.LOCATION and _is_loc_pipeline_noise(r.text):
+            return True
+        if r.pii_type == PIIType.PERSON and _is_person_pipeline_noise(r.text):
+            return True
+        if r.pii_type == PIIType.ADDRESS and _is_address_number_only(r.text):
+            return True
+        # Structured types: digit-count + currency + multi-line check
+        _min = _STRUCTURED_MIN_DIGITS.get(r.pii_type)
+        if _min is not None:
+            digits = sum(c.isdigit() for c in r.text)
+            if digits < _min:
+                return True
+            if r.pii_type == PIIType.SSN and any(c in r.text for c in '$€£'):
+                return True
+            if r.pii_type in (PIIType.SSN, PIIType.PHONE) and '\n' in r.text:
+                return True
+        return False
+
+    regions = [r for r in regions if not _is_region_noise(r)]
+    _final_dropped = _before_final - len(regions)
+    if _final_dropped:
+        logger.info(
+            f"Page {page_data.page_number}: FINAL safety net "
+            f"dropped {_final_dropped} noise region(s)"
+        )
+
     return regions
 
 
@@ -1332,6 +1933,26 @@ def propagate_regions_across_pages(
         key = r.text.strip()
         if not key or len(key) < 2:
             continue
+        # Skip ORG regions that are digit-only or start with digit
+        if r.pii_type == PIIType.ORG and (
+            key.isdigit()
+            or (key and key[0].isdigit())
+            or len(key) <= 2
+        ):
+            continue
+        # Skip LOCATION/PERSON noise so it doesn't propagate
+        if r.pii_type == PIIType.LOCATION and _is_loc_pipeline_noise(key):
+            continue
+        if r.pii_type == PIIType.PERSON and _is_person_pipeline_noise(key):
+            continue
+        # Skip structured types with too few digits
+        _min_prop = _STRUCTURED_MIN_DIGITS.get(r.pii_type)
+        if _min_prop is not None:
+            digs = sum(c.isdigit() for c in key)
+            if digs < _min_prop:
+                continue
+            if r.pii_type == PIIType.SSN and any(c in key for c in '$€£'):
+                continue
         existing = text_to_template.get(key)
         if existing is None or r.confidence > existing.confidence:
             text_to_template[key] = r
@@ -1479,6 +2100,12 @@ def detect_pii_on_page(
     page_t0 = time.perf_counter()
     timings: dict[str, float] = {}
 
+    # ── Resolve detection language once for this page ──
+    if config.detection_language and config.detection_language != "auto":
+        page_lang: str | None = config.detection_language
+    else:
+        page_lang = detect_language(text)  # stop-word based; may return None
+
     # Layer 1: Regex (always fast)
     regex_matches: list[RegexMatch] = []
     if config.regex_enabled:
@@ -1500,7 +2127,8 @@ def detect_pii_on_page(
             else:
                 # NER types unfiltered — allow all NER-tab types through regex
                 effective_regex_types = None
-        regex_matches = detect_regex(text, allowed_types=effective_regex_types)
+        regex_matches = detect_regex(text, allowed_types=effective_regex_types,
+                                      detection_language=page_lang)
         timings["regex"] = (time.perf_counter() - t0) * 1000
         logger.info(
             f"Page {page_data.page_number}: Regex found {len(regex_matches)} matches"
@@ -1719,7 +2347,8 @@ def reanalyze_bbox(
         return {"text": "", "pii_type": "CUSTOM", "confidence": 0.0, "source": "MANUAL"}
 
     # 2. Run detection layers on the extracted text
-    regex_matches = detect_regex(text) if config.regex_enabled else []
+    _lang = config.detection_language if config.detection_language != "auto" else detect_language(text)
+    regex_matches = detect_regex(text, detection_language=_lang) if config.regex_enabled else []
 
     ner_matches: list[NERMatch] = []
     if config.ner_enabled:

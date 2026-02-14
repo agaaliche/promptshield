@@ -57,8 +57,8 @@ export default function Sidebar() {
   const startX = useRef(0);
   const startWidth = useRef(200);
 
-  // Accordion state for Protect Files
-  const [protectExpanded, setProtectExpanded] = useState(true);
+  // Accordion state for Protect Files — collapsed on non-viewer views
+  const [protectExpanded, setProtectExpanded] = useState(currentView === "viewer" || currentView === "upload");
   // Dialogs
   const [showFilesDialog, setShowFilesDialog] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -105,11 +105,12 @@ export default function Sidebar() {
   }, [setLeftSidebarWidth]);
 
   // Auto-expand accordion when files are added (e.g. from UploadView)
+  // Only expand when in viewer/upload — not when in settings/detokenize
   useEffect(() => {
-    if (uploadQueue.length > 0 || documents.length > 0) {
+    if ((currentView === "viewer" || currentView === "upload") && (uploadQueue.length > 0 || documents.length > 0)) {
       setProtectExpanded(true);
     }
-  }, [uploadQueue.length, documents.length]);
+  }, [uploadQueue.length, documents.length, currentView]);
 
   // Keep is_protected in sync for the active document when regions change
   useEffect(() => {
@@ -244,6 +245,7 @@ export default function Sidebar() {
                 overflowY: "auto",
                 padding: "4px",
                 margin: "6px 8px 8px 8px",
+                background: "var(--bg-secondary)",
                 border: "1px solid rgba(255,255,255,0.55)",
                 borderRadius: 6,
                 paddingBottom: 12,

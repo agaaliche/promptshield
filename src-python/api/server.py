@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from core.config import config
 from core.persistence import DocumentStore
+from models.schemas import DocumentStatus
 from api import deps
 from api.routers import (
     documents,
@@ -53,6 +54,19 @@ async def lifespan(app: FastAPI):
         deps.documents.clear()
         deps.documents.update(loaded)
         logger.info(f"Loaded {len(deps.documents)} existing documents")
+
+        # Clear persisted detection regions so stale results never carry
+        # over between restarts — the user must re-run detection.
+        for doc in deps.documents.values():
+            if doc.regions:
+                logger.info(
+                    f"Clearing {len(doc.regions)} stale regions from "
+                    f"'{doc.original_filename}' ({doc.doc_id})"
+                )
+                doc.regions = []
+                if doc.status == DocumentStatus.REVIEWING:
+                    doc.status = DocumentStatus.PROCESSING
+                deps.store.save_document(doc)
 
         # Sanitize legacy regions — clamp bboxes to page bounds
         sanitized = 0

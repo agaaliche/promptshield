@@ -152,6 +152,148 @@ def _libreoffice_convert_to_pdf(src: Path, out_dir: Path) -> Path:
     return pdf_path
 
 
+def _xlsx_to_pdf(src: Path, out_dir: Path) -> Path:
+    """Convert an Excel xlsx file to PDF using openpyxl and reportlab.
+    
+    This is a pure-Python alternative to LibreOffice for xlsx files.
+    Creates a PDF with each sheet as a separate page, preserving cell
+    content in a tabular layout for accurate text extraction.
+    """
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
+    from reportlab.lib.pagesizes import letter, landscape
+    from reportlab.lib.units import inch
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = out_dir / f"{src.stem}.pdf"
+    
+    # Load workbook
+    wb = load_workbook(src, data_only=True)  # data_only=True to get calculated values
+    
+    # Create PDF document with landscape orientation for spreadsheets
+    doc = SimpleDocTemplate(
+        str(pdf_path),
+        pagesize=landscape(letter),
+        leftMargin=0.5*inch,
+        rightMargin=0.5*inch,
+        topMargin=0.5*inch,
+        bottomMargin=0.5*inch,
+    )
+    
+    styles = getSampleStyleSheet()
+    # Create a style for cell content that handles wrapping
+    cell_style = ParagraphStyle(
+        'CellStyle',
+        parent=styles['Normal'],
+        fontSize=8,
+        leading=10,
+        wordWrap='CJK',  # Better wrapping for all text
+    )
+    header_style = ParagraphStyle(
+        'HeaderStyle',
+        parent=styles['Heading2'],
+        fontSize=12,
+        spaceAfter=12,
+    )
+    
+    elements = []
+    
+    for sheet_idx, sheet_name in enumerate(wb.sheetnames):
+        ws = wb[sheet_name]
+        
+        # Add sheet name as header
+        elements.append(Paragraph(f"Sheet: {sheet_name}", header_style))
+        elements.append(Spacer(1, 0.1*inch))
+        
+        # Find the used range
+        if ws.max_row is None or ws.max_column is None:
+            continue
+            
+        max_row = min(ws.max_row, 500)  # Limit rows to prevent huge PDFs
+        max_col = min(ws.max_column, 26)  # Limit columns (A-Z)
+        
+        if max_row == 0 or max_col == 0:
+            elements.append(Paragraph("(Empty sheet)", styles['Normal']))
+            if sheet_idx < len(wb.sheetnames) - 1:
+                elements.append(PageBreak())
+            continue
+        
+        # Build table data
+        table_data = []
+        for row_idx in range(1, max_row + 1):
+            row_data = []
+            for col_idx in range(1, max_col + 1):
+                cell = ws.cell(row=row_idx, column=col_idx)
+                value = cell.value
+                if value is None:
+                    value = ""
+                elif isinstance(value, (int, float)):
+                    # Format numbers nicely
+                    if isinstance(value, float) and value == int(value):
+                        value = str(int(value))
+                    else:
+                        value = str(value)
+                else:
+                    value = str(value)
+                # Truncate very long cell values
+                if len(value) > 100:
+                    value = value[:97] + "..."
+                # Wrap text in Paragraph for proper handling
+                row_data.append(Paragraph(value, cell_style))
+            table_data.append(row_data)
+        
+        if not table_data:
+            elements.append(Paragraph("(Empty sheet)", styles['Normal']))
+            if sheet_idx < len(wb.sheetnames) - 1:
+                elements.append(PageBreak())
+            continue
+        
+        # Calculate column widths (distribute evenly with max width)
+        available_width = landscape(letter)[0] - 1*inch  # Page width minus margins
+        col_width = min(available_width / max_col, 1.5*inch)
+        col_widths = [col_width] * max_col
+        
+        # Create table
+        table = Table(table_data, colWidths=col_widths, repeatRows=1)
+        table.setStyle(TableStyle([
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),  # Header row
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 3),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+            ('TOPPADDING', (0, 0), (-1, -1), 2),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ]))
+        
+        elements.append(table)
+        
+        # Add page break between sheets
+        if sheet_idx < len(wb.sheetnames) - 1:
+            elements.append(PageBreak())
+    
+    # Build PDF
+    if elements:
+        doc.build(elements)
+    else:
+        # Create empty PDF with message
+        elements.append(Paragraph("(Empty workbook)", styles['Normal']))
+        doc.build(elements)
+    
+    wb.close()
+    
+    if not pdf_path.exists():
+        raise RuntimeError(f"xlsx to PDF conversion failed — expected output at {pdf_path}")
+    
+    logger.info(f"Converted xlsx to PDF: {pdf_path}")
+    return pdf_path
+
+
 def _is_rotated_word(char_y_centers: list[float], char_heights: list[float]) -> bool:
     """Return True if the accumulated character positions indicate rotated text.
 
@@ -422,10 +564,15 @@ async def ingest_document(
         elif mime_type in IMAGE_TYPES:
             return _process_image(file_path, doc_id)
         elif mime_type in OFFICE_TYPES:
-            pdf_path = _libreoffice_convert_to_pdf(
-                file_path,
-                config.temp_dir / doc_id,
-            )
+            # Use native converter for xlsx files (no LibreOffice needed)
+            xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            if mime_type == xlsx_mime:
+                pdf_path = _xlsx_to_pdf(file_path, config.temp_dir / doc_id)
+            else:
+                pdf_path = _libreoffice_convert_to_pdf(
+                    file_path,
+                    config.temp_dir / doc_id,
+                )
             return _process_pdf(pdf_path, doc_id)
         else:
             raise ValueError(f"Unsupported file type: {mime_type}")

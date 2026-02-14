@@ -6,7 +6,7 @@ import logging
 import os
 import platform
 import subprocess
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -47,7 +47,7 @@ class SettingsUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.get("/settings")
-async def get_settings():
+async def get_settings() -> dict[str, Any]:
     """Get current app settings (masks sensitive fields, excludes internal paths)."""
     data = config.model_dump(mode="json")
     # Never expose the full API key over the wire
@@ -61,7 +61,7 @@ async def get_settings():
 
 
 @router.patch("/settings")
-async def update_settings(body: SettingsUpdate):
+async def update_settings(body: SettingsUpdate) -> dict[str, Any]:
     """Update app settings (partial update with Pydantic validation)."""
     from api.deps import acquire_detection_lock, release_detection_lock
 
@@ -136,7 +136,7 @@ def _ensure_builtin_labels(entries: list[dict]) -> list[dict]:
 
 
 @router.get("/settings/labels")
-async def get_label_config():
+async def get_label_config() -> list[dict[str, Any]]:
     """Get PII label configuration."""
     store = get_store()
     entries = store.load_label_config()
@@ -145,7 +145,7 @@ async def get_label_config():
 
 
 @router.put("/settings/labels")
-async def save_label_config(labels: list[dict]):
+async def save_label_config(labels: list[dict]) -> dict[str, Any]:
     """Save PII label configuration.
 
     Validates that each entry has the required keys.
@@ -199,7 +199,7 @@ def _get_gpu_info() -> list[dict]:
 
 
 @router.get("/system/hardware")
-async def get_hardware_info():
+async def get_hardware_info() -> dict[str, Any]:
     """Return system hardware summary: CPU, RAM, GPU(s)."""
     import psutil
 

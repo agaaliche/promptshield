@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -22,12 +22,16 @@ router = APIRouter(prefix="/api", tags=["documents"])
 
 
 @router.post("/documents/upload", response_model=UploadResponse)
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...)) -> UploadResponse:
     """Upload a document for anonymization."""
     from core.ingestion.loader import SUPPORTED_EXTENSIONS, guess_mime
 
     if not file.filename:
         raise HTTPException(400, "No filename provided")
+
+    # S3: Reject filenames with path separators to prevent traversal
+    if any(c in file.filename for c in ("/", "\\", "..")):
+        raise HTTPException(400, "Invalid filename")
 
     ext = Path(file.filename).suffix.lower()
     if ext not in SUPPORTED_EXTENSIONS:
@@ -106,14 +110,14 @@ async def upload_document(file: UploadFile = File(...)):
 
 
 @router.get("/documents/{doc_id}")
-async def get_document(doc_id: str):
+async def get_document(doc_id: str) -> dict[str, Any]:
     """Get document metadata and page info."""
     doc = get_doc(doc_id)
     return doc.model_dump(mode="json")
 
 
 @router.get("/documents/{doc_id}/pages/{page_number}")
-async def get_page(doc_id: str, page_number: int):
+async def get_page(doc_id: str, page_number: int) -> dict[str, Any]:
     """Get page data including text blocks."""
     doc = get_doc(doc_id)
     if page_number < 1 or page_number > doc.page_count:
@@ -123,7 +127,7 @@ async def get_page(doc_id: str, page_number: int):
 
 
 @router.get("/documents/{doc_id}/pages/{page_number}/bitmap")
-async def get_page_bitmap(doc_id: str, page_number: int):
+async def get_page_bitmap(doc_id: str, page_number: int) -> FileResponse:
     """Serve the rendered page bitmap image."""
     doc = get_doc(doc_id)
     if page_number < 1 or page_number > doc.page_count:
@@ -136,7 +140,7 @@ async def get_page_bitmap(doc_id: str, page_number: int):
 
 
 @router.get("/documents")
-async def list_documents():
+async def list_documents() -> list[dict[str, Any]]:
     """List all uploaded documents."""
     return [
         {
@@ -160,7 +164,7 @@ async def list_documents():
 
 
 @router.delete("/documents/{doc_id}")
-async def delete_document(doc_id: str):
+async def delete_document(doc_id: str) -> dict[str, str]:
     """Delete a document and all its persisted data."""
     if doc_id not in documents:
         raise HTTPException(404, f"Document '{doc_id}' not found")

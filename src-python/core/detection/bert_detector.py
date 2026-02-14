@@ -362,13 +362,8 @@ def _is_org_noise(text: str) -> bool:
     # Starts with a digit — not an org name
     # EXCEPT numbered company patterns (e.g., "9169270 Canada inc.")
     if clean and clean[0].isdigit():
-        _legal_suffixes = (
-            "inc", "inc.", "corp", "corp.", "ltd", "ltd.", "llc",
-            "ltée", "ltee", "limitée", "limitee", "enr", "enr.",
-            "sas", "sarl", "sa", "se", "senc", "s.e.n.c.",
-            "gmbh", "ag", "bv", "b.v.", "nv", "n.v.",
-        )
-        if not any(low.endswith(suffix) for suffix in _legal_suffixes):
+        from core.detection.noise_filters import has_legal_suffix
+        if not has_legal_suffix(clean):
             return True
     # All-lowercase — real org names are capitalised
     words = clean.split()
@@ -430,7 +425,7 @@ _CHUNK_OVERLAP = 300       # overlap in characters
 # Loading
 # ---------------------------------------------------------------------------
 
-def _load_pipeline(model_id: str | None = None):
+def _load_pipeline(model_id: str | None = None) -> object:
     """Lazy-load a Hugging Face token-classification pipeline."""
     global _pipeline, _active_model_id, _label_map
 

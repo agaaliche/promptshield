@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +18,7 @@ from core.config import config
 from core.persistence import DocumentStore
 from models.schemas import DocumentStatus
 from api import deps
+from api.rate_limit import RateLimitMiddleware
 from api.routers import (
     documents,
     detection,
@@ -38,7 +41,7 @@ _VERSION = "0.1.0"
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application startup → yield → shutdown."""
     logger.info("Starting promptShield sidecar...")
 
@@ -185,6 +188,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate limiting — 120 requests per 60s per client IP
+app.add_middleware(RateLimitMiddleware, max_requests=120, window_seconds=60)
+
 # ---------------------------------------------------------------------------
 # Register routers
 # ---------------------------------------------------------------------------
@@ -199,7 +205,8 @@ app.include_router(settings.router)
 
 
 @app.get("/health")
-async def health():
+async def health() -> dict[str, str]:
+    """Return a lightweight health-check response."""
     return {"status": "ok", "version": _VERSION}
 
 
@@ -259,7 +266,7 @@ def _warmup_models() -> None:
 
 
 @app.post("/api/warmup")
-async def warmup():
+async def warmup() -> dict[str, str]:
     """Trigger background model preload.  Returns immediately."""
     import asyncio
     global _warmup_started
@@ -296,11 +303,12 @@ if _frontend_dir is not None:
     )
 
     @app.get("/")
-    async def serve_index():
+    async def serve_index() -> HTMLResponse:
+        """Serve the SPA index page."""
         return HTMLResponse((_frontend_dir / "index.html").read_text(encoding="utf-8"))
 
-    @app.get("/{full_path:path}")
-    async def spa_fallback(full_path: str):
+    @app.get("/{full_path:path}", response_model=None)
+    async def spa_fallback(full_path: str) -> HTMLResponse | FileResponse:
         if full_path.startswith(("api/", "health", "bitmaps/")):
             raise HTTPException(404)
         file_path = (_frontend_dir / full_path).resolve()

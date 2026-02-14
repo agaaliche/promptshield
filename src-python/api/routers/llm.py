@@ -8,6 +8,7 @@ import os
 import platform
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel as _PydanticBaseModel
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/api", tags=["llm"])
 
 
 @router.get("/llm/status", response_model=LLMStatusResponse)
-async def llm_status():
+async def llm_status() -> LLMStatusResponse:
     """Get LLM engine status."""
     from core.llm.engine import llm_engine
     from core.llm.remote_engine import remote_llm_engine
@@ -46,7 +47,7 @@ async def llm_status():
 
 
 @router.post("/llm/load")
-async def load_llm(model_path: str, force_cpu: bool = False):
+async def load_llm(model_path: str, force_cpu: bool = False) -> dict[str, str]:
     """Load a GGUF model and save the choice for future auto-load."""
     from core.llm.engine import llm_engine
 
@@ -72,7 +73,7 @@ async def load_llm(model_path: str, force_cpu: bool = False):
 
 
 @router.post("/llm/unload")
-async def unload_llm():
+async def unload_llm() -> dict[str, str]:
     """Unload the current LLM model."""
     from core.llm.engine import llm_engine
     llm_engine.unload_model()
@@ -80,7 +81,7 @@ async def unload_llm():
 
 
 @router.get("/llm/models")
-async def list_models():
+async def list_models() -> list[dict[str, Any]]:
     """List available GGUF models in the models directory."""
     from core.llm.engine import llm_engine
     return llm_engine.list_available_models()
@@ -93,7 +94,7 @@ class _RemoteLLMConfig(_PydanticBaseModel):
 
 
 @router.post("/llm/remote/configure")
-async def configure_remote_llm(body: _RemoteLLMConfig):
+async def configure_remote_llm(body: _RemoteLLMConfig) -> dict[str, str]:
     """Configure a remote OpenAI-compatible LLM endpoint."""
     from core.llm.remote_engine import remote_llm_engine
 
@@ -107,7 +108,7 @@ async def configure_remote_llm(body: _RemoteLLMConfig):
 
 
 @router.post("/llm/remote/disconnect")
-async def disconnect_remote_llm():
+async def disconnect_remote_llm() -> dict[str, str]:
     """Remove remote LLM configuration."""
     from core.llm.remote_engine import remote_llm_engine
 
@@ -122,7 +123,7 @@ async def disconnect_remote_llm():
 
 
 @router.post("/llm/remote/test")
-async def test_remote_llm():
+async def test_remote_llm() -> dict[str, Any]:
     """Test the remote LLM connection with a minimal ping."""
     from core.llm.remote_engine import remote_llm_engine
 
@@ -135,7 +136,7 @@ async def test_remote_llm():
 
 
 @router.post("/llm/provider")
-async def set_llm_provider(provider: str):
+async def set_llm_provider(provider: str) -> dict[str, str]:
     """Switch between 'local' and 'remote' LLM provider."""
     if provider not in ("local", "remote"):
         raise HTTPException(400, "provider must be 'local' or 'remote'")
@@ -145,7 +146,7 @@ async def set_llm_provider(provider: str):
 
 
 @router.post("/llm/open-models-dir")
-async def open_models_dir():
+async def open_models_dir() -> dict[str, str]:
     """Open the models directory in the system file explorer."""
     models_dir = config.models_dir
     models_dir.mkdir(parents=True, exist_ok=True)

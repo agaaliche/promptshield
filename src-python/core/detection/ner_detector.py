@@ -197,7 +197,7 @@ _CHUNK_SIZE = 100_000          # Process in 100k-char chunks
 _CHUNK_OVERLAP = 500           # 500-char overlap so entities at boundaries aren't lost
 
 
-def _load_model():
+def _load_model() -> object:
     """Lazy-load the best available spaCy model based on config preference.
 
     Thread-safe: uses ``_model_lock`` so concurrent requests don't race.
@@ -234,7 +234,7 @@ def _load_model():
         )
 
 
-def _load_french_model():
+def _load_french_model() -> object | None:
     """Lazy-load the best available French spaCy model.
 
     Thread-safe via ``_model_lock``.  Will NOT auto-download.
@@ -739,7 +739,7 @@ _IT_ORG_STOPWORDS: set[str] = {
 }
 
 
-def _load_italian_model():
+def _load_italian_model() -> object | None:
     """Lazy-load the best available Italian spaCy model.
 
     Thread-safe via ``_model_lock``.  Will NOT auto-download.

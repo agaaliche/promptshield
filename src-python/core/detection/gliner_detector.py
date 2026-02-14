@@ -74,7 +74,7 @@ _CHUNK_OVERLAP = 200
 _MIN_GLINER_SCORE = 0.20
 
 
-def _load_model():
+def _load_model() -> object:
     """Lazy-load the GLiNER model (downloads on first use, ~500 MB)."""
     global _model
     if _model is not None:

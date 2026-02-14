@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel as _PydanticBaseModel
@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api", tags=["regions"])
 # ---------------------------------------------------------------------------
 
 @router.get("/documents/{doc_id}/debug-detections")
-async def debug_detections(doc_id: str, page_number: Optional[int] = None):
+async def debug_detections(doc_id: str, page_number: Optional[int] = None) -> dict[str, Any]:
     """Debug endpoint — shows every detection with type, confidence, source, text."""
     doc = get_doc(doc_id)
     regions = doc.regions
@@ -54,7 +54,7 @@ async def debug_detections(doc_id: str, page_number: Optional[int] = None):
 # ---------------------------------------------------------------------------
 
 @router.put("/documents/{doc_id}/regions/{region_id}/action")
-async def set_region_action(doc_id: str, region_id: str, req: RegionActionRequest):
+async def set_region_action(doc_id: str, region_id: str, req: RegionActionRequest) -> dict[str, str]:
     """Set the action for a specific PII region (and linked siblings)."""
     doc = get_doc(doc_id)
     target = None
@@ -75,7 +75,7 @@ async def set_region_action(doc_id: str, region_id: str, req: RegionActionReques
 
 
 @router.delete("/documents/{doc_id}/regions/{region_id}")
-async def delete_region(doc_id: str, region_id: str):
+async def delete_region(doc_id: str, region_id: str) -> dict[str, str]:
     """Delete a PII region (and linked siblings) from the document."""
     doc = get_doc(doc_id)
     # Find linked_group before deletion
@@ -92,7 +92,7 @@ async def delete_region(doc_id: str, region_id: str):
 
 
 @router.put("/documents/{doc_id}/regions/{region_id}/bbox")
-async def update_region_bbox(doc_id: str, region_id: str, bbox: BBox):
+async def update_region_bbox(doc_id: str, region_id: str, bbox: BBox) -> dict[str, str]:
     """Update the bounding box of a PII region (move / resize)."""
     doc = get_doc(doc_id)
     # Find the page dimensions for clamping
@@ -113,7 +113,7 @@ class UpdateLabelRequest(_PydanticBaseModel):
 
 
 @router.put("/documents/{doc_id}/regions/{region_id}/label")
-async def update_region_label(doc_id: str, region_id: str, req: UpdateLabelRequest):
+async def update_region_label(doc_id: str, region_id: str, req: UpdateLabelRequest) -> dict[str, str]:
     """Update the PII type label of a region."""
     doc = get_doc(doc_id)
     for region in doc.regions:
@@ -129,7 +129,7 @@ class UpdateTextRequest(_PydanticBaseModel):
 
 
 @router.put("/documents/{doc_id}/regions/{region_id}/text")
-async def update_region_text(doc_id: str, region_id: str, req: UpdateTextRequest):
+async def update_region_text(doc_id: str, region_id: str, req: UpdateTextRequest) -> dict[str, str]:
     """Update the detected text content of a region."""
     doc = get_doc(doc_id)
     for region in doc.regions:
@@ -141,7 +141,7 @@ async def update_region_text(doc_id: str, region_id: str, req: UpdateTextRequest
 
 
 @router.post("/documents/{doc_id}/regions/{region_id}/reanalyze")
-async def reanalyze_region(doc_id: str, region_id: str):
+async def reanalyze_region(doc_id: str, region_id: str) -> dict[str, Any]:
     """Re-analyze the content under a region's bounding box."""
     from core.detection.pipeline import reanalyze_bbox
     from core.llm.engine import llm_engine
@@ -189,7 +189,7 @@ async def reanalyze_region(doc_id: str, region_id: str):
 # ---------------------------------------------------------------------------
 
 @router.put("/documents/{doc_id}/regions/batch-action")
-async def batch_region_action(doc_id: str, req: BatchActionRequest):
+async def batch_region_action(doc_id: str, req: BatchActionRequest) -> dict[str, Any]:
     """Apply an action to multiple regions at once."""
     doc = get_doc(doc_id)
     region_map = {r.id: r for r in doc.regions}
@@ -203,7 +203,7 @@ async def batch_region_action(doc_id: str, req: BatchActionRequest):
 
 
 @router.post("/documents/{doc_id}/regions/batch-delete")
-async def batch_delete_regions(doc_id: str, req: BatchActionRequest):
+async def batch_delete_regions(doc_id: str, req: BatchActionRequest) -> dict[str, Any]:
     """Delete multiple regions at once."""
     doc = get_doc(doc_id)
     ids_to_delete = set(req.region_ids)
@@ -215,7 +215,7 @@ async def batch_delete_regions(doc_id: str, req: BatchActionRequest):
 
 
 @router.post("/documents/{doc_id}/regions/add")
-async def add_manual_region(doc_id: str, region: PIIRegion):
+async def add_manual_region(doc_id: str, region: PIIRegion) -> dict[str, str]:
     """Add a manually selected PII region."""
     doc = get_doc(doc_id)
     # H4: Always generate server-side ID — never trust client-provided IDs
@@ -240,7 +240,7 @@ class HighlightAllRequest(_PydanticBaseModel):
 
 
 @router.post("/documents/{doc_id}/regions/highlight-all")
-async def highlight_all(doc_id: str, req: HighlightAllRequest):
+async def highlight_all(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]:
     """Find all occurrences of a region's text across every page and create
     new MANUAL regions for any that don't already have one."""
     import traceback
@@ -276,7 +276,9 @@ def _fuzzy_ratio(a: str, b: str) -> float:
 _FUZZY_THRESHOLD = 0.75  # 75% similarity
 
 
-def _highlight_all_impl(doc_id: str, req: HighlightAllRequest):
+def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]:
+    """Core implementation of highlight-all — find and create regions for all
+    occurrences of a region's text across every page."""
     doc = get_doc(doc_id)
 
     # Find the source region

@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api", tags=["detokenize"])
 
 
 @router.post("/detokenize", response_model=DetokenizeResponse)
-async def detokenize(req: DetokenizeRequest):
+async def detokenize(req: DetokenizeRequest) -> DetokenizeResponse:
     """Replace tokens in text with their original values."""
     from core.vault.store import vault
 
@@ -40,7 +40,7 @@ async def detokenize(req: DetokenizeRequest):
 
 
 @router.post("/detokenize/file")
-async def detokenize_file_endpoint(file: UploadFile = File(...)):
+async def detokenize_file_endpoint(file: UploadFile = File(...)) -> FileResponse:
     """De-tokenize tokens inside an uploaded file (.docx, .xlsx, .pdf, .txt, .csv)."""
     from core.vault.store import vault
     from core.detokenize_file import detokenize_file, SUPPORTED_EXTENSIONS

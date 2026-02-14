@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import logging
-import re
 import time as _time
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel as _PydanticBaseModel, Field
 
 from core.config import config
+from core.detection.noise_filters import has_legal_suffix as _has_legal_suffix
 from models.schemas import (
     DocumentStatus,
     PIIRegion,
@@ -30,25 +30,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["detection"])
 
 
-# Legal suffixes for numbered companies (e.g., "9169270 Canada Inc.")
-# Match suffix anywhere in text (not just end) to handle parenthetical additions
-# like "9032 Québec Inc. (FSG)"
-_LEGAL_SUFFIXES_RE = re.compile(
-    r'\b(?:inc|corp|ltd|llc|llp|plc|co|lp|sas|sarl|gmbh|ag|bv|nv|'
-    r'lt[ée]e|limit[ée]e|enr|s\.?e\.?n\.?c\.?|'
-    r's\.?a\.?r?\.?l?\.?|s\.?p\.?a\.?|s\.?r\.?l\.?)\b\.?',
-    re.IGNORECASE
-)
-
-
-def _has_legal_suffix(text: str) -> bool:
-    """Check if text contains a legal company suffix."""
-    return bool(_LEGAL_SUFFIXES_RE.search(text.strip()))
-
-
-
 @router.get("/documents/{doc_id}/detection-progress")
-async def get_detection_progress(doc_id: str):
+async def get_detection_progress(doc_id: str) -> dict[str, Any]:
     """Return real-time detection progress for a document."""
     # Evict stale entries on each poll
     cleanup_stale_progress()
@@ -71,7 +54,7 @@ async def get_detection_progress(doc_id: str):
 
 
 @router.post("/documents/{doc_id}/detect")
-async def detect_pii(doc_id: str):
+async def detect_pii(doc_id: str) -> dict[str, Any]:
     """Run PII detection on all pages of a document."""
     import asyncio
     import traceback
@@ -105,7 +88,8 @@ async def detect_pii(doc_id: str):
             "_started_at": _time.time(),
         }
 
-        def _run_detection():
+        def _run_detection() -> list[PIIRegion]:
+            """Run detection on all pages in-thread and update progress."""
             all_regions: list[PIIRegion] = []
             progress = detection_progress[doc_id]
             for idx, page in enumerate(doc.pages):
@@ -194,7 +178,7 @@ class RedetectRequest(_PydanticBaseModel):
 
 
 @router.post("/documents/{doc_id}/redetect")
-async def redetect_pii(doc_id: str, body: RedetectRequest):
+async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
     """Re-run PII detection with custom fuzziness (confidence threshold).
 
     Merge strategy:
@@ -250,7 +234,8 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
                 "_started_at": _time.time(),
             }
 
-            def _run_redetection():
+            def _run_redetection() -> list[PIIRegion]:
+                """Run re-detection on selected pages in-thread."""
                 results: list[PIIRegion] = []
                 progress = detection_progress[doc_id]
                 for idx, page in enumerate(pages_to_scan):
@@ -451,7 +436,7 @@ async def redetect_pii(doc_id: str, body: RedetectRequest):
 
 
 @router.post("/documents/{doc_id}/reset-detection")
-async def reset_detection(doc_id: str):
+async def reset_detection(doc_id: str) -> dict[str, Any]:
     """Clear ALL regions for a document and re-run fresh detection from scratch.
 
     Unlike ``/redetect`` (which merges), this wipes every region — including
@@ -492,7 +477,8 @@ async def reset_detection(doc_id: str):
             "_started_at": _time.time(),
         }
 
-        def _run():
+        def _run() -> list[PIIRegion]:
+            """Run fresh detection on all pages in-thread."""
             all_regions: list[PIIRegion] = []
             progress = detection_progress[doc_id]
             for idx, page in enumerate(doc.pages):
@@ -547,7 +533,7 @@ async def reset_detection(doc_id: str):
 
 
 @router.get("/documents/{doc_id}/regions")
-async def get_regions(doc_id: str, page_number: Optional[int] = None):
+async def get_regions(doc_id: str, page_number: Optional[int] = None) -> list[dict[str, Any]]:
     """Get detected PII regions, optionally filtered by page."""
     doc = get_doc(doc_id)
     regions = doc.regions

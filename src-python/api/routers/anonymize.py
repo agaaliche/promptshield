@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api", tags=["anonymize"])
 
 
 @router.put("/documents/{doc_id}/regions/sync")
-async def sync_regions(doc_id: str, items: list[RegionSyncItem]):
+async def sync_regions(doc_id: str, items: list[RegionSyncItem]) -> dict[str, Any]:
     """Bulk-sync region actions and bboxes from the frontend.
 
     Called right before anonymize to guarantee the backend has the latest
@@ -48,7 +48,7 @@ async def sync_regions(doc_id: str, items: list[RegionSyncItem]):
 
 
 @router.post("/documents/{doc_id}/anonymize", response_model=AnonymizeResponse)
-async def anonymize(doc_id: str):
+async def anonymize(doc_id: str) -> AnonymizeResponse:
     """Apply anonymization to the document based on region actions."""
     doc = get_doc(doc_id)  # 404 before heavy imports
     from core.anonymizer.engine import anonymize_document
@@ -68,7 +68,7 @@ async def anonymize(doc_id: str):
 
 
 @router.get("/documents/{doc_id}/download/{file_type}")
-async def download_output(doc_id: str, file_type: str):
+async def download_output(doc_id: str, file_type: str) -> FileResponse:
     """Download the anonymized output file (pdf or text)."""
     doc = get_doc(doc_id)
     output_dir = config.temp_dir / doc_id / "output"
@@ -84,6 +84,9 @@ async def download_output(doc_id: str, file_type: str):
         raise HTTPException(404, "Output file not found. Run anonymization first.")
 
     latest = max(files, key=lambda f: f.stat().st_mtime)
+    # S2: Ensure resolved file is within expected output directory
+    if not latest.resolve().is_relative_to(output_dir.resolve()):
+        raise HTTPException(403, "Access denied")
     media_type = "application/pdf" if file_type == "pdf" else "text/plain"
     return FileResponse(str(latest), media_type=media_type, filename=latest.name)
 
@@ -101,7 +104,7 @@ class BatchAnonymizeResult(_PydanticBaseModel):
 
 
 @router.post("/documents/batch-anonymize")
-async def batch_anonymize(req: BatchAnonymizeRequest):
+async def batch_anonymize(req: BatchAnonymizeRequest) -> FileResponse:
     """Anonymize multiple documents. If >1 doc, returns a zip archive."""
     if not req.doc_ids:
         raise HTTPException(400, "No documents selected")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -44,7 +45,7 @@ def _check_unlock_rate_limit() -> None:
 
 
 @router.post("/vault/unlock")
-async def unlock_vault(body: _PassphraseBody):
+async def unlock_vault(body: _PassphraseBody) -> dict[str, str]:
     """Unlock the token vault with a passphrase."""
     from core.vault.store import vault
 
@@ -65,7 +66,7 @@ async def unlock_vault(body: _PassphraseBody):
 
 
 @router.get("/vault/status")
-async def vault_status():
+async def vault_status() -> dict[str, bool]:
     """Check vault status."""
     from core.vault.store import vault
     return {
@@ -74,7 +75,7 @@ async def vault_status():
 
 
 @router.get("/vault/stats", response_model=VaultStatsResponse)
-async def vault_stats():
+async def vault_stats() -> VaultStatsResponse:
     """Get vault statistics."""
     from core.vault.store import vault
     if not vault.is_unlocked:
@@ -88,7 +89,7 @@ async def list_vault_tokens(
     source_document: str | None = None,
     offset: int = 0,
     limit: int = 200,
-):
+) -> dict[str, Any]:
     """List tokens in the vault with pagination."""
     from core.vault.store import vault
     if not vault.is_unlocked:
@@ -108,7 +109,7 @@ async def list_vault_tokens(
 
 
 @router.post("/vault/export")
-async def export_vault(body: _PassphraseBody):
+async def export_vault(body: _PassphraseBody) -> JSONResponse:
     """Export all vault tokens as encrypted JSON."""
     from core.vault.store import vault
     if not vault.is_unlocked:
@@ -127,7 +128,7 @@ class _VaultImportBody(_PydanticBaseModel):
 
 
 @router.post("/vault/import")
-async def import_vault(body: _VaultImportBody):
+async def import_vault(body: _VaultImportBody) -> JSONResponse:
     """Import tokens from an encrypted vault backup."""
     from core.vault.store import vault
     if not vault.is_unlocked:

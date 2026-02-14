@@ -7,7 +7,7 @@ import logging
 import threading
 import time as _time
 from contextlib import contextmanager
-from typing import Optional
+from typing import Any, Generator, Optional
 
 from fastapi import HTTPException
 
@@ -110,7 +110,7 @@ def now_ts() -> float:
     return _time.time()
 
 
-def get_active_llm_engine():
+def get_active_llm_engine() -> object | None:
     """Return the currently active LLM engine (local or remote) or None."""
     from core.llm.engine import llm_engine
     from core.llm.remote_engine import remote_llm_engine
@@ -142,7 +142,7 @@ def release_detection_lock() -> None:
 
 
 @contextmanager
-def config_override(**overrides):
+def config_override(**overrides: Any) -> Generator[None, None, None]:
     """Temporarily override config attributes in a thread-safe manner.
 
     C6: This mutates a global singleton. Must ONLY be used while the

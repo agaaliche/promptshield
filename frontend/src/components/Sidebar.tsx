@@ -430,6 +430,9 @@ export default function Sidebar() {
       {/* ── Add Document Dialog ── */}
       {showAddDialog && (
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Add document"
           style={{
             position: "fixed",
             inset: 0,
@@ -530,6 +533,9 @@ export default function Sidebar() {
       {/* ── Files Dialog (portal-style overlay) ── */}
       {showFilesDialog && (
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Document files"
           style={{
             position: "fixed",
             inset: 0,

@@ -343,6 +343,8 @@ export default function MultiSelectToolbar({
       {/* Multi-select edit dialog */}
       {showEditDialog && (
         <div
+          role="dialog"
+          aria-label="Edit selected regions"
           style={{
             position: "fixed",
             left: pos.x + 100,

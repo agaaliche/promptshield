@@ -708,6 +708,8 @@ function RegionOverlay({
       {/* Floating edit dialog - shown when edit is active */}
       {showEditPanel && (
         <div
+          role="dialog"
+          aria-label="Edit region"
           style={{
             position: "fixed",
             left: dialogPos.x,

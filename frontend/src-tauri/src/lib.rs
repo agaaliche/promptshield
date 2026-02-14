@@ -78,6 +78,18 @@ async fn start_backend(app: tauri::AppHandle) -> Result<String, String> {
         return Err(status.error.unwrap_or_else(|| "Invalid license".to_string()));
     }
 
+    // S2: Check for clock manipulation before allowing backend start
+    if let Err(drift_err) = license::check_clock_drift().await {
+        return Err(drift_err);
+    }
+
+    // S1: Check if the license has been revoked server-side
+    let licensing_url = std::env::var("LICENSING_URL")
+        .unwrap_or_else(|_| "https://licensing-server-455859748614.us-east4.run.app".to_string());
+    if let Err(revoke_err) = license::check_revocation(&licensing_url, &fingerprint).await {
+        return Err(revoke_err);
+    }
+
     let dev_port: u16 = std::env::var("DOC_ANON_BACKEND_PORT")
         .ok()
         .and_then(|s| s.parse().ok())

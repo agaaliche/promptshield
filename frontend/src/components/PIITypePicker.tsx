@@ -56,7 +56,7 @@ export default function PIITypePicker({
   updateLabelConfig,
 }: PIITypePickerProps) {
   return (
-    <div style={overlayStyle}>
+    <div role="dialog" aria-modal="true" aria-label="Select PII type" style={overlayStyle}>
       <div style={dialogStyle}>
         <PenTool size={24} style={{ color: "var(--accent-primary)", marginBottom: 8 }} />
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>

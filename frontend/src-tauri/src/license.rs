@@ -219,3 +219,108 @@ pub fn validate_for_machine(machine_fingerprint: &str) -> LicenseStatus {
     }
     status
 }
+
+// ── S2: NTP clock drift check ──────────────────────────────────────────
+
+/// Maximum tolerated drift between local clock and network time (seconds).
+const MAX_CLOCK_DRIFT_SECS: i64 = 300; // 5 minutes
+
+/// Fetch current UTC time from worldtimeapi.org and compare against
+/// the local system clock. Returns `Err` if the drift exceeds the
+/// threshold, indicating the user may have manipulated their clock.
+///
+/// Fails *open* — if the network is unreachable we allow the app to continue
+/// (the user is working offline with a local license blob).
+pub async fn check_clock_drift() -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("HTTP client error: {e}"))?;
+
+    // Try worldtimeapi.org (returns RFC3339 datetime in .utc_datetime)
+    let resp = match client
+        .get("https://worldtimeapi.org/api/timezone/Etc/UTC")
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Ok(()), // network unreachable — fail open
+    };
+
+    #[derive(serde::Deserialize)]
+    struct TimeResp {
+        utc_datetime: String,
+    }
+
+    let body: TimeResp = match resp.json().await {
+        Ok(b) => b,
+        Err(_) => return Ok(()), // malformed response — fail open
+    };
+
+    let server_time = DateTime::parse_from_rfc3339(&body.utc_datetime)
+        .or_else(|_| {
+            // worldtimeapi sometimes returns "2025-01-01T00:00:00.123456+00:00" style
+            DateTime::parse_from_str(&body.utc_datetime, "%Y-%m-%dT%H:%M:%S%.f%:z")
+        })
+        .map_err(|e| format!("Cannot parse server time: {e}"))?
+        .with_timezone(&Utc);
+
+    let local_time = Utc::now();
+    let drift = (server_time - local_time).num_seconds().abs();
+
+    if drift > MAX_CLOCK_DRIFT_SECS {
+        return Err(format!(
+            "System clock appears to be off by {drift} seconds. \
+             Please correct your system time to use PromptShield."
+        ));
+    }
+
+    Ok(())
+}
+
+// ── S1: Server-side revocation check ───────────────────────────────────
+
+/// Check with the licensing server whether this machine's license has been
+/// revoked (e.g. subscription cancelled, machine deactivated from dashboard).
+///
+/// Fails *open* — if the network is unreachable the app continues with the
+/// local blob. Only blocks when the server explicitly says `revoked: true`.
+pub async fn check_revocation(
+    licensing_url: &str,
+    machine_fingerprint: &str,
+) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("HTTP client error: {e}"))?;
+
+    let url = format!(
+        "{}/license/check-revocation?machine_fingerprint={}",
+        licensing_url, machine_fingerprint,
+    );
+
+    let resp = match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Ok(()), // network unreachable — fail open
+    };
+
+    #[derive(serde::Deserialize)]
+    struct RevocationResp {
+        revoked: bool,
+    }
+
+    let body: RevocationResp = match resp.json().await {
+        Ok(b) => b,
+        Err(_) => return Ok(()), // malformed response — fail open
+    };
+
+    if body.revoked {
+        // Delete the local license file so the user must re-authenticate
+        let _ = delete_license_file();
+        return Err(
+            "Your license has been revoked. Please sign in again or contact support.".to_string(),
+        );
+    }
+
+    Ok(())
+}

@@ -108,7 +108,7 @@ python -m spacy download en_core_web_lg    # better accuracy
 |---|---|---|
 | react | ^19.2.0 | UI framework |
 | react-dom | ^19.2.0 | DOM rendering |
-| react-router-dom | ^7.13.0 | Client-side routing |
+
 | zustand | ^5.0.11 | State management |
 | lucide-react | ^0.563.0 | Icon library |
 | @tauri-apps/api | ^2.10.1 | Tauri desktop APIs |

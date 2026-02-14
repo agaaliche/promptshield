@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     # ── App config ──
     frontend_url: str = "https://app.promptshield.com"
     license_validity_days: int = 35  # offline keys valid for 35 days
+    trial_license_validity_days: int = 15  # trial blobs valid only 1 day past trial end
     max_seats_per_subscription: int = 5
     max_machines_per_seat: int = 3
     trial_days: int = 14

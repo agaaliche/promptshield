@@ -264,9 +264,9 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
   canRedo: false,
   pushUndo: () =>
     set((s) => {
-      // H14: deep-clone each region including nested bbox
-      const snapshot = s.regions.map((r) => ({ ...r, bbox: { ...r.bbox } }));
-      const stack = [...s._undoStack, snapshot];
+      // Regions array is immutably replaced on every mutation (map / setRegions),
+      // so we can safely reference the existing array instead of deep-cloning.
+      const stack = [...s._undoStack, s.regions];
       // Cap at 50 entries to avoid memory bloat
       if (stack.length > 50) stack.shift();
       return { _undoStack: stack, _redoStack: [], canUndo: true, canRedo: false };
@@ -276,7 +276,7 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
       if (s._undoStack.length === 0) return s;
       const newUndo = [...s._undoStack];
       const prev = newUndo.pop()!;
-      const newRedo = [...s._redoStack, s.regions.map((r) => ({ ...r, bbox: { ...r.bbox } }))];
+      const newRedo = [...s._redoStack, s.regions];
       if (newRedo.length > 50) newRedo.shift();
       return {
         regions: prev,
@@ -291,7 +291,7 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
       if (s._redoStack.length === 0) return s;
       const newRedo = [...s._redoStack];
       const next = newRedo.pop()!;
-      const newUndo = [...s._undoStack, s.regions.map((r) => ({ ...r, bbox: { ...r.bbox } }))];
+      const newUndo = [...s._undoStack, s.regions];
       if (newUndo.length > 50) newUndo.shift();
       return {
         regions: next,

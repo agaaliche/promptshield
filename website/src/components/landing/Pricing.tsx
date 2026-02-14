@@ -1,50 +1,63 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { Check, X } from "lucide-react";
 
-const plans = [
-  {
-    name: "Free Trial",
-    price: "$0",
-    period: "14 days",
-    description: "Try PromptShield risk-free. No credit card required.",
-    featured: false,
-    cta: "Start Free Trial",
-    ctaHref: "/signup",
-    features: [
-      { text: "Full PII detection engine", included: true },
-      { text: "All 40+ entity types", included: true },
-      { text: "PDF & image support", included: true },
-      { text: "OCR for scanned docs", included: true },
-      { text: "1 device activation", included: true },
-      { text: "Export redacted PDFs", included: true },
-      { text: "Priority support", included: false },
-      { text: "Multiple devices", included: false },
-    ],
-  },
-  {
-    name: "Pro",
-    price: "$14",
-    period: "/month",
-    description: "Full power for professionals who handle sensitive documents daily.",
-    featured: true,
-    cta: "Subscribe Now",
-    ctaHref: "/signup?plan=pro",
-    features: [
-      { text: "Full PII detection engine", included: true },
-      { text: "All 40+ entity types", included: true },
-      { text: "PDF & image support", included: true },
-      { text: "OCR for scanned docs", included: true },
-      { text: "Up to 3 device activations", included: true },
-      { text: "Export redacted PDFs", included: true },
-      { text: "Priority email support", included: true },
-      { text: "Early access to new features", included: true },
-    ],
-  },
-];
+const MONTHLY_PRICE = 14;
+const ANNUAL_PRICE_PER_MONTH = 10;
+const ANNUAL_PRICE_TOTAL = 120;
+
+function getPlans(annual: boolean) {
+  return [
+    {
+      name: "Free Trial",
+      price: "$0",
+      period: "14 days",
+      description: "Try PromptShield risk-free. No credit card required.",
+      featured: false,
+      cta: "Start Free Trial",
+      ctaHref: "/signup",
+      badge: null,
+      features: [
+        { text: "Full PII detection engine", included: true },
+        { text: "All 40+ entity types", included: true },
+        { text: "PDF & image support", included: true },
+        { text: "OCR for scanned docs", included: true },
+        { text: "1 device activation", included: true },
+        { text: "Export redacted PDFs", included: true },
+        { text: "Priority support", included: false },
+        { text: "Multiple devices", included: false },
+      ],
+    },
+    {
+      name: "Pro",
+      price: annual ? `$${ANNUAL_PRICE_PER_MONTH}` : `$${MONTHLY_PRICE}`,
+      period: annual ? "/mo" : "/month",
+      description: annual
+        ? `$${ANNUAL_PRICE_TOTAL}/year — save $${MONTHLY_PRICE * 12 - ANNUAL_PRICE_TOTAL}/year vs monthly.`
+        : "Full power for professionals who handle sensitive documents daily.",
+      featured: true,
+      cta: "Subscribe Now",
+      ctaHref: annual ? "/signup?plan=pro&billing=annual" : "/signup?plan=pro",
+      badge: annual ? "Save 29%" : null,
+      features: [
+        { text: "Full PII detection engine", included: true },
+        { text: "All 40+ entity types", included: true },
+        { text: "PDF & image support", included: true },
+        { text: "OCR for scanned docs", included: true },
+        { text: "Up to 3 device activations", included: true },
+        { text: "Export redacted PDFs", included: true },
+        { text: "Priority email support", included: true },
+        { text: "Early access to new features", included: true },
+      ],
+    },
+  ];
+}
 
 export default function Pricing() {
+  const [annual, setAnnual] = useState(false);
+  const plans = getPlans(annual);
   return (
     <section
       id="pricing"
@@ -60,6 +73,34 @@ export default function Pricing() {
             Start free for 14 days. Upgrade to Pro when you&apos;re ready — cancel
             anytime.
           </p>
+
+          {/* Billing toggle */}
+          <div className="mt-8 flex items-center justify-center gap-3">
+            <span className={`text-sm font-medium ${!annual ? "text-white" : "text-dark-400"}`}>
+              Monthly
+            </span>
+            <button
+              onClick={() => setAnnual(!annual)}
+              className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${
+                annual ? "bg-brand-600" : "bg-dark-700"
+              }`}
+              aria-label="Toggle annual billing"
+            >
+              <span
+                className={`inline-block h-5 w-5 rounded-full bg-white transition-transform ${
+                  annual ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+            <span className={`text-sm font-medium ${annual ? "text-white" : "text-dark-400"}`}>
+              Annual
+            </span>
+            {annual && (
+              <span className="rounded-full bg-green-500/20 px-2.5 py-0.5 text-xs font-semibold text-green-400">
+                Save 29%
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Cards */}

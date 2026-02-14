@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import delete
 
 from config import settings, validate_settings
-from database import engine
-from models import Base
+from database import engine, async_session
+from models import Base, LicenseKey
+from rate_limit import RateLimitMiddleware
 
 logger = logging.getLogger("licensing")
 
@@ -27,7 +31,32 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Licensing server started")
+
+    # S7: Background task — clean up expired/revoked license keys every 6 hours
+    async def _cleanup_old_keys():
+        while True:
+            try:
+                await asyncio.sleep(6 * 3600)  # every 6 hours
+                cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+                async with async_session() as db:
+                    result = await db.execute(
+                        delete(LicenseKey).where(
+                            LicenseKey.expires_at < cutoff,
+                        )
+                    )
+                    await db.commit()
+                    if result.rowcount:
+                        logger.info("Cleaned up %d expired license keys older than 90 days", result.rowcount)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("License key cleanup failed")
+
+    cleanup_task = asyncio.create_task(_cleanup_old_keys())
+
     yield
+
+    cleanup_task.cancel()
     await engine.dispose()
     logger.info("Licensing server stopped")
 
@@ -65,6 +94,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# S4: Rate limiting — 60 requests/minute per IP
+app.add_middleware(RateLimitMiddleware, max_requests=60, window=60)
 
 # ── Register routers ────────────────────────────────────────────
 

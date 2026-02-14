@@ -117,3 +117,17 @@ class RefreshToken(Base):
     revoked = Column(Boolean, default=False)
 
     user = relationship("User", back_populates="refresh_tokens")
+
+
+# ── Trial Machine Lockout (S3) ─────────────────────────────────
+# Track which machines have already consumed a trial, preventing
+# trial abuse via multiple Firebase accounts on the same hardware.
+
+
+class TrialMachine(Base):
+    __tablename__ = "trial_machines"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    machine_fingerprint = Column(String(128), nullable=False, unique=True, index=True)
+    first_trial_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    user_email = Column(String(320), nullable=True)  # informational only

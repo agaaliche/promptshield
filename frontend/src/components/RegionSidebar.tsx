@@ -738,7 +738,7 @@ export default function RegionSidebar({
 
       {/* Clear confirmation dialog */}
       {clearConfirmOpen && (
-        <div style={{
+        <div role="dialog" aria-modal="true" aria-label="Confirm clear regions" style={{
           position: 'absolute',
           inset: 0,
           background: 'rgba(0,0,0,0.5)',

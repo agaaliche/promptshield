@@ -40,7 +40,7 @@ export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) 
   }, [setLicenseStatus, addSnackbar, onDismiss]);
 
   return (
-    <div style={styles.overlay}>
+    <div role="dialog" aria-modal="true" aria-label="License revalidation" style={styles.overlay}>
       <div style={styles.dialog}>
         <h2 style={styles.title}>
           {expired ? "License Expired" : "License Renewal Required"}

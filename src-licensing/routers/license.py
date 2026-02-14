@@ -12,7 +12,7 @@ from auth import get_current_user
 from config import settings
 from crypto import create_license_blob
 from database import get_db
-from models import LicenseKey, Machine, Subscription, User
+from models import LicenseKey, Machine, Subscription, TrialMachine, User
 from schemas import (
     ActivateRequest,
     LicenseResponse,
@@ -63,6 +63,24 @@ async def activate(
     """
     sub = _check_subscription(user)
 
+    # S3: Machine-level trial lockout — prevent unlimited trial abuse
+    if sub.plan == "free_trial":
+        already_used = await db.scalar(
+            select(TrialMachine.id).where(
+                TrialMachine.machine_fingerprint == body.machine_fingerprint
+            )
+        )
+        if already_used:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="A free trial has already been used on this machine. Please subscribe.",
+            )
+        # Record this machine as having consumed a trial
+        db.add(TrialMachine(
+            machine_fingerprint=body.machine_fingerprint,
+            user_email=user.email,
+        ))
+
     # Count existing active machines
     active_machines = [m for m in user.machines if m.is_active]
     max_machines = sub.seats * settings.max_machines_per_seat
@@ -92,7 +110,12 @@ async def activate(
         db.add(machine)
 
     now = datetime.now(timezone.utc)
-    expires = now + timedelta(days=settings.license_validity_days)
+    validity_days = (
+        settings.trial_license_validity_days
+        if sub.plan == "free_trial"
+        else settings.license_validity_days
+    )
+    expires = now + timedelta(days=validity_days)
 
     blob = create_license_blob(
         email=user.email,
@@ -146,7 +169,12 @@ async def validate(
 
     machine.last_validated = datetime.now(timezone.utc)
     now = datetime.now(timezone.utc)
-    expires = now + timedelta(days=settings.license_validity_days)
+    validity_days = (
+        settings.trial_license_validity_days
+        if sub.plan == "free_trial"
+        else settings.license_validity_days
+    )
+    expires = now + timedelta(days=validity_days)
 
     blob = create_license_blob(
         email=user.email,
@@ -199,7 +227,12 @@ async def generate_offline_key(
         )
 
     now = datetime.now(timezone.utc)
-    expires = now + timedelta(days=settings.license_validity_days)
+    validity_days = (
+        settings.trial_license_validity_days
+        if sub.plan == "free_trial"
+        else settings.license_validity_days
+    )
+    expires = now + timedelta(days=validity_days)
 
     blob = create_license_blob(
         email=user.email,
@@ -296,3 +329,40 @@ async def deactivate_machine(
 
     await db.flush()
     return {"ok": True, "message": "Machine deactivated and license keys revoked"}
+
+
+# ── S1: Revocation check (no auth required) ────────────────────
+
+@router.get("/check-revocation")
+async def check_revocation(
+    machine_fingerprint: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Check whether a machine's license has been revoked.
+
+    Called by the desktop app on startup (before sign-in) to
+    detect server-side deactivation without requiring credentials.
+    Returns {revoked: false} when no records are found (fail open).
+    """
+    # Look for the most recent non-revoked key for this machine
+    latest_key = await db.scalar(
+        select(LicenseKey.id).where(
+            LicenseKey.machine_fingerprint == machine_fingerprint,
+            LicenseKey.revoked == False,  # noqa: E712
+        ).limit(1)
+    )
+    if latest_key is not None:
+        return {"revoked": False}
+
+    # Check if there are *any* keys (revoked or not) for this machine
+    any_key = await db.scalar(
+        select(LicenseKey.id).where(
+            LicenseKey.machine_fingerprint == machine_fingerprint,
+        ).limit(1)
+    )
+    if any_key is None:
+        # Machine has never been activated — not revoked, just unknown
+        return {"revoked": False}
+
+    # All keys for this machine were revoked
+    return {"revoked": True}

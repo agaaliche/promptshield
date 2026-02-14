@@ -215,6 +215,7 @@ async def health() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 _warmup_started = False
+_warmup_done = False  # Set to True once warmup finishes
 
 
 def _warmup_models() -> None:
@@ -225,9 +226,17 @@ def _warmup_models() -> None:
     model is already loaded (e.g. from a previous warmup), they return
     instantly.
     """
+    global _warmup_done
     import time as _t
     t0 = _t.perf_counter()
     loaded: list[str] = []
+
+    # Eagerly import the pipeline module so first detection avoids import cost
+    try:
+        import core.detection.pipeline  # noqa: F401
+        loaded.append("pipeline-import")
+    except Exception as e:
+        logger.warning(f"Warmup: pipeline import failed: {e}")
 
     # spaCy English
     try:
@@ -261,7 +270,17 @@ def _warmup_models() -> None:
     except Exception as e:
         logger.warning(f"Warmup: GLiNER failed: {e}")
 
+    # BERT / Transformer NER (auto-mode default model)
+    try:
+        from core.detection.bert_detector import is_bert_ner_available, _load_pipeline
+        if is_bert_ner_available():
+            _load_pipeline()  # loads default model
+            loaded.append("BERT")
+    except Exception as e:
+        logger.warning(f"Warmup: BERT failed: {e}")
+
     elapsed = (_t.perf_counter() - t0) * 1000
+    _warmup_done = True
     logger.info(f"Warmup complete: {', '.join(loaded)} in {elapsed:.0f}ms")
 
 

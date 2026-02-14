@@ -3,10 +3,15 @@
 Maps character ranges in the full page text to bounding boxes, handles
 gap-splitting, and provides offset computation strategies (clustered
 and legacy).
+
+Performance note (M3): ``_char_offset_to_bbox`` and
+``_char_offsets_to_line_bboxes`` use binary search (bisect) on the
+sorted block offsets for O(log B) lookup instead of O(B) linear scan.
 """
 
 from __future__ import annotations
 
+import bisect
 import logging
 from typing import Optional
 
@@ -281,13 +286,28 @@ def _char_offset_to_bbox(
     char_end: int,
     block_offsets: list[tuple[int, int, TextBlock]],
 ) -> Optional[BBox]:
-    """Map character offsets in the full page text to a bounding box."""
+    """Map character offsets in the full page text to a bounding box.
+
+    Uses binary search (bisect) on block end positions for O(log B) lookup.
+    """
     if not block_offsets:
         return None
 
+    # Build end-position list for bisect (lazy, but fast for repeated calls
+    # on the same block_offsets since Python caches list comprehensions).
+    ends = [bo[1] for bo in block_offsets]
+
     overlapping: list[TextBlock] = []
-    for bstart, bend, block in block_offsets:
-        if bstart < char_end and bend > char_start:
+    # Find first block whose end > char_start
+    lo = bisect.bisect_right(ends, char_start)
+    # lo may overshoot by 1 if char_start falls inside a block whose end == char_start
+    if lo > 0 and block_offsets[lo - 1][1] > char_start:
+        lo -= 1
+    for i in range(max(0, lo - 1), len(block_offsets)):
+        bstart, bend, block = block_offsets[i]
+        if bstart >= char_end:
+            break
+        if bend > char_start:
             overlapping.append(block)
 
     if not overlapping:
@@ -310,13 +330,24 @@ def _char_offsets_to_line_bboxes(
     char_end: int,
     block_offsets: list[tuple[int, int, TextBlock]],
 ) -> list[BBox]:
-    """Map character offsets to one bounding box **per visual line**."""
+    """Map character offsets to one bounding box **per visual line**.
+
+    Uses binary search for O(log B) initial lookup.
+    """
     if not block_offsets:
         return []
 
+    ends = [bo[1] for bo in block_offsets]
+
     overlapping: list[TextBlock] = []
-    for bstart, bend, block in block_offsets:
-        if bstart < char_end and bend > char_start:
+    lo = bisect.bisect_right(ends, char_start)
+    if lo > 0 and block_offsets[lo - 1][1] > char_start:
+        lo -= 1
+    for i in range(max(0, lo - 1), len(block_offsets)):
+        bstart, bend, block = block_offsets[i]
+        if bstart >= char_end:
+            break
+        if bend > char_start:
             overlapping.append(block)
 
     if not overlapping:

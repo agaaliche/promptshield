@@ -111,12 +111,16 @@ from core.detection.region_shapes import (       # noqa: F401
 def detect_pii_on_page(
     page_data: PageData,
     llm_engine: Optional[object] = None,
+    *,
+    predetected_language: str | None = None,
 ) -> list[PIIRegion]:
     """Run the full hybrid PII detection pipeline on a single page.
 
     Args:
         page_data: Extracted page with text blocks.
         llm_engine: Optional LLMEngine for Layer 3 detection.
+        predetected_language: If provided, skip per-page language detection
+            and use this language code instead (performance optimisation).
 
     Returns:
         List of PIIRegion instances ready for UI display.
@@ -140,6 +144,8 @@ def detect_pii_on_page(
     # ── Resolve detection language once for this page ──
     if config.detection_language and config.detection_language != "auto":
         page_lang: str | None = config.detection_language
+    elif predetected_language is not None:
+        page_lang = predetected_language
     else:
         page_lang = detect_language(text)
 

@@ -456,43 +456,68 @@ def _render_page_bitmap(pdf_page: pdfium.PdfPage, page_index: int, doc_id: str) 
 
 
 def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
-    """Process a PDF file into page data."""
-    pdf = pdfium.PdfDocument(str(pdf_path))
-    try:
-        pages: list[PageData] = []
+    """Process a PDF file into page data.
 
-        for i in range(len(pdf)):
-            pdf_page = pdf[i]
+    Uses parallel threads for multi-page PDFs.  Each worker opens its
+    own ``PdfDocument`` handle to avoid pypdfium2 thread-safety issues.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Quick probe for page count
+    probe = pdfium.PdfDocument(str(pdf_path))
+    try:
+        n_pages = len(probe)
+    finally:
+        probe.close()
+
+    if n_pages == 0:
+        return []
+
+    def _process_one(page_index: int) -> PageData:
+        """Process a single page in its own thread w/ its own PDF handle."""
+        doc = pdfium.PdfDocument(str(pdf_path))
+        try:
+            pdf_page = doc[page_index]
             width = pdf_page.get_width()
             height = pdf_page.get_height()
 
-            # Render bitmap
-            bitmap_path = _render_page_bitmap(pdf_page, i, doc_id)
+            bitmap_path = _render_page_bitmap(pdf_page, page_index, doc_id)
+            text_blocks = _extract_text_blocks_from_page(pdf_page, page_index)
 
-            # Extract text with bounding boxes
-            text_blocks = _extract_text_blocks_from_page(pdf_page, i)
-
-            # If very few text blocks found, page might be scanned — try OCR
             full_text = _build_full_text(text_blocks)
             if len(full_text.strip()) < 20:
-                logger.info(f"Page {i + 1}: sparse text ({len(full_text)} chars), running OCR")
+                logger.info(f"Page {page_index + 1}: sparse text ({len(full_text)} chars), running OCR")
                 ocr_blocks = ocr_page_image(bitmap_path, width, height)
                 if ocr_blocks:
                     text_blocks = ocr_blocks
                     full_text = _build_full_text(text_blocks)
 
-            pages.append(PageData(
-                page_number=i + 1,
+            return PageData(
+                page_number=page_index + 1,
                 width=width,
                 height=height,
                 bitmap_path=str(bitmap_path),
                 text_blocks=text_blocks,
                 full_text=full_text,
-            ))
+            )
+        finally:
+            doc.close()
 
-        return pages
-    finally:
-        pdf.close()
+    # Single-page fast path (no thread overhead)
+    if n_pages == 1:
+        return [_process_one(0)]
+
+    import os
+    workers = min(4, os.cpu_count() or 2, n_pages)
+    results: dict[int, PageData] = {}
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_process_one, i): i for i in range(n_pages)}
+        for future in as_completed(futures):
+            idx = futures[future]
+            results[idx] = future.result()
+
+    return [results[i] for i in range(n_pages)]
 
 
 def _process_image(image_path: Path, doc_id: str) -> list[PageData]:

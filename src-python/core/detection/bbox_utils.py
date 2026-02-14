@@ -1,6 +1,12 @@
-"""Bounding-box geometry utilities for PII region processing."""
+"""Bounding-box geometry utilities for PII region processing.
+
+Performance note (M4): ``_resolve_bbox_overlaps`` uses a grid-based
+spatial index to reduce overlap checks from O(n²) to ~O(n) amortised.
+"""
 
 from __future__ import annotations
+
+from collections import defaultdict
 
 from models.schemas import BBox, PIIRegion
 
@@ -21,13 +27,38 @@ def _bbox_area(b: BBox) -> float:
     return max(0.0, b.x1 - b.x0) * max(0.0, b.y1 - b.y0)
 
 
+# ---------------------------------------------------------------------------
+# Grid-based spatial index for fast overlap queries
+# ---------------------------------------------------------------------------
+
+_GRID_CELL = 50.0  # cell size in PDF points (~0.7 inch)
+
+
+def _bbox_cells(bbox: BBox) -> set[tuple[int, int]]:
+    """Return the set of grid cells that a bbox spans."""
+    c0 = int(bbox.x0 // _GRID_CELL)
+    r0 = int(bbox.y0 // _GRID_CELL)
+    c1 = int(bbox.x1 // _GRID_CELL)
+    r1 = int(bbox.y1 // _GRID_CELL)
+    cells: set[tuple[int, int]] = set()
+    for r in range(r0, r1 + 1):
+        for c in range(c0, c1 + 1):
+            cells.add((r, c))
+    return cells
+
+
 def _resolve_bbox_overlaps(regions: list[PIIRegion]) -> list[PIIRegion]:
     """Ensure no two highlight rectangles overlap on the same page.
 
+    Uses a grid-based spatial index so each region is only compared
+    against nearby regions, reducing average complexity from O(n²) to
+    ~O(n × k) where k is the average number of neighbours in the same
+    grid cell (typically small).
+
     Strategy:
-    1. Sort regions by area descending (process larger boxes first).
-    2. For each pair with overlapping bboxes, shrink or clip the
-       lower-confidence region so it no longer overlaps.
+    1. Sort regions by confidence descending (process higher-conf first).
+    2. For each region, check overlap only against accepted regions in
+       the same grid cells; shrink/clip lower-confidence region.
     3. If clipping would reduce a region to near-zero area, drop it.
     """
     if len(regions) <= 1:
@@ -35,6 +66,8 @@ def _resolve_bbox_overlaps(regions: list[PIIRegion]) -> list[PIIRegion]:
 
     result = sorted(regions, key=lambda r: -r.confidence)
     final: list[PIIRegion] = []
+    # Grid: cell → list of indices into `final`
+    grid: dict[tuple[int, int], list[int]] = defaultdict(list)
 
     for region in result:
         bbox = BBox(
@@ -44,7 +77,15 @@ def _resolve_bbox_overlaps(regions: list[PIIRegion]) -> list[PIIRegion]:
             y1=region.bbox.y1,
         )
 
-        for keeper in final:
+        # Collect candidate keepers from overlapping grid cells
+        cells = _bbox_cells(bbox)
+        seen_keepers: set[int] = set()
+        for cell in cells:
+            for ki in grid.get(cell, ()):
+                seen_keepers.add(ki)
+
+        for ki in seen_keepers:
+            keeper = final[ki]
             if _bbox_overlap_area(bbox, keeper.bbox) <= 0:
                 continue
 
@@ -70,6 +111,10 @@ def _resolve_bbox_overlaps(regions: list[PIIRegion]) -> list[PIIRegion]:
         if bbox.width < 2 or bbox.height < 2:
             continue
 
+        idx = len(final)
         final.append(region.model_copy(update={"bbox": bbox}))
+        # Register this region in all its grid cells
+        for cell in _bbox_cells(bbox):
+            grid[cell].append(idx)
 
     return final

@@ -17,22 +17,74 @@ import threading
 from dataclasses import dataclass, field
 from typing import Callable, NamedTuple
 
-from spacy.lang.en.stop_words import STOP_WORDS as _EN_STOP_WORDS
-from spacy.lang.fr.stop_words import STOP_WORDS as _FR_STOP_WORDS
-from spacy.lang.it.stop_words import STOP_WORDS as _IT_STOP_WORDS
-
 from models.schemas import PIIType
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Stop words — lazy-loaded to avoid ~200-400ms import cost at module level
+# ---------------------------------------------------------------------------
+
+_EN_STOP_WORDS: set[str] | None = None
+_FR_STOP_WORDS: set[str] | None = None
+_IT_STOP_WORDS: set[str] | None = None
+
+
+def _get_en_stop_words() -> set[str]:
+    global _EN_STOP_WORDS
+    if _EN_STOP_WORDS is None:
+        from spacy.lang.en.stop_words import STOP_WORDS
+        _EN_STOP_WORDS = STOP_WORDS
+    return _EN_STOP_WORDS
+
+
+def _get_fr_stop_words() -> set[str]:
+    global _FR_STOP_WORDS
+    if _FR_STOP_WORDS is None:
+        from spacy.lang.fr.stop_words import STOP_WORDS
+        _FR_STOP_WORDS = STOP_WORDS
+    return _FR_STOP_WORDS
+
+
+def _get_it_stop_words() -> set[str]:
+    global _IT_STOP_WORDS
+    if _IT_STOP_WORDS is None:
+        from spacy.lang.it.stop_words import STOP_WORDS
+        _IT_STOP_WORDS = STOP_WORDS
+    return _IT_STOP_WORDS
+
+# ---------------------------------------------------------------------------
 # Lightweight language detection — skip English NER on non-English text
 # ---------------------------------------------------------------------------
 # Uses spaCy's built-in stop word lists so we need zero extra dependencies.
+# Lazy-loaded to avoid ~200-400ms module-level import cost.
 
-_EN_STOP_LOWER: set[str] = {w.lower() for w in _EN_STOP_WORDS}
-_FR_STOP_LOWER: set[str] = {w.lower() for w in _FR_STOP_WORDS}
-_IT_STOP_LOWER: set[str] = {w.lower() for w in _IT_STOP_WORDS}
+_EN_STOP_LOWER: set[str] | None = None
+_FR_STOP_LOWER: set[str] | None = None
+_IT_STOP_LOWER: set[str] | None = None
+
+
+def _get_en_stop_lower() -> set[str]:
+    global _EN_STOP_LOWER
+    if _EN_STOP_LOWER is None:
+        _EN_STOP_LOWER = {w.lower() for w in _get_en_stop_words()}
+    return _EN_STOP_LOWER
+
+
+def _get_fr_stop_lower() -> set[str]:
+    global _FR_STOP_LOWER
+    if _FR_STOP_LOWER is None:
+        _FR_STOP_LOWER = {w.lower() for w in _get_fr_stop_words()}
+    return _FR_STOP_LOWER
+
+
+def _get_it_stop_lower() -> set[str]:
+    global _IT_STOP_LOWER
+    if _IT_STOP_LOWER is None:
+        _IT_STOP_LOWER = {w.lower() for w in _get_it_stop_words()}
+    return _IT_STOP_LOWER
+
+
 _LANG_SAMPLE_SIZE = 2000  # characters to sample for language check
 _ENGLISH_STOPWORD_THRESHOLD = 0.15  # 15% — English text typically 25-40%
 _FRENCH_STOPWORD_THRESHOLD = 0.12   # 12% — French text typically 20-35%
@@ -68,15 +120,15 @@ def _is_language(
 
 
 def _is_english_text(text: str) -> bool:
-    return _is_language(text, _EN_STOP_LOWER, _ENGLISH_STOPWORD_THRESHOLD, "English", short_default=True)
+    return _is_language(text, _get_en_stop_lower(), _ENGLISH_STOPWORD_THRESHOLD, "English", short_default=True)
 
 
 def _is_french_text(text: str) -> bool:
-    return _is_language(text, _FR_STOP_LOWER, _FRENCH_STOPWORD_THRESHOLD, "French")
+    return _is_language(text, _get_fr_stop_lower(), _FRENCH_STOPWORD_THRESHOLD, "French")
 
 
 def _is_italian_text(text: str) -> bool:
-    return _is_language(text, _IT_STOP_LOWER, _ITALIAN_STOPWORD_THRESHOLD, "Italian")
+    return _is_language(text, _get_it_stop_lower(), _ITALIAN_STOPWORD_THRESHOLD, "Italian")
 
 
 class NERMatch(NamedTuple):

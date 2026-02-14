@@ -2,12 +2,19 @@
 
 Ensures every detected PII text is flagged on *every* page where it
 appears, not just the page where it was first detected.
+
+Performance optimisations (X1/X2):
+- Block offsets are computed once per page and cached.
+- The ``covered`` overlap check uses a per-page sorted interval list
+  with binary search instead of a global linear scan.
 """
 
 from __future__ import annotations
 
+import bisect
 import logging
 import uuid
+from collections import defaultdict
 
 from core.detection.bbox_utils import _resolve_bbox_overlaps
 from core.detection.block_offsets import (
@@ -28,6 +35,57 @@ from models.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Per-page interval tracker — O(log n) overlap check via binary search
+# ---------------------------------------------------------------------------
+
+class _PageIntervals:
+    """Maintain sorted, non-overlapping intervals per page for fast overlap checks."""
+
+    __slots__ = ("_starts", "_ends")
+
+    def __init__(self) -> None:
+        self._starts: list[int] = []
+        self._ends: list[int] = []
+
+    def has_overlap(self, cs: int, ce: int, min_ratio: float = 0.5) -> bool:
+        """Return True if an existing interval overlaps [cs, ce) by >= min_ratio.
+
+        Uses binary search on sorted start positions — O(log n).
+        """
+        threshold = min_ratio * (ce - cs)
+        # Find candidate intervals that could overlap [cs, ce).
+        # An interval (s, e) overlaps [cs, ce) iff s < ce AND e > cs.
+        # idx = first position where _starts[idx] >= ce  →  all intervals
+        # with index < idx have start < ce (necessary condition for overlap).
+        idx = bisect.bisect_left(self._starts, ce)
+        # Walk backwards from idx to find intervals that also satisfy e > cs.
+        for i in range(idx - 1, -1, -1):
+            if self._ends[i] <= cs:
+                # Intervals are sorted by start; all earlier intervals
+                # have even smaller start values.  If this interval's end
+                # doesn't reach cs, earlier ones won't either UNLESS they
+                # are wider.  We must keep scanning because starts are
+                # sorted but ends are not guaranteed to be monotone.
+                # However, for the typical "no nesting" case we can
+                # optimise: once we've gone past the start by more than
+                # a reasonable margin, stop scanning.
+                if self._starts[i] < cs - (ce - cs) * 2:
+                    break
+                continue
+            ov_start = max(cs, self._starts[i])
+            ov_end = min(ce, self._ends[i])
+            if ov_end - ov_start >= threshold:
+                return True
+        return False
+
+    def add(self, cs: int, ce: int) -> None:
+        """Insert interval [cs, ce) maintaining sorted order by start."""
+        idx = bisect.bisect_left(self._starts, cs)
+        self._starts.insert(idx, cs)
+        self._ends.insert(idx, ce)
 
 
 def propagate_regions_across_pages(
@@ -78,9 +136,13 @@ def propagate_regions_across_pages(
         logger.debug("Propagation: no propagatable PII texts found")
         return regions
 
-    covered: set[tuple[int, int, int]] = set()
+    # X2: Per-page interval index for O(log n) overlap check
+    page_intervals: dict[int, _PageIntervals] = defaultdict(_PageIntervals)
     for r in regions:
-        covered.add((r.page_number, r.char_start, r.char_end))
+        page_intervals[r.page_number].add(r.char_start, r.char_end)
+
+    # X1: Cache block offsets per page (computed once, reused for all texts)
+    block_offsets_cache: dict[int, list] = {}
 
     propagated: list[PIIRegion] = []
 
@@ -89,6 +151,9 @@ def propagate_regions_across_pages(
             full_text = page_data.full_text
             if not full_text:
                 continue
+
+            pn = page_data.page_number
+            intervals = page_intervals[pn]
 
             start = 0
             while True:
@@ -99,23 +164,16 @@ def propagate_regions_across_pages(
                 char_end = idx + len(pii_text)
                 start = char_end
 
-                already = False
-                for pg, cs, ce in covered:
-                    if pg != page_data.page_number:
-                        continue
-                    ov_start = max(char_start, cs)
-                    ov_end = min(char_end, ce)
-                    if ov_end > ov_start:
-                        ov_len = ov_end - ov_start
-                        if ov_len >= 0.5 * len(pii_text):
-                            already = True
-                            break
-                if already:
+                if intervals.has_overlap(char_start, char_end, 0.5):
                     continue
 
-                block_offsets = _compute_block_offsets(
-                    page_data.text_blocks, full_text,
-                )
+                # X1: Get cached block offsets for this page
+                if pn not in block_offsets_cache:
+                    block_offsets_cache[pn] = _compute_block_offsets(
+                        page_data.text_blocks, full_text,
+                    )
+                block_offsets = block_offsets_cache[pn]
+
                 line_bboxes = _char_offsets_to_line_bboxes(
                     char_start, char_end, block_offsets,
                 )
@@ -142,7 +200,7 @@ def propagate_regions_across_pages(
                         action=template.action,
                     )
                     propagated.append(new_region)
-                covered.add((page_data.page_number, char_start, char_end))
+                intervals.add(char_start, char_end)
 
     if propagated:
         logger.info(

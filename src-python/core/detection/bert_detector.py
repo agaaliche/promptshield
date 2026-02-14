@@ -409,10 +409,13 @@ def _is_person_noise(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Module-level state (lazy-loaded)
+# Module-level state (lazy-loaded, thread-safe)
 # ---------------------------------------------------------------------------
 
+import threading
+
 _pipeline = None
+_pipeline_lock = threading.Lock()
 _active_model_id: str = ""
 _label_map: dict[str, PIIType] = {}
 
@@ -426,7 +429,10 @@ _CHUNK_OVERLAP = 300       # overlap in characters
 # ---------------------------------------------------------------------------
 
 def _load_pipeline(model_id: str | None = None) -> object:
-    """Lazy-load a Hugging Face token-classification pipeline."""
+    """Lazy-load a Hugging Face token-classification pipeline.
+
+    Thread-safe via double-checked locking.
+    """
     global _pipeline, _active_model_id, _label_map
 
     if model_id is None or model_id == "auto":
@@ -440,26 +446,31 @@ def _load_pipeline(model_id: str | None = None) -> object:
     if _pipeline is not None and _active_model_id == model_id:
         return _pipeline
 
-    from transformers import pipeline as hf_pipeline
+    with _pipeline_lock:
+        # Double-check after acquiring lock
+        if _pipeline is not None and _active_model_id == model_id:
+            return _pipeline
 
-    logger.info(f"Loading HF NER model '{model_id}' …")
-    model_info = AVAILABLE_MODELS.get(model_id)
-    if model_info is None:
-        raise ValueError(
-            f"Unknown BERT NER model '{model_id}'. "
-            f"Available: {', '.join(AVAILABLE_MODELS)}"
+        from transformers import pipeline as hf_pipeline
+
+        logger.info(f"Loading HF NER model '{model_id}' …")
+        model_info = AVAILABLE_MODELS.get(model_id)
+        if model_info is None:
+            raise ValueError(
+                f"Unknown BERT NER model '{model_id}'. "
+                f"Available: {', '.join(AVAILABLE_MODELS)}"
+            )
+
+        _pipeline = hf_pipeline(
+            "ner",
+            model=model_id,
+            aggregation_strategy="simple",
+            device=-1,                    # CPU; set 0 for GPU
         )
-
-    _pipeline = hf_pipeline(
-        "ner",
-        model=model_id,
-        aggregation_strategy="simple",
-        device=-1,                    # CPU; set 0 for GPU
-    )
-    _active_model_id = model_id
-    _label_map = model_info["label_map"]
-    logger.info(f"HF model '{model_id}' loaded successfully")
-    return _pipeline
+        _active_model_id = model_id
+        _label_map = model_info["label_map"]
+        logger.info(f"HF model '{model_id}' loaded successfully")
+        return _pipeline
 
 
 def unload_pipeline() -> None:

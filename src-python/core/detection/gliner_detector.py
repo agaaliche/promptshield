@@ -29,10 +29,13 @@ class GLiNERMatch(NamedTuple):
 
 
 # ---------------------------------------------------------------------------
-# Model management (lazy-loaded singleton)
+# Model management (lazy-loaded singleton, thread-safe)
 # ---------------------------------------------------------------------------
 
+import threading
+
 _model = None
+_model_lock = threading.Lock()
 _MODEL_NAME = "urchade/gliner_multi_pii-v1"
 
 # Labels we ask GLiNER to detect and their mapping to our PIIType enum.
@@ -75,28 +78,36 @@ _MIN_GLINER_SCORE = 0.20
 
 
 def _load_model() -> object:
-    """Lazy-load the GLiNER model (downloads on first use, ~500 MB)."""
+    """Lazy-load the GLiNER model (downloads on first use, ~500 MB).
+
+    Thread-safe via double-checked locking.
+    """
     global _model
     if _model is not None:
         return _model
-
-    try:
-        from gliner import GLiNER
-        logger.info("Loading GLiNER model '%s' …", _MODEL_NAME)
-        _model = GLiNER.from_pretrained(_MODEL_NAME)
-        logger.info("GLiNER model loaded successfully")
-        return _model
-    except Exception as e:
-        logger.error("Failed to load GLiNER model: %s", e)
-        raise
+    with _model_lock:
+        if _model is not None:
+            return _model
+        try:
+            from gliner import GLiNER
+            logger.info("Loading GLiNER model '%s' …", _MODEL_NAME)
+            _model = GLiNER.from_pretrained(_MODEL_NAME)
+            logger.info("GLiNER model loaded successfully")
+            return _model
+        except Exception as e:
+            logger.error("Failed to load GLiNER model: %s", e)
+            raise
 
 
 def is_gliner_available() -> bool:
-    """Return True if GLiNER can be loaded without raising."""
+    """Return True if the GLiNER package is importable.
+
+    This is a lightweight probe that does NOT trigger model download.
+    """
     try:
-        _load_model()
+        import gliner  # noqa: F401
         return True
-    except Exception:
+    except ImportError:
         return False
 
 

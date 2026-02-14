@@ -247,7 +247,7 @@ def _merge_detections(
         else:
             merged.append(cand)
 
-    # ── Apply pipeline-level noise filters ────────────────────────────
+    # ── Apply pipeline-level noise filters (single combined pass) ────
     for item in merged:
         if item["pii_type"] == PIIType.ORG:
             logger.debug(
@@ -256,93 +256,53 @@ def _merge_detections(
                 item["confidence"], _is_org_pipeline_noise(item["text"]),
             )
 
-    org_before = len(merged)
-    merged = [
-        item for item in merged
-        if not (item["pii_type"] == PIIType.ORG and _is_org_pipeline_noise(item["text"]))
-    ]
-    org_dropped = org_before - len(merged)
-    if org_dropped:
-        logger.info(
-            "Page %d: pipeline ORG filter dropped %d noise ORG(s)",
-            page_data.page_number, org_dropped,
-        )
+    def _is_candidate_noise(item: dict) -> bool:
+        """Combined noise + structured filter (M2: single pass)."""
+        ptype = item["pii_type"]
+        txt = item["text"]
 
-    loc_before = len(merged)
-    merged = [
-        item for item in merged
-        if not (item["pii_type"] == PIIType.LOCATION and _is_loc_pipeline_noise(item["text"]))
-    ]
-    loc_dropped = loc_before - len(merged)
-    if loc_dropped:
-        logger.info(
-            "Page %d: pipeline LOCATION filter dropped %d noise LOCATION(s)",
-            page_data.page_number, loc_dropped,
-        )
-
-    per_before = len(merged)
-    merged = [
-        item for item in merged
-        if not (item["pii_type"] == PIIType.PERSON and _is_person_pipeline_noise(item["text"]))
-    ]
-
-    # Context-aware PERSON filter: page-header pattern
-    merged = [
-        item for item in merged
-        if not (
-            item["pii_type"] == PIIType.PERSON
+        # ORG noise
+        if ptype == PIIType.ORG and _is_org_pipeline_noise(txt):
+            return True
+        # LOCATION noise
+        if ptype == PIIType.LOCATION and _is_loc_pipeline_noise(txt):
+            return True
+        # PERSON noise
+        if ptype == PIIType.PERSON and _is_person_pipeline_noise(txt):
+            return True
+        # Context-aware PERSON filter: page-header pattern
+        if (
+            ptype == PIIType.PERSON
             and item.get("source") in ("NER", "GLINER", "BERT")
             and item.get("start", 99) <= 5
-            and len(item["text"].split()) >= 2
-        )
-    ]
-
-    per_dropped = per_before - len(merged)
-    if per_dropped:
-        logger.info(
-            "Page %d: pipeline PERSON filter dropped %d noise PERSON(s)",
-            page_data.page_number, per_dropped,
-        )
-
-    addr_before = len(merged)
-    merged = [
-        item for item in merged
-        if not (item["pii_type"] == PIIType.ADDRESS and _is_address_number_only(item["text"]))
-    ]
-    addr_dropped = addr_before - len(merged)
-    if addr_dropped:
-        logger.info(
-            "Page %d: pipeline ADDRESS filter dropped %d invalid ADDRESS(es)",
-            page_data.page_number, addr_dropped,
-        )
-
-    # ── Post-merge structured digit-count filter ──────────────────────
-    struct_before = len(merged)
-
-    def _is_valid_structured(item: dict) -> bool:
-        ptype = item["pii_type"]
-        min_d = _STRUCTURED_MIN_DIGITS.get(ptype)
-        if min_d is None:
+            and len(txt.split()) >= 2
+        ):
             return True
-        txt = item["text"]
-        digits = sum(c.isdigit() for c in txt)
-        if digits < min_d:
-            return False
-        if ptype == PIIType.SSN and any(c in txt for c in '$€£'):
-            return False
-        if ptype in (PIIType.SSN, PIIType.PHONE) and '\n' in txt:
-            return False
-        if ptype == PIIType.SSN:
-            if re.fullmatch(r'\d{1,2}\s+\d{3}\s+\d{3}', txt.strip()):
-                return False
-        return True
+        # ADDRESS number-only
+        if ptype == PIIType.ADDRESS and _is_address_number_only(txt):
+            return True
+        # Structured digit-count filter
+        min_d = _STRUCTURED_MIN_DIGITS.get(ptype)
+        if min_d is not None:
+            digits = sum(c.isdigit() for c in txt)
+            if digits < min_d:
+                return True
+            if ptype == PIIType.SSN and any(c in txt for c in '$€£'):
+                return True
+            if ptype in (PIIType.SSN, PIIType.PHONE) and '\n' in txt:
+                return True
+            if ptype == PIIType.SSN:
+                if re.fullmatch(r'\d{1,2}\s+\d{3}\s+\d{3}', txt.strip()):
+                    return True
+        return False
 
-    merged = [item for item in merged if _is_valid_structured(item)]
-    struct_dropped = struct_before - len(merged)
-    if struct_dropped:
+    before_filter = len(merged)
+    merged = [item for item in merged if not _is_candidate_noise(item)]
+    total_dropped = before_filter - len(merged)
+    if total_dropped:
         logger.info(
-            "Page %d: post-merge structured filter dropped %d region(s)",
-            page_data.page_number, struct_dropped,
+            "Page %d: pipeline noise filter dropped %d candidate(s)",
+            page_data.page_number, total_dropped,
         )
 
     # ── Pre-compute block offsets (used by ADDRESS merge + bbox mapping) ──
@@ -546,7 +506,7 @@ def _merge_detections(
     # Resolve remaining bbox overlaps
     regions = _resolve_bbox_overlaps(regions)
 
-    # ── FINAL safety net ──────────────────────────────────────────────
+    # ── FINAL safety net (uses same combined filter as earlier pass) ──
     _before_final = len(regions)
 
     def _is_region_noise(r: PIIRegion) -> bool:

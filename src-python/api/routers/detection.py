@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import time as _time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -29,6 +31,11 @@ from api.deps import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["detection"])
+
+# P1: max parallel workers for page detection.
+# ThreadPoolExecutor releases GIL during spaCy/PyTorch C-extension work,
+# giving real parallelism for multi-page documents.
+_MAX_DETECTION_WORKERS = min(4, os.cpu_count() or 2)
 
 
 @router.get("/documents/{doc_id}/detection-progress")
@@ -67,11 +74,20 @@ async def detect_pii(doc_id: str) -> dict[str, Any]:
 
     try:
         from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages
+        from core.detection.language import detect_language
         doc.status = DocumentStatus.DETECTING
         doc.regions = []
 
         engine = get_active_llm_engine()
         total_pages = len(doc.pages)
+
+        # Detect language once from the first non-trivial page (P2 optimisation)
+        doc_language: str | None = None
+        if not config.detection_language or config.detection_language == "auto":
+            for p in doc.pages:
+                if p.full_text and len(p.full_text.strip()) >= 100:
+                    doc_language = detect_language(p.full_text)
+                    break
 
         # Initialize progress tracker
         detection_progress[doc_id] = {
@@ -90,22 +106,39 @@ async def detect_pii(doc_id: str) -> dict[str, Any]:
         }
 
         def _run_detection() -> list[PIIRegion]:
-            """Run detection on all pages in-thread and update progress."""
-            all_regions: list[PIIRegion] = []
+            """Run detection on all pages using parallel threads."""
             progress = detection_progress[doc_id]
-            for idx, page in enumerate(doc.pages):
-                progress["current_page"] = idx + 1
+            n_pages = len(doc.pages)
+            workers = min(_MAX_DETECTION_WORKERS, n_pages)
+            page_results: dict[int, list[PIIRegion]] = {}
+
+            def _detect_one(idx: int, page):
                 progress["page_statuses"][idx]["status"] = "running"
-                progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
-
-                regions = detect_pii_on_page(page, llm_engine=engine)
-                all_regions.extend(regions)
-
+                regions = detect_pii_on_page(
+                    page, llm_engine=engine,
+                    predetected_language=doc_language,
+                )
                 progress["page_statuses"][idx]["status"] = "done"
                 progress["page_statuses"][idx]["regions"] = len(regions)
-                progress["pages_done"] = idx + 1
-                progress["regions_found"] = len(all_regions)
-                progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
+                return idx, regions
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(_detect_one, idx, page): idx
+                    for idx, page in enumerate(doc.pages)
+                }
+                for future in as_completed(futures):
+                    idx, regions = future.result()
+                    page_results[idx] = regions
+                    progress["pages_done"] = len(page_results)
+                    progress["regions_found"] = sum(len(r) for r in page_results.values())
+                    progress["current_page"] = idx + 1
+                    progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
+
+            # Reassemble in page order
+            all_regions: list[PIIRegion] = []
+            for idx in sorted(page_results):
+                all_regions.extend(page_results[idx])
             return all_regions
 
         # Run CPU-bound detection in a thread pool
@@ -200,6 +233,7 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
 
     try:
         from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages, _bbox_overlap_area, _bbox_area
+        from core.detection.language import detect_language as _detect_lang_r
 
         # Thread-safe config override for this detection run
         with config_override(
@@ -221,6 +255,14 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
 
             total_pages = len(pages_to_scan)
 
+            # Detect language once (P2 optimisation)
+            _redetect_lang: str | None = None
+            if not config.detection_language or config.detection_language == "auto":
+                for p in pages_to_scan:
+                    if p.full_text and len(p.full_text.strip()) >= 100:
+                        _redetect_lang = _detect_lang_r(p.full_text)
+                        break
+
             # Initialize progress tracker (same format as initial detect)
             detection_progress[doc_id] = {
                 "doc_id": doc_id,
@@ -238,22 +280,38 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
             }
 
             def _run_redetection() -> list[PIIRegion]:
-                """Run re-detection on selected pages in-thread."""
-                results: list[PIIRegion] = []
+                """Run re-detection on selected pages in parallel threads."""
                 progress = detection_progress[doc_id]
-                for idx, page in enumerate(pages_to_scan):
-                    progress["current_page"] = page.page_number
+                n = len(pages_to_scan)
+                workers = min(_MAX_DETECTION_WORKERS, n)
+                page_results: dict[int, list[PIIRegion]] = {}
+
+                def _detect_one(idx: int, page):
                     progress["page_statuses"][idx]["status"] = "running"
-                    progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
-
-                    detected = detect_pii_on_page(page, llm_engine=engine)
-                    results.extend(detected)
-
+                    detected = detect_pii_on_page(
+                        page, llm_engine=engine,
+                        predetected_language=_redetect_lang,
+                    )
                     progress["page_statuses"][idx]["status"] = "done"
                     progress["page_statuses"][idx]["regions"] = len(detected)
-                    progress["pages_done"] = idx + 1
-                    progress["regions_found"] = len(results)
-                    progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
+                    return idx, detected
+
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = {
+                        pool.submit(_detect_one, idx, page): idx
+                        for idx, page in enumerate(pages_to_scan)
+                    }
+                    for future in as_completed(futures):
+                        idx, detected = future.result()
+                        page_results[idx] = detected
+                        progress["pages_done"] = len(page_results)
+                        progress["regions_found"] = sum(len(r) for r in page_results.values())
+                        progress["current_page"] = pages_to_scan[idx].page_number
+                        progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
+
+                results: list[PIIRegion] = []
+                for idx in sorted(page_results):
+                    results.extend(page_results[idx])
                 return results
 
             new_regions = await asyncio.to_thread(_run_redetection)
@@ -533,6 +591,7 @@ async def reset_detection(doc_id: str) -> dict[str, Any]:
 
     try:
         from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages
+        from core.detection.language import detect_language as _detect_lang
 
         old_count = len(doc.regions)
         doc.status = DocumentStatus.DETECTING
@@ -540,6 +599,14 @@ async def reset_detection(doc_id: str) -> dict[str, Any]:
 
         engine = get_active_llm_engine()
         total_pages = len(doc.pages)
+
+        # Detect language once (P2 optimisation)
+        _reset_lang: str | None = None
+        if not config.detection_language or config.detection_language == "auto":
+            for p in doc.pages:
+                if p.full_text and len(p.full_text.strip()) >= 100:
+                    _reset_lang = _detect_lang(p.full_text)
+                    break
 
         detection_progress[doc_id] = {
             "doc_id": doc_id,
@@ -557,22 +624,38 @@ async def reset_detection(doc_id: str) -> dict[str, Any]:
         }
 
         def _run() -> list[PIIRegion]:
-            """Run fresh detection on all pages in-thread."""
-            all_regions: list[PIIRegion] = []
+            """Run fresh detection on all pages using parallel threads."""
             progress = detection_progress[doc_id]
-            for idx, page in enumerate(doc.pages):
-                progress["current_page"] = page.page_number
+            n_pages = len(doc.pages)
+            workers = min(_MAX_DETECTION_WORKERS, n_pages)
+            page_results: dict[int, list[PIIRegion]] = {}
+
+            def _detect_one(idx: int, page):
                 progress["page_statuses"][idx]["status"] = "running"
-                progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
-
-                regions = detect_pii_on_page(page, llm_engine=engine)
-                all_regions.extend(regions)
-
+                regions = detect_pii_on_page(
+                    page, llm_engine=engine,
+                    predetected_language=_reset_lang,
+                )
                 progress["page_statuses"][idx]["status"] = "done"
                 progress["page_statuses"][idx]["regions"] = len(regions)
-                progress["pages_done"] = idx + 1
-                progress["regions_found"] = len(all_regions)
-                progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
+                return idx, regions
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(_detect_one, idx, page): idx
+                    for idx, page in enumerate(doc.pages)
+                }
+                for future in as_completed(futures):
+                    idx, regions = future.result()
+                    page_results[idx] = regions
+                    progress["pages_done"] = len(page_results)
+                    progress["regions_found"] = sum(len(r) for r in page_results.values())
+                    progress["current_page"] = idx + 1
+                    progress["elapsed_seconds"] = _time.time() - progress["_started_at"]
+
+            all_regions: list[PIIRegion] = []
+            for idx in sorted(page_results):
+                all_regions.extend(page_results[idx])
             return all_regions
 
         all_regions = await asyncio.to_thread(_run)

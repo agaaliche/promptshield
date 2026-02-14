@@ -15,6 +15,7 @@ from core.detection.pipeline import (
     _enforce_region_shapes,
     _effective_gap_threshold,
     _char_offsets_to_line_bboxes,
+    _split_bboxes_by_proximity,
     _ABSOLUTE_MAX_GAP_PX,
     _GAP_OUTLIER_FACTOR,
     _MAX_WORD_GAP_WS,
@@ -382,3 +383,69 @@ class TestCharOffsetsToLineBboxesMerge:
         assert len(bboxes) == 2, (
             f"Expected 2 bboxes for multi-line entity, got {len(bboxes)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# _split_bboxes_by_proximity
+# ---------------------------------------------------------------------------
+
+
+class TestSplitBboxesByProximity:
+    """Spatial proximity splitting for linked-group creation."""
+
+    def test_single_bbox(self):
+        bboxes = [BBox(x0=10, y0=100, x1=200, y1=110)]
+        groups = _split_bboxes_by_proximity(bboxes)
+        assert len(groups) == 1
+        assert groups[0] == [0]
+
+    def test_contiguous_lines(self):
+        """Two lines close together should stay in one group."""
+        bboxes = [
+            BBox(x0=10, y0=100, x1=200, y1=110),
+            BBox(x0=10, y0=115, x1=180, y1=125),
+        ]
+        groups = _split_bboxes_by_proximity(bboxes)
+        assert len(groups) == 1
+        assert sorted(groups[0]) == [0, 1]
+
+    def test_distant_lines_split(self):
+        """Lines far apart vertically should be split into groups."""
+        bboxes = [
+            BBox(x0=10, y0=100, x1=200, y1=110),  # h=10
+            BBox(x0=10, y0=115, x1=180, y1=125),  # h=10, gap=5 -> OK
+            BBox(x0=10, y0=300, x1=200, y1=310),  # h=10, gap=175 -> SPLIT
+        ]
+        groups = _split_bboxes_by_proximity(bboxes)
+        assert len(groups) == 2
+        assert sorted(groups[0]) == [0, 1]
+        assert groups[1] == [2]
+
+    def test_three_clusters(self):
+        """Three spatially distant clusters should produce 3 groups."""
+        bboxes = [
+            BBox(x0=10, y0=50, x1=200, y1=60),
+            BBox(x0=10, y0=200, x1=200, y1=210),
+            BBox(x0=10, y0=400, x1=200, y1=410),
+        ]
+        groups = _split_bboxes_by_proximity(bboxes)
+        assert len(groups) == 3
+
+    def test_empty_bboxes(self):
+        groups = _split_bboxes_by_proximity([])
+        assert groups == [[]]  # single group with no indices — but len(bboxes)==0
+        # Actually for empty input the function returns [[]] due to range(0)
+        # Let's verify it handles gracefully
+
+    def test_out_of_order_sorted_by_y(self):
+        """Bboxes passed out of y-order should still be grouped correctly."""
+        bboxes = [
+            BBox(x0=10, y0=300, x1=200, y1=310),  # visually 3rd
+            BBox(x0=10, y0=100, x1=200, y1=110),  # visually 1st
+            BBox(x0=10, y0=105, x1=180, y1=115),  # visually 2nd
+        ]
+        groups = _split_bboxes_by_proximity(bboxes)
+        assert len(groups) == 2
+        # Group 1: indices 1,2 (y=100, y=105); Group 2: index 0 (y=300)
+        assert sorted(groups[0]) == [1, 2]
+        assert groups[1] == [0]

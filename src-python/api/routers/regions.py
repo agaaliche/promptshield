@@ -232,6 +232,180 @@ async def add_manual_region(doc_id: str, region: PIIRegion) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Blacklist — batch text search → create/flag regions
+# ---------------------------------------------------------------------------
+
+class BlacklistRequest(_PydanticBaseModel):
+    terms: list[str]
+    action: str = "none"        # "none" | "tokenize" | "remove"
+    page_number: Optional[int] = None  # None = all pages
+
+
+@router.post("/documents/{doc_id}/regions/blacklist")
+async def apply_blacklist(doc_id: str, req: BlacklistRequest) -> dict[str, Any]:
+    """Search the document for each term and create MANUAL regions for matches.
+
+    If a term overlaps an existing region, optionally flag that region for
+    tokenization or removal instead of creating a duplicate.
+    """
+    import traceback
+    try:
+        return _blacklist_impl(doc_id, req)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("blacklist error: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(500, detail=str(e))
+
+
+def _blacklist_impl(doc_id: str, req: BlacklistRequest) -> dict[str, Any]:
+    """Core implementation of the blacklist feature."""
+    doc = get_doc(doc_id)
+
+    # Determine target action
+    action_map = {
+        "tokenize": RegionAction.TOKENIZE,
+        "remove": RegionAction.REMOVE,
+    }
+    target_action: RegionAction | None = action_map.get(req.action)
+
+    # Determine which pages to scan
+    pages_to_scan = doc.pages
+    if req.page_number is not None:
+        pages_to_scan = [p for p in doc.pages if p.page_number == req.page_number]
+        if not pages_to_scan:
+            raise HTTPException(404, f"Page {req.page_number} not found")
+
+    # Deduplicate and clean terms
+    seen: set[str] = set()
+    terms: list[str] = []
+    for t in req.terms:
+        t_clean = t.strip()
+        t_lower = t_clean.lower()
+        if t_clean and t_lower not in seen:
+            seen.add(t_lower)
+            terms.append(t_clean)
+
+    if not terms:
+        return {"created": 0, "flagged": 0, "regions": []}
+
+    # Build existing-region lookup per page
+    existing_spans: dict[int, list[tuple[float, float, float, float, str, str]]] = {}
+    for r in doc.regions:
+        if r.action == RegionAction.CANCEL:
+            continue
+        existing_spans.setdefault(r.page_number, []).append(
+            (r.bbox.x0, r.bbox.y0, r.bbox.x1, r.bbox.y1,
+             r.text.strip().lower(), r.id)
+        )
+
+    from core.detection.pipeline import _compute_block_offsets
+
+    created_regions: list[PIIRegion] = []
+    flagged_ids: set[str] = set()
+
+    for page in pages_to_scan:
+        full_text = page.full_text
+        if not full_text:
+            continue
+
+        full_lower = full_text.lower()
+        block_offsets = _compute_block_offsets(page.text_blocks, full_text)
+
+        for needle in terms:
+            needle_lower = needle.lower()
+            needle_len = len(needle_lower)
+            if needle_len == 0:
+                continue
+
+            # Find all case-insensitive occurrences
+            search_start = 0
+            while True:
+                idx = full_lower.find(needle_lower, search_start)
+                if idx == -1:
+                    break
+                search_start = idx + 1
+                match_end = idx + needle_len
+
+                # Map char range → bounding box via text blocks
+                hit_blocks = []
+                for cs, ce, blk in block_offsets:
+                    if ce <= idx:
+                        continue
+                    if cs >= match_end:
+                        break
+                    hit_blocks.append(blk)
+
+                if not hit_blocks:
+                    continue
+
+                bx0 = min(b.bbox.x0 for b in hit_blocks)
+                by0 = min(b.bbox.y0 for b in hit_blocks)
+                bx1 = max(b.bbox.x1 for b in hit_blocks)
+                by1 = max(b.bbox.y1 for b in hit_blocks)
+
+                # Clamp to page bounds
+                bx0 = max(0.0, min(bx0, page.width))
+                by0 = max(0.0, min(by0, page.height))
+                bx1 = max(0.0, min(bx1, page.width))
+                by1 = max(0.0, min(by1, page.height))
+
+                # Check if an existing region already covers this area
+                page_existing = existing_spans.get(page.page_number, [])
+                covered_region_id: str | None = None
+                for ex0, ey0, ex1, ey1, _etxt, eid in page_existing:
+                    ix0 = max(bx0, ex0)
+                    iy0 = max(by0, ey0)
+                    ix1 = min(bx1, ex1)
+                    iy1 = min(by1, ey1)
+                    if ix0 < ix1 and iy0 < iy1:
+                        inter_area = (ix1 - ix0) * (iy1 - iy0)
+                        new_area = max((bx1 - bx0) * (by1 - by0), 1e-6)
+                        if inter_area / new_area > 0.4:
+                            covered_region_id = eid
+                            break
+
+                if covered_region_id:
+                    # Already covered — optionally flag the existing region
+                    if target_action and covered_region_id not in flagged_ids:
+                        for r in doc.regions:
+                            if r.id == covered_region_id:
+                                r.action = target_action
+                                flagged_ids.add(r.id)
+                                break
+                    continue
+
+                # Create a new region
+                matched_text = full_text[idx:match_end]
+                region = PIIRegion(
+                    page_number=page.page_number,
+                    bbox=BBox(x0=round(bx0, 2), y0=round(by0, 2),
+                              x1=round(bx1, 2), y1=round(by1, 2)),
+                    text=matched_text,
+                    pii_type=PIIType.CUSTOM,
+                    confidence=1.0,
+                    source=DetectionSource.MANUAL,
+                    action=target_action if target_action else RegionAction.PENDING,
+                    char_start=idx,
+                    char_end=match_end,
+                )
+                region.id = uuid.uuid4().hex[:12]
+                created_regions.append(region)
+                doc.regions.append(region)
+                existing_spans.setdefault(page.page_number, []).append(
+                    (bx0, by0, bx1, by1, needle_lower, region.id)
+                )
+
+    save_doc(doc)
+
+    return {
+        "created": len(created_regions),
+        "flagged": len(flagged_ids),
+        "regions": [r.model_dump(mode="json") for r in doc.regions],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Highlight-all
 # ---------------------------------------------------------------------------
 

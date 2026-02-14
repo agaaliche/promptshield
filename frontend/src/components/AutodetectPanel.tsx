@@ -1,8 +1,11 @@
-/** Autodetect PII settings dropdown panel. */
+/** Autodetect PII settings dropdown panel with Blacklist grid. */
 
-import { useState } from "react";
-import { ScanSearch } from "lucide-react";
+import { useState, useCallback, useRef } from "react";
+import { ScanSearch, SlidersHorizontal, X } from "lucide-react";
 import { Z_TOP_DIALOG } from "../zIndex";
+import BlacklistGrid, { type BlacklistAction, createEmptyGrid } from "./BlacklistGrid";
+
+type TabKey = "patterns" | "blacklist" | "ai" | "deep";
 
 interface AutodetectPanelProps {
   isProcessing: boolean;
@@ -16,10 +19,17 @@ interface AutodetectPanelProps {
     llmEnabled: boolean;
     regexTypes: string[];
     nerTypes: string[];
+    blacklistTerms: string[];
+    blacklistAction: BlacklistAction;
   }) => void;
   onReset: () => void;
   onClose: () => void;
 }
+
+const MIN_PANEL_W = 340;
+const MIN_PANEL_H = 260;
+const DEFAULT_PANEL_W = 420;
+const DEFAULT_PANEL_H = 520;
 
 export default function AutodetectPanel({
   isProcessing,
@@ -31,8 +41,8 @@ export default function AutodetectPanel({
 }: AutodetectPanelProps) {
   const [fuzziness, setFuzziness] = useState(0.55);
   const [scope, setScope] = useState<"page" | "all">("page");
-  const [tab, setTab] = useState<"patterns" | "ai" | "deep">("patterns");
-  const [showDataTypes, setShowDataTypes] = useState(false);
+  const [tab, setTab] = useState<TabKey>("patterns");
+  const [showTabs, setShowTabs] = useState(false);
   const [regexTypes, setRegexTypes] = useState<Record<string, boolean>>({
     EMAIL: true, PHONE: true, SSN: true, CREDIT_CARD: true,
     IBAN: true, DATE: true, IP_ADDRESS: true, PASSPORT: true,
@@ -43,12 +53,22 @@ export default function AutodetectPanel({
   });
   const [llmEnabled, setLlmEnabled] = useState(false);
 
+  // Blacklist state
+  const [blCells, setBlCells] = useState(() => createEmptyGrid());
+  const [blAction, setBlAction] = useState<BlacklistAction>("none");
+  const [blMatchStatus, setBlMatchStatus] = useState<Map<string, "matched" | "no-match" | "exists">>(new Map());
+
+  // Resize state
+  const [panelSize, setPanelSize] = useState({ w: DEFAULT_PANEL_W, h: DEFAULT_PANEL_H });
+  const resizeRef = useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null);
+
   const regexEnabled = Object.values(regexTypes).some(Boolean);
   const nerEnabled = Object.values(nerTypes).some(Boolean);
   const activeRegexTypes = Object.entries(regexTypes).filter(([, v]) => v).map(([k]) => k);
   const activeNerTypes = Object.entries(nerTypes).filter(([, v]) => v).map(([k]) => k);
 
   const handleRun = () => {
+    const blacklistTerms = blCells.flat().map(c => c.trim()).filter(Boolean);
     onDetect({
       fuzziness,
       scope,
@@ -57,9 +77,34 @@ export default function AutodetectPanel({
       llmEnabled,
       regexTypes: regexEnabled ? activeRegexTypes : [],
       nerTypes: nerEnabled ? activeNerTypes : [],
+      blacklistTerms,
+      blacklistAction: blAction,
     });
     onClose();
   };
+
+  // Resize handlers
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeRef.current = { startX: e.clientX, startY: e.clientY, startW: panelSize.w, startH: panelSize.h };
+    const onMove = (me: MouseEvent) => {
+      if (!resizeRef.current) return;
+      const dx = me.clientX - resizeRef.current.startX;
+      const dy = me.clientY - resizeRef.current.startY;
+      setPanelSize({
+        w: Math.max(MIN_PANEL_W, resizeRef.current.startW + dx),
+        h: Math.max(MIN_PANEL_H, resizeRef.current.startH + dy),
+      });
+    };
+    const onUp = () => {
+      resizeRef.current = null;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [panelSize]);
 
   return (
     <div
@@ -73,7 +118,8 @@ export default function AutodetectPanel({
         borderRadius: 8,
         boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
         zIndex: Z_TOP_DIALOG,
-        width: 340,
+        width: showTabs ? panelSize.w : 340,
+        maxHeight: showTabs ? panelSize.h : undefined,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -120,45 +166,59 @@ export default function AutodetectPanel({
         })}
       </div>
 
-      {/* Sensitivity slider */}
-      <div style={{ padding: "10px 14px 0" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-secondary)", marginBottom: 3 }}>
-          <span>Sensitivity</span>
-          <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{fuzziness.toFixed(2)}</span>
+      {/* Sensitivity slider + filter button on same line */}
+      <div style={{ display: "flex", alignItems: "stretch", padding: "10px 14px 0", gap: 8 }}>
+        {/* Slider column */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--text-secondary)", marginBottom: 3 }}>
+            <span>Sensitivity</span>
+            <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{fuzziness.toFixed(2)}</span>
+          </div>
+          <input
+            type="range" min={0.1} max={0.95} step={0.05}
+            value={fuzziness}
+            onChange={(e) => setFuzziness(parseFloat(e.target.value))}
+            style={{ width: "100%", accentColor: "var(--accent-primary)" }}
+          />
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-muted)", marginTop: 1 }}>
+            <span>More results</span>
+            <span>Fewer results</span>
+          </div>
         </div>
-        <input
-          type="range" min={0.1} max={0.95} step={0.05}
-          value={fuzziness}
-          onChange={(e) => setFuzziness(parseFloat(e.target.value))}
-          style={{ width: "100%", accentColor: "var(--accent-primary)" }}
-        />
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-muted)", marginTop: 1 }}>
-          <span>More results</span>
-          <span>Fewer results</span>
-        </div>
-      </div>
 
-      {/* Choose data types toggle */}
-      <div style={{ padding: "8px 14px 0" }}>
+        {/* Filter adjustment button — full height of slider area */}
         <button
-          className="btn-ghost btn-sm"
-          onClick={() => setShowDataTypes(prev => !prev)}
-          style={{ width: "auto", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 6, fontSize: 12, border: "1px solid transparent" }}
+          onClick={() => setShowTabs(prev => !prev)}
+          style={{
+            width: 32,
+            flexShrink: 0,
+            background: showTabs ? "rgba(var(--accent-primary-rgb, 59,130,246), 0.12)" : "rgba(255,255,255,0.04)",
+            border: showTabs ? "1px solid var(--accent-primary)" : "1px solid var(--border-color)",
+            borderRadius: 6,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: showTabs ? "var(--accent-primary)" : "var(--text-muted)",
+            transition: "all 0.15s ease",
+            padding: 0,
+          }}
+          title={showTabs ? "Hide detection settings" : "Show detection settings"}
         >
-          <span style={{ transform: showDataTypes ? "rotate(45deg)" : "rotate(0deg)", transition: "transform 0.2s ease", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 600, width: 18, height: 18, marginTop: -1 }}>+</span>
-          <span>Choose data types</span>
+          {showTabs ? <X size={16} /> : <SlidersHorizontal size={16} />}
         </button>
       </div>
 
-      {/* Data types section (collapsible) */}
-      {showDataTypes && (<>
-        {/* Layer tabs */}
+      {/* Detection settings tabs (collapsible via gear) */}
+      {showTabs && (<>
+        {/* 4-tab bar: Patterns | Blacklist | AI Recognition | Deep Analysis */}
         <div style={{ display: "flex", borderBottom: "1px solid var(--border-color)", flexShrink: 0, marginTop: 6 }}>
           {([
             { key: "patterns" as const, label: "Patterns", active: regexEnabled },
+            { key: "blacklist" as const, label: "Blacklist", active: blCells.flat().some(c => c.trim()) },
             { key: "ai" as const, label: "AI Recognition", active: nerEnabled },
             { key: "deep" as const, label: "Deep Analysis", active: llmEnabled },
-          ]).map(({ key, label, active }) => {
+          ] as const).map(({ key, label, active }) => {
             const isSel = tab === key;
             return (
               <button
@@ -186,7 +246,7 @@ export default function AutodetectPanel({
         </div>
 
         {/* Tab content */}
-        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10, maxHeight: 300, overflowY: "auto" }}>
+        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10, flex: 1, overflowY: "auto", minHeight: 0 }}>
 
           {/* Patterns tab (regex) */}
           {tab === "patterns" && (<>
@@ -228,6 +288,20 @@ export default function AutodetectPanel({
                 onClick={() => setRegexTypes(prev => Object.fromEntries(Object.keys(prev).map(k => [k, false])))}
               >Clear all</button>
             </div>
+          </>)}
+
+          {/* Blacklist tab */}
+          {tab === "blacklist" && (<>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
+              Enter words or phrases to find and flag in the document. Paste from Excel or CSV supported.
+            </div>
+            <BlacklistGrid
+              cells={blCells}
+              onCellsChange={setBlCells}
+              action={blAction}
+              onActionChange={setBlAction}
+              matchStatus={blMatchStatus}
+            />
           </>)}
 
           {/* AI Recognition tab (NER) */}
@@ -313,11 +387,11 @@ export default function AutodetectPanel({
       </>)}
 
       {/* Run button */}
-      <div style={{ padding: "10px 14px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ padding: "10px 14px 14px", display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
         <button
           className="btn-primary"
           onClick={handleRun}
-          disabled={isProcessing || (!regexEnabled && !nerEnabled && !llmEnabled)}
+          disabled={isProcessing || (!regexEnabled && !nerEnabled && !llmEnabled && !blCells.flat().some(c => c.trim()))}
           style={{ width: "100%" }}
         >
           <ScanSearch size={14} />
@@ -338,6 +412,31 @@ export default function AutodetectPanel({
           Reset detection (clear &amp; rescan)
         </button>
       </div>
+
+      {/* Resize handle (bottom-right corner) */}
+      {showTabs && (
+        <div
+          onMouseDown={handleResizeStart}
+          style={{
+            position: "absolute",
+            bottom: 0,
+            right: 0,
+            width: 16,
+            height: 16,
+            cursor: "nwse-resize",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            opacity: 0.4,
+            fontSize: 10,
+            color: "var(--text-muted)",
+            userSelect: "none",
+          }}
+          title="Drag to resize"
+        >
+          ⋱
+        </div>
+      )}
     </div>
   );
 }

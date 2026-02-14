@@ -12,6 +12,7 @@ from pydantic import BaseModel as _PydanticBaseModel, Field
 from core.config import config
 from core.detection.noise_filters import has_legal_suffix as _has_legal_suffix
 from models.schemas import (
+    BBox,
     DocumentStatus,
     PIIRegion,
 )
@@ -175,6 +176,8 @@ class RedetectRequest(_PydanticBaseModel):
     llm_detection_enabled: bool = True
     regex_types: Optional[list[str]] = None   # None = all types; e.g. ["EMAIL", "SSN"]
     ner_types: Optional[list[str]] = None     # None = all types; e.g. ["PERSON", "ORG"]
+    blacklist_terms: Optional[list[str]] = None  # terms to search for (highest priority)
+    blacklist_action: str = "none"               # "none" | "tokenize" | "remove"
 
 
 @router.post("/documents/{doc_id}/redetect")
@@ -255,6 +258,77 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
 
             new_regions = await asyncio.to_thread(_run_redetection)
 
+        # ── Blacklist: text-search for user-specified terms (highest priority) ──
+        blacklist_created = 0
+        if body.blacklist_terms:
+            from core.detection.pipeline import _compute_block_offsets
+            import uuid as _uuid
+            from models.schemas import PIIType as _PIIType, DetectionSource as _DetSource, RegionAction as _RAct
+
+            bl_action_map = {"tokenize": _RAct.TOKENIZE, "remove": _RAct.REMOVE}
+            bl_target_action: _RAct | None = bl_action_map.get(body.blacklist_action)
+
+            # Deduplicate terms (case-insensitive)
+            _bl_seen: set[str] = set()
+            bl_terms: list[str] = []
+            for t in body.blacklist_terms:
+                tc = t.strip()
+                tl = tc.lower()
+                if tc and tl not in _bl_seen:
+                    _bl_seen.add(tl)
+                    bl_terms.append(tc)
+
+            bl_regions: list[PIIRegion] = []
+            for page in pages_to_scan:
+                ft = page.full_text
+                if not ft:
+                    continue
+                ft_lower = ft.lower()
+                block_offsets = _compute_block_offsets(page.text_blocks, ft)
+
+                for needle in bl_terms:
+                    nl = needle.lower()
+                    nlen = len(nl)
+                    if nlen == 0:
+                        continue
+                    pos = 0
+                    while True:
+                        idx = ft_lower.find(nl, pos)
+                        if idx == -1:
+                            break
+                        pos = idx + 1
+                        m_end = idx + nlen
+
+                        # Map char range → bbox
+                        hits = [blk for cs, ce, blk in block_offsets if ce > idx and cs < m_end]
+                        if not hits:
+                            continue
+                        bx0 = max(0.0, min(b.bbox.x0 for b in hits))
+                        by0 = max(0.0, min(b.bbox.y0 for b in hits))
+                        bx1 = min(page.width, max(b.bbox.x1 for b in hits))
+                        by1 = min(page.height, max(b.bbox.y1 for b in hits))
+
+                        r = PIIRegion(
+                            page_number=page.page_number,
+                            bbox=BBox(x0=round(bx0, 2), y0=round(by0, 2),
+                                      x1=round(bx1, 2), y1=round(by1, 2)),
+                            text=ft[idx:m_end],
+                            pii_type=_PIIType.CUSTOM,
+                            confidence=1.0,
+                            source=_DetSource.MANUAL,
+                            action=bl_target_action if bl_target_action else _RAct.PENDING,
+                            char_start=idx,
+                            char_end=m_end,
+                        )
+                        r.id = _uuid.uuid4().hex[:12]
+                        bl_regions.append(r)
+
+            blacklist_created = len(bl_regions)
+            # Prepend blacklist regions so they get highest priority in merge
+            new_regions = bl_regions + new_regions
+            if blacklist_created:
+                logger.info("Blacklist: %d regions from %d terms", blacklist_created, len(bl_terms))
+
         # ── Merge new detections into existing regions ──
         scanned_pages = {p.page_number for p in pages_to_scan}
         existing_on_scanned = [r for r in doc.regions if r.page_number in scanned_pages]
@@ -276,10 +350,13 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
             excluded_types |= _ner_tab_types
 
         # Drop existing regions whose type was explicitly excluded
+        # (but never drop MANUAL regions — e.g. blacklist or user-drawn)
         if excluded_types:
+            from models.schemas import DetectionSource as _DetSourceFilter
             existing_on_scanned = [
                 r for r in existing_on_scanned
-                if (r.pii_type.value if hasattr(r.pii_type, 'value') else str(r.pii_type)) not in excluded_types
+                if r.source == _DetSourceFilter.MANUAL
+                or (r.pii_type.value if hasattr(r.pii_type, 'value') else str(r.pii_type)) not in excluded_types
             ]
 
         OVERLAP_THRESHOLD = 0.50
@@ -364,10 +441,12 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
 
         # Post-propagation: strip excluded types from the scanned pages
         # (propagation may re-create them from templates on other pages)
+        # Never strip MANUAL regions (blacklist / user-drawn).
         if excluded_types:
             all_regions = [
                 r for r in all_regions
-                if r.page_number not in scanned_pages
+                if r.source == DetectionSource.MANUAL
+                or r.page_number not in scanned_pages
                 or (r.pii_type.value if hasattr(r.pii_type, 'value') else str(r.pii_type)) not in excluded_types
             ]
 

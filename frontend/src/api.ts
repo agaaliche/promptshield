@@ -150,6 +150,8 @@ export async function redetectPII(
     llm_detection_enabled?: boolean;
     regex_types?: string[] | null;
     ner_types?: string[] | null;
+    blacklist_terms?: string[];
+    blacklist_action?: string;
   } = {}
 ): Promise<RedetectResult> {
   return request<RedetectResult>(`/api/documents/${docId}/redetect`, {
@@ -234,6 +236,27 @@ export async function updateRegionBBox(
   await request(`/api/documents/${docId}/regions/${regionId}/bbox`, {
     method: "PUT",
     body: JSON.stringify(bbox),
+  });
+}
+
+// Blacklist
+// ──────────────────────────────────────────────
+
+export interface BlacklistResult {
+  created: number;
+  flagged: number;
+  regions: PIIRegion[];
+}
+
+export async function applyBlacklist(
+  docId: string,
+  terms: string[],
+  action: "none" | "tokenize" | "remove",
+  pageNumber?: number | null,
+): Promise<BlacklistResult> {
+  return request<BlacklistResult>(`/api/documents/${docId}/regions/blacklist`, {
+    method: "POST",
+    body: JSON.stringify({ terms, action, page_number: pageNumber ?? null }),
   });
 }
 

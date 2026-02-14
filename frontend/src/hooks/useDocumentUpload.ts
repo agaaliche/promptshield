@@ -28,6 +28,9 @@ export interface UseDocumentUploadOptions {
  * Returns a `handleFiles` callback that runs the full
  * upload → detect → resolve pipeline for every file.
  */
+/** Maximum documents allowed for export in a single batch. */
+const MAX_EXPORT_DOCS = 50;
+
 export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
   const {
     setActiveDocId,
@@ -40,7 +43,10 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
     clearCompletedUploads,
     setDocDetecting,
     setDocLoadingMessage,
+    setStatusMessage,
   } = useAppStore();
+
+  const documents = useAppStore((s) => s.documents);
 
   const { onBeforeUpload, onFileError, verboseLoadingMessages = false } = options;
 
@@ -48,6 +54,14 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
       const fileArray = Array.from(files);
+
+      // Warn if total document count will exceed export limit
+      const totalAfter = documents.length + fileArray.length;
+      if (totalAfter > MAX_EXPORT_DOCS) {
+        setStatusMessage(
+          `Warning: You will have ${totalAfter} documents, but only ${MAX_EXPORT_DOCS} can be exported at once.`
+        );
+      }
 
       onBeforeUpload?.();
 
@@ -114,6 +128,7 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
       onBeforeUpload,
       onFileError,
       verboseLoadingMessages,
+      documents.length,
       setActiveDocId,
       setRegions,
       setCurrentView,
@@ -124,6 +139,7 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
       clearCompletedUploads,
       setDocDetecting,
       setDocLoadingMessage,
+      setStatusMessage,
     ],
   );
 

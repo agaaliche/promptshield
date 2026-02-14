@@ -20,8 +20,10 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-# Default: 120 requests per 60-second window per client IP
-_DEFAULT_RATE = 120
+# Default: 600 requests per 60-second window per client IP
+# The frontend fires many parallel requests during multi-file upload
+# (document metadata, regions, detection-progress polling, status checks).
+_DEFAULT_RATE = 600
 _DEFAULT_WINDOW = 60  # seconds
 
 
@@ -37,7 +39,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         window_seconds: Length of the sliding window.
     """
 
-    _EXEMPT_PREFIXES = ("/health", "/bitmaps/", "/storage-bitmaps/", "/assets/")
+    _EXEMPT_PREFIXES = (
+        "/health",
+        "/bitmaps/",
+        "/storage-bitmaps/",
+        "/assets/",
+        "/api/warmup",
+        "/api/llm/status",
+        "/api/vault/status",
+        "/api/settings",
+    )
+    # Also exempt high-frequency polling suffixes checked per-path
+    _EXEMPT_SUFFIXES = (
+        "/detection-progress",
+        "/regions",
+    )
 
     def __init__(
         self,
@@ -56,7 +72,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         """Check rate limit before forwarding the request."""
         path = request.url.path
-        if any(path.startswith(p) for p in self._EXEMPT_PREFIXES):
+        if (any(path.startswith(p) for p in self._EXEMPT_PREFIXES)
+                or any(path.endswith(s) for s in self._EXEMPT_SUFFIXES)):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"

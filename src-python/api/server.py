@@ -188,8 +188,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Rate limiting — 120 requests per 60s per client IP
-app.add_middleware(RateLimitMiddleware, max_requests=120, window_seconds=60)
+# Rate limiting — 600 requests per 60s per client IP (generous for frontend bursts)
+app.add_middleware(RateLimitMiddleware)
 
 # ---------------------------------------------------------------------------
 # Register routers

@@ -52,7 +52,10 @@ from models.schemas import (
 
 # Sub-module imports for local use
 from core.detection.cross_line import _detect_cross_line_orgs
-from core.detection.merge import _merge_detections
+from core.detection.merge import (                # noqa: F401
+    _merge_detections,
+    _split_bboxes_by_proximity,
+)
 from core.detection.propagation import propagate_regions_across_pages
 
 logger = logging.getLogger(__name__)

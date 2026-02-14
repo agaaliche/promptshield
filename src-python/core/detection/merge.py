@@ -43,6 +43,42 @@ from models.schemas import (
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Spatial proximity — max gap between consecutive linked bboxes
+# ---------------------------------------------------------------------------
+
+_MAX_Y_GAP_FACTOR: float = 3.0
+"""Consecutive bboxes with y-gap > factor × avg_line_height are split."""
+
+_MIN_Y_GAP_ABS: float = 15.0
+"""Absolute minimum threshold (pt) so very small text doesn't over-split."""
+
+
+def _split_bboxes_by_proximity(
+    bboxes: list[BBox],
+) -> list[list[int]]:
+    """Split bbox indices into spatially contiguous groups.
+
+    Returns a list of index-lists.  Bboxes are sorted by y0;
+    a new group starts whenever the vertical gap between consecutive
+    bboxes exceeds ``_MAX_Y_GAP_FACTOR × avg_line_height``.
+    """
+    if len(bboxes) <= 1:
+        return [list(range(len(bboxes)))]
+
+    indexed = sorted(range(len(bboxes)), key=lambda i: (bboxes[i].y0, bboxes[i].x0))
+    avg_h = sum(b.y1 - b.y0 for b in bboxes) / len(bboxes)
+    threshold = max(avg_h * _MAX_Y_GAP_FACTOR, _MIN_Y_GAP_ABS)
+
+    groups: list[list[int]] = [[indexed[0]]]
+    for k in range(1, len(indexed)):
+        prev_y1 = bboxes[indexed[k - 1]].y1
+        curr_y0 = bboxes[indexed[k]].y0
+        if curr_y0 - prev_y1 > threshold:
+            groups.append([])
+        groups[-1].append(indexed[k])
+    return groups
+
 
 def _merge_detections(
     regex_matches: list[RegexMatch],
@@ -189,13 +225,25 @@ def _merge_detections(
 
         last = merged[-1]
         if cand["start"] < last["end"]:
+            same_type = cand["pii_type"] == last["pii_type"]
+            prev_start = last["start"]
+
             if cand["priority"] > last["priority"]:
                 merged[-1] = cand
             elif cand["priority"] == last["priority"] and cand["confidence"] > last["confidence"]:
                 merged[-1] = cand
-            if cand["end"] > last["end"]:
+
+            # For same-type overlaps, keep the earliest start (union of spans)
+            if same_type and prev_start < merged[-1]["start"]:
+                merged[-1]["start"] = prev_start
+
+            if cand["end"] > merged[-1]["end"]:
                 merged[-1]["end"] = cand["end"]
-                merged[-1]["text"] = page_data.full_text[merged[-1]["start"]:cand["end"]]
+
+            # Recompute text from the (possibly extended) span
+            merged[-1]["text"] = page_data.full_text[
+                merged[-1]["start"]:merged[-1]["end"]
+            ]
         else:
             merged.append(cand)
 
@@ -297,6 +345,11 @@ def _merge_detections(
             page_data.page_number, struct_dropped,
         )
 
+    # ── Pre-compute block offsets (used by ADDRESS merge + bbox mapping) ──
+    block_offsets = _compute_block_offsets(
+        page_data.text_blocks, page_data.full_text,
+    )
+
     # ── Merge adjacent ADDRESS fragments ──────────────────────────────
     _addr_merged: list[dict] = []
     for item in merged:
@@ -319,6 +372,23 @@ def _merge_detections(
                     combined_text = page_data.full_text[prev["start"]:item["end"]]
                     newline_count = combined_text.count("\n")
                     if newline_count <= 3:
+                        # ── spatial proximity guard ──
+                        # Compute bboxes for both fragments; skip merge
+                        # if they're too far apart vertically.
+                        prev_bbs = _char_offsets_to_line_bboxes(
+                            prev["start"], prev["end"], block_offsets,
+                        ) if block_offsets else []
+                        cur_bbs = _char_offsets_to_line_bboxes(
+                            item["start"], item["end"], block_offsets,
+                        ) if block_offsets else []
+                        if prev_bbs and cur_bbs:
+                            prev_y1_max = max(b.y1 for b in prev_bbs)
+                            cur_y0_min = min(b.y0 for b in cur_bbs)
+                            avg_h = sum(b.y1 - b.y0 for b in prev_bbs + cur_bbs) / len(prev_bbs + cur_bbs)
+                            y_gap = cur_y0_min - prev_y1_max
+                            if y_gap > max(avg_h * _MAX_Y_GAP_FACTOR, _MIN_Y_GAP_ABS):
+                                _addr_merged.append(item)
+                                continue
                         prev["end"] = item["end"]
                         prev["text"] = combined_text
                         prev["pii_type"] = PIIType.ADDRESS
@@ -333,9 +403,6 @@ def _merge_detections(
     merged = _addr_merged
 
     # ── Convert to PIIRegion with per-line bboxes ─────────────────────
-    block_offsets = _compute_block_offsets(
-        page_data.text_blocks, page_data.full_text,
-    )
 
     _max_pt = config.max_font_size_pt
 
@@ -374,63 +441,42 @@ def _merge_detections(
 
         max_lines = _max_lines_for_type(item["pii_type"])
 
-        if len(line_bboxes) == 1:
-            regions.append(PIIRegion(
-                id=uuid.uuid4().hex[:12],
-                page_number=page_data.page_number,
-                bbox=line_bboxes[0],
-                text=item["text"],
-                pii_type=item["pii_type"],
-                confidence=item["confidence"],
-                source=item["source"],
-                char_start=item["start"],
-                char_end=item["end"],
-            ))
-        elif len(line_bboxes) <= max_lines:
-            group_id = uuid.uuid4().hex[:12]
-            match_text = page_data.full_text[item["start"]:item["end"]]
-            line_parts = match_text.split("\n")
-            if len(line_parts) == len(line_bboxes):
-                line_char_ranges: list[tuple[int, int]] = []
-                pos = item["start"]
-                for part in line_parts:
-                    line_char_ranges.append((pos, pos + len(part)))
-                    pos += len(part) + 1
-            else:
-                line_char_ranges = [(item["start"], item["end"])] * len(line_bboxes)
+        # ── Build per-line char ranges ────────────────────────────────
+        match_text = page_data.full_text[item["start"]:item["end"]]
+        line_parts = match_text.split("\n")
+        if len(line_parts) == len(line_bboxes):
+            all_char_ranges: list[tuple[int, int]] = []
+            pos = item["start"]
+            for part in line_parts:
+                all_char_ranges.append((pos, pos + len(part)))
+                pos += len(part) + 1
+        else:
+            all_char_ranges = [(item["start"], item["end"])] * len(line_bboxes)
 
-            for idx, lb in enumerate(line_bboxes):
-                cs, ce = line_char_ranges[idx]
+        # ── Split bboxes into spatially contiguous clusters ───────────
+        spatial_groups = _split_bboxes_by_proximity(line_bboxes)
+
+        for sg_indices in spatial_groups:
+            sg_bboxes = [line_bboxes[i] for i in sg_indices]
+            sg_ranges = [all_char_ranges[i] for i in sg_indices]
+
+            if len(sg_bboxes) == 1:
+                cs, ce = sg_ranges[0]
                 regions.append(PIIRegion(
                     id=uuid.uuid4().hex[:12],
                     page_number=page_data.page_number,
-                    bbox=lb,
+                    bbox=sg_bboxes[0],
                     text=item["text"],
                     pii_type=item["pii_type"],
                     confidence=item["confidence"],
                     source=item["source"],
                     char_start=cs,
                     char_end=ce,
-                    linked_group=group_id,
                 ))
-        else:
-            match_text = page_data.full_text[item["start"]:item["end"]]
-            line_parts = match_text.split("\n")
-            if len(line_parts) == len(line_bboxes):
-                all_char_ranges: list[tuple[int, int]] = []
-                pos = item["start"]
-                for part in line_parts:
-                    all_char_ranges.append((pos, pos + len(part)))
-                    pos += len(part) + 1
-            else:
-                all_char_ranges = [(item["start"], item["end"])] * len(line_bboxes)
-
-            for i in range(0, len(line_bboxes), max_lines):
-                chunk_bboxes = line_bboxes[i:i + max_lines]
-                chunk_ranges = all_char_ranges[i:i + max_lines]
-                group_id = uuid.uuid4().hex[:12] if len(chunk_bboxes) > 1 else None
-                for idx, lb in enumerate(chunk_bboxes):
-                    cs, ce = chunk_ranges[idx]
+            elif len(sg_bboxes) <= max_lines:
+                group_id = uuid.uuid4().hex[:12]
+                for idx, lb in enumerate(sg_bboxes):
+                    cs, ce = sg_ranges[idx]
                     regions.append(PIIRegion(
                         id=uuid.uuid4().hex[:12],
                         page_number=page_data.page_number,
@@ -443,6 +489,25 @@ def _merge_detections(
                         char_end=ce,
                         linked_group=group_id,
                     ))
+            else:
+                for i in range(0, len(sg_bboxes), max_lines):
+                    chunk_bboxes = sg_bboxes[i:i + max_lines]
+                    chunk_ranges = sg_ranges[i:i + max_lines]
+                    group_id = uuid.uuid4().hex[:12] if len(chunk_bboxes) > 1 else None
+                    for idx, lb in enumerate(chunk_bboxes):
+                        cs, ce = chunk_ranges[idx]
+                        regions.append(PIIRegion(
+                            id=uuid.uuid4().hex[:12],
+                            page_number=page_data.page_number,
+                            bbox=lb,
+                            text=item["text"],
+                            pii_type=item["pii_type"],
+                            confidence=item["confidence"],
+                            source=item["source"],
+                            char_start=cs,
+                            char_end=ce,
+                            linked_group=group_id,
+                        ))
 
     if _large_font_skipped:
         logger.info(

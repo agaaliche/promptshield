@@ -491,6 +491,8 @@ export default function DocumentViewer() {
     llmEnabled: boolean;
     regexTypes: string[];
     nerTypes: string[];
+    blacklistTerms: string[];
+    blacklistAction: string;
   }) => {
     if (!activeDocId) return;
     setIsProcessing(true);
@@ -506,6 +508,8 @@ export default function DocumentViewer() {
         llm_detection_enabled: opts.llmEnabled,
         regex_types: opts.regexEnabled ? opts.regexTypes : null,
         ner_types: opts.nerEnabled ? opts.nerTypes : null,
+        blacklist_terms: opts.blacklistTerms.length > 0 ? opts.blacklistTerms : undefined,
+        blacklist_action: opts.blacklistTerms.length > 0 ? opts.blacklistAction : undefined,
       });
       setRegions(resolveAllOverlaps(result.regions));
       setStatusMessage(

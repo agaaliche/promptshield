@@ -46,6 +46,8 @@ def cleanup_stale_progress() -> None:
 
 # Detection lock — prevents concurrent detection runs from racing on config
 _detection_lock = threading.Lock()
+_detection_lock_acquired_at: float | None = None
+_DETECTION_LOCK_TIMEOUT_S: float = 600.0  # 10 minutes max
 
 
 # ---------------------------------------------------------------------------
@@ -126,15 +128,43 @@ def get_active_llm_engine() -> object | None:
 
 
 def acquire_detection_lock(doc_id: str) -> bool:
-    """Try to acquire the detection lock (non-blocking). Returns True if acquired."""
+    """Try to acquire the detection lock (non-blocking). Returns True if acquired.
+
+    If a previous lock has been held longer than ``_DETECTION_LOCK_TIMEOUT_S``,
+    it is considered stale and forcibly released before re-acquiring.
+    """
+    global _detection_lock_acquired_at
+
     acquired = _detection_lock.acquire(blocking=False)
-    if not acquired:
-        logger.warning(f"Detection already running — rejecting request for {doc_id}")
-    return acquired
+    if acquired:
+        _detection_lock_acquired_at = _time.time()
+        return True
+
+    # Check for stale lock
+    if _detection_lock_acquired_at is not None:
+        held_for = _time.time() - _detection_lock_acquired_at
+        if held_for > _DETECTION_LOCK_TIMEOUT_S:
+            logger.warning(
+                "Detection lock held for %.0fs (>%.0fs) — forcing release (stale lock for doc %s)",
+                held_for, _DETECTION_LOCK_TIMEOUT_S, doc_id,
+            )
+            try:
+                _detection_lock.release()
+            except RuntimeError:
+                pass
+            acquired = _detection_lock.acquire(blocking=False)
+            if acquired:
+                _detection_lock_acquired_at = _time.time()
+                return True
+
+    logger.warning(f"Detection already running — rejecting request for {doc_id}")
+    return False
 
 
 def release_detection_lock() -> None:
     """Release the detection lock."""
+    global _detection_lock_acquired_at
+    _detection_lock_acquired_at = None
     try:
         _detection_lock.release()
     except RuntimeError:

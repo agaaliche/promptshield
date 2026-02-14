@@ -269,6 +269,26 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     # UK: 07xxx xxxxxx, 020 xxxx xxxx
     (r"\b0[1-9]\d{2,3}\s?\d{3}\s?\d{3,4}\b", PIIType.PHONE, 0.50, _NOFLAGS, _EN),
 
+    # German: 030 12345678, 089 1234-5678, 0171 1234567, 0171-1234567
+    (r"(?:(?:\+|00)49\s?|0)\d{2,4}[\s/\-]?\d{3,4}[\s\-]?\d{3,5}",
+     PIIType.PHONE, 0.85, _NOFLAGS, _DE),
+
+    # Spanish: 91 123 45 67 (landline), 612 345 678 (mobile), 900 123 456
+    (r"(?:(?:\+|00)34\s?)?\b(?:9[0-8]\d|[6-7]\d{2})\s?\d{2,3}\s?\d{2}\s?\d{2}\b",
+     PIIType.PHONE, 0.80, _NOFLAGS, _ES),
+
+    # Italian: 02 1234 5678, 06 1234 5678, 333 123 4567, 348-1234567
+    (r"(?:(?:\+|00)39\s?)?(?:0[1-9]\d{0,2}|3[0-9]{2})[\s\-]?\d{3,4}[\s\-]?\d{3,4}",
+     PIIType.PHONE, 0.80, _NOFLAGS, _IT),
+
+    # Dutch: 06-12345678 (mobile), 020-1234567 (landline), 010 123 4567
+    (r"(?:(?:\+|00)31\s?|0)\d{1,3}[\s\-]?\d{3,4}[\s\-]?\d{3,4}",
+     PIIType.PHONE, 0.80, _NOFLAGS, _NL),
+
+    # Portuguese: 21 123 4567, 91 234 5678, 96 123 4567
+    (r"(?:(?:\+|00)351\s?)?\b(?:2\d|9[1-6])\d?\s?\d{3}\s?\d{3,4}\b",
+     PIIType.PHONE, 0.80, _NOFLAGS, _PT),
+
     # Toll-free US
     (r"\b1[-.] 8(?:00|44|55|66|77|88)\b[-.\s]?\d{3}[-.\s]\d{4}\b",
      PIIType.PHONE, 0.90, _NOFLAGS, _EN),
@@ -353,6 +373,14 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         PIIType.DATE, 0.60, _IC, _NL,
     ),
 
+    # Portuguese month: "15 de janeiro de 2024", "15 janeiro 2024"
+    (
+        r"\b\d{1,2}\s+(?:de\s+)?(?:janeiro|fevereiro|mar[çc]o|abril|maio|junho|"
+        r"julho|agosto|setembro|outubro|novembro|dezembro)"
+        r"(?:\s+(?:de\s+)?\d{4})?\b",
+        PIIType.DATE, 0.55, _IC, _PT,
+    ),
+
     # ──────────────────────────────────────────────────────────────────
     # IP ADDRESS
     # ──────────────────────────────────────────────────────────────────
@@ -432,6 +460,34 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         PIIType.ADDRESS, 0.82, _IC, _IT,
     ),
 
+    # Spanish: "Calle Mayor 5", "Avenida de la Constitución 32", "Paseo del Prado 10"
+    (
+        r"\b(?:Calle|Avenida|Avda|Paseo|Plaza|Plza|Camino|Carrera|"
+        r"Ronda|Travesía|Traves[ií]a|Glorieta|Alameda|Bulevar|Callejón|Callejon)"
+        r"(?:\s+(?:de\s+(?:la\s+|las?\s+|los?\s+)?|del\s+))?\s*"
+        r"[A-ZÀ-Ü][a-zà-ü\-']+(?:\s+[A-ZÀ-Ü][a-zà-ü\-']+){0,2}"
+        r"(?:[,]?\s*(?:n[°º]\.?\s*)?\d{1,5}[/a-zA-Z]?)?\b",
+        PIIType.ADDRESS, 0.82, _IC, _ES,
+    ),
+
+    # Dutch: "Keizersgracht 123", "Grote Markt 15", "Nieuwe Binnenweg 10"
+    (
+        r"\b[A-ZÀ-Ü][a-zà-ü]+"
+        r"(?:straat|laan|weg|gracht|plein|dijk|kade|singel|steeg|pad)"
+        r"\s+\d{1,5}[a-z]?\b",
+        PIIType.ADDRESS, 0.80, _IC, _NL,
+    ),
+
+    # Portuguese: "Rua Augusta 123", "Avenida da Liberdade 45", "Praça do Comércio 10"
+    (
+        r"\b(?:Rua|Avenida|Av|Praça|Praca|Travessa|Largo|Alameda|Estrada|"
+        r"Calçada|Calcada|Beco)"
+        r"(?:\s+(?:da\s+|do\s+|dos\s+|das\s+|de\s+))?\s*"
+        r"[A-ZÀ-Ü][a-zà-ü\-']+(?:\s+[A-ZÀ-Ü][a-zà-ü\-']+){0,2}"
+        r"(?:[,]?\s*(?:n[°º]\.?\s*)?\d{1,5}[/a-zA-Z]?)?\b",
+        PIIType.ADDRESS, 0.82, _IC, _PT,
+    ),
+
     # PO Box / BP / Postfach / Casella Postale
     (r"\b(?:P\.?O\.?\s*Box|BP|Bo[iî]te\s*postale|Postfach|Apartado|Casella\s+[Pp]ostale|C\.?P\.?)\s+\d+\b",
      PIIType.ADDRESS, 0.75, _IC, _ALL),
@@ -475,6 +531,9 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     # Spanish postal code + city
     (r"\bE-?\s*\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
      PIIType.ADDRESS, 0.75, _NOFLAGS, _ES),
+    # Portuguese postal code: 1000-001 Lisboa
+    (r"\b\d{4}-\d{3}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+     PIIType.ADDRESS, 0.80, _NOFLAGS, _PT),
     # Canadian: "K1A 0B1"
     (r"\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b", PIIType.ADDRESS, 0.80, _IC, _ENFR_CA),
 
@@ -561,6 +620,22 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"\.?[ \t]+[A-ZÀ-Ü][a-zà-ü]{1,20}"
         r"(?:[ \t]+[A-ZÀ-Ü][a-zà-ü]{1,20}){0,3}\b",
         PIIType.PERSON, 0.85, _NOFLAGS, _IT,
+    ),
+    # Dutch: "Dhr. de Vries", "Mw. Jansen", "Mevr. van den Berg"
+    (
+        r"\b(?:Dhr|Mw|Mevr|Ir|Ing|Drs|Mr|Ds)"
+        r"\.?[ \t]+(?:(?:de|van|den|der|het|ten|ter|te)\s+)*"
+        r"[A-ZÀ-Ü][a-zà-ü]{1,20}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zà-ü]{1,20}){0,3}\b",
+        PIIType.PERSON, 0.85, _NOFLAGS, _NL,
+    ),
+    # Portuguese: "Sr. Silva", "Sra. Santos", "Dr. Ferreira"
+    (
+        r"\b(?:Sr|Sra|Srta|Dr|Dra|Prof|Eng)"
+        r"\.?[ \t]+(?:(?:de|da|do|dos|das)\s+)*"
+        r"[A-ZÀ-Ü][a-zà-ü]{1,20}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zà-ü]{1,20}){0,3}\b",
+        PIIType.PERSON, 0.85, _NOFLAGS, _PT,
     ),
 
     # ──────────────────────────────────────────────────────────────────
@@ -704,6 +779,60 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"))",
         PIIType.ORG, 0.88, re.IGNORECASE, _FR,
     ),
+    # English: company name before financial headers
+    (
+        r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,25}"
+        r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,25}){1,3}"
+        r"(?=\s*\n\s*(?:"
+        r"INCOME\s+STATEMENT|BALANCE\s+SHEET|STATEMENT\s+OF\s+(?:FINANCIAL\s+POSITION|CASH\s+FLOWS|OPERATIONS)"
+        r"|PROFIT\s+AND\s+LOSS|ANNUAL\s+REPORT|FINANCIAL\s+STATEMENTS?"
+        r"))",
+        PIIType.ORG, 0.88, re.IGNORECASE, _EN,
+    ),
+    # German: company name before financial headers
+    (
+        r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,25}"
+        r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,25}){1,3}"
+        r"(?=\s*\n\s*(?:"
+        r"BILANZ|GEWINN-?\s*UND\s*VERLUSTRECHNUNG|JAHRESABSCHLUSS"
+        r"|LAGEBERICHT|KAPITALFLUSSRECHNUNG|GESCH[ÄA]FTSBERICHT"
+        r"|ERFOLGSRECHNUNG|ANHANG\s+ZUM\s+JAHRESABSCHLUSS"
+        r"))",
+        PIIType.ORG, 0.88, re.IGNORECASE, _DE,
+    ),
+    # Spanish: company name before financial headers
+    (
+        r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,25}"
+        r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,25}){1,3}"
+        r"(?=\s*\n\s*(?:"
+        r"BALANCE\s+(?:GENERAL|DE\s+SITUACI[ÓO]N)|ESTADO\s+DE\s+RESULTADOS"
+        r"|CUENTA\s+DE\s+(?:P[ÉE]RDIDAS\s+Y\s+GANANCIAS|RESULTADOS)"
+        r"|INFORME\s+(?:ANUAL|FINANCIERO)|MEMORIA\s+ANUAL"
+        r"))",
+        PIIType.ORG, 0.88, re.IGNORECASE, _ES,
+    ),
+    # Italian: company name before financial headers
+    (
+        r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,25}"
+        r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,25}){1,3}"
+        r"(?=\s*\n\s*(?:"
+        r"BILANCIO|CONTO\s+ECONOMICO|STATO\s+PATRIMONIALE"
+        r"|RENDICONTO\s+FINANZIARIO|RELAZIONE\s+(?:SULLA\s+GESTIONE|ANNUALE)"
+        r"|NOTA\s+INTEGRATIVA"
+        r"))",
+        PIIType.ORG, 0.88, re.IGNORECASE, _IT,
+    ),
+    # Dutch: company name before financial headers
+    (
+        r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,25}"
+        r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,25}){1,3}"
+        r"(?=\s*\n\s*(?:"
+        r"BALANS|WINST-?\s*EN\s*VERLIESREKENING|JAARREKENING"
+        r"|RESULTATENREKENING|KASSTROOMOVERZICHT"
+        r"|JAARVERSLAG|TOELICHTING"
+        r"))",
+        PIIType.ORG, 0.88, re.IGNORECASE, _NL,
+    ),
 
     # ──────────────────────────────────────────────────────────────────
     # European VAT / Tax ID numbers
@@ -768,6 +897,49 @@ LABEL_NAME_PATTERNS: list[tuple[re.Pattern, PIIType, float, frozenset[str] | Non
         r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}){0,3})",
         re.IGNORECASE,
     ), PIIType.PERSON, 0.85, _IT),
+    # Spanish: "Nombre: García", "Paciente: López Hernández"
+    (re.compile(
+        r"(?:Nombre|Apellido|Nombre\s+completo)"
+        r"[ \t]*[:][ \t]*([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}){0,3})",
+    ), PIIType.PERSON, 0.85, _ES),
+    (re.compile(
+        r"(?:Paciente|Cliente|Empleado|Asegurado|Solicitante|Demandante|"
+        r"Demandado|Testigo|Comprador|Vendedor|Arrendatario|Propietario)"
+        r"[ \t]*[:][ \t]*([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}){0,3})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.85, _ES),
+    # Dutch: "Naam: de Vries", "Patiënt: Jansen"
+    (re.compile(
+        r"(?:Naam|Voornaam|Achternaam|Volledige\s+naam)"
+        r"[ \t]*[:][ \t]*(?:(?:de|van|den|der|het|ten|ter|te)\s+)*"
+        r"([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}){0,3})",
+    ), PIIType.PERSON, 0.85, _NL),
+    (re.compile(
+        r"(?:Pati[ëe]nt|Cli[ëe]nt|Werknemer|Verzekerde|Aanvrager|"
+        r"Gedaagde|Eiser|Getuige|Koper|Verkoper|Huurder|Eigenaar)"
+        r"[ \t]*[:][ \t]*(?:(?:de|van|den|der|het|ten|ter|te)\s+)*"
+        r"([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}){0,3})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.85, _NL),
+    # Portuguese: "Nome: Ferreira", "Paciente: Santos"
+    (re.compile(
+        r"(?:Nome|Apelido|Nome\s+completo)"
+        r"[ \t]*[:][ \t]*(?:(?:de|da|do|dos|das)\s+)*"
+        r"([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}){0,3})",
+    ), PIIType.PERSON, 0.85, _PT),
+    (re.compile(
+        r"(?:Paciente|Cliente|Empregado|Segurado|Requerente|"
+        r"R[ée]u|Autor|Testemunha|Comprador|Vendedor|Inquilino|Propriet[áa]rio)"
+        r"[ \t]*[:][ \t]*(?:(?:de|da|do|dos|das)\s+)*"
+        r"([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}"
+        r"(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,20}){0,3})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.85, _PT),
 
     # ── Passport after label ──
     (re.compile(
@@ -822,6 +994,30 @@ LABEL_NAME_PATTERNS: list[tuple[re.Pattern, PIIType, float, frozenset[str] | Non
         r"[ \t]*[:]?[ \t]*([A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z])",
         re.IGNORECASE,
     ), PIIType.SSN, 0.92, _IT),
+    # German tax ID after label — Steuer-ID: 12345678901 (11 digits)
+    (re.compile(
+        r"(?:Steuer-?ID|Steueridentifikationsnummer|Steuernummer|St-?Nr|IdNr)"
+        r"[ \t]*[:]?[ \t]*(\d{10,11})",
+        re.IGNORECASE,
+    ), PIIType.SSN, 0.90, _DE),
+    # German social security number — Sozialversicherungsnummer: 12 digits
+    (re.compile(
+        r"(?:Sozialversicherungsnummer|SV-?Nummer|SVNR|Versicherungsnummer)"
+        r"[ \t]*[:]?[ \t]*(\d{2}\s?\d{6}\s?[A-Z]\s?\d{3})",
+        re.IGNORECASE,
+    ), PIIType.SSN, 0.90, _DE),
+    # Spanish DNI/NIE after label
+    (re.compile(
+        r"(?:DNI|NIE|NIF|Documento\s*(?:Nacional\s*de\s*)?Identidad)"
+        r"[ \t]*(?:No\.?|N[°º])?[ \t]*[:]?[ \t]*(\d{8}[A-Z]|[XYZ]\d{7}[A-Z])",
+        re.IGNORECASE,
+    ), PIIType.SSN, 0.92, _ES),
+    # Spanish Social Security number: 12 digits
+    (re.compile(
+        r"(?:N[°º]?\s*(?:de\s*)?(?:Seguridad\s*Social|SS|Afiliaci[oó]n))"
+        r"[ \t]*[:]?[ \t]*(\d{2}[\s/\-]?\d{8,10}[\s/\-]?\d{2})",
+        re.IGNORECASE,
+    ), PIIType.SSN, 0.90, _ES),
 
     # ── IBAN after label ──
     (re.compile(

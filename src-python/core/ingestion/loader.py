@@ -458,25 +458,19 @@ def _render_page_bitmap(pdf_page: pdfium.PdfPage, page_index: int, doc_id: str) 
 def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
     """Process a PDF file into page data.
 
-    Uses parallel threads for multi-page PDFs.  Each worker opens its
-    own ``PdfDocument`` handle to avoid pypdfium2 thread-safety issues.
+    Pages are processed sequentially with a single ``PdfDocument`` handle.
+    PDFium's C library is **not** thread-safe (concurrent handles cause
+    heap corruption / native breakpoint crashes on Windows), so parallel
+    page processing is intentionally avoided here.
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    # Quick probe for page count
-    probe = pdfium.PdfDocument(str(pdf_path))
+    doc = pdfium.PdfDocument(str(pdf_path))
     try:
-        n_pages = len(probe)
-    finally:
-        probe.close()
+        n_pages = len(doc)
+        if n_pages == 0:
+            return []
 
-    if n_pages == 0:
-        return []
-
-    def _process_one(page_index: int) -> PageData:
-        """Process a single page in its own thread w/ its own PDF handle."""
-        doc = pdfium.PdfDocument(str(pdf_path))
-        try:
+        pages: list[PageData] = []
+        for page_index in range(n_pages):
             pdf_page = doc[page_index]
             width = pdf_page.get_width()
             height = pdf_page.get_height()
@@ -492,32 +486,18 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
                     text_blocks = ocr_blocks
                     full_text = _build_full_text(text_blocks)
 
-            return PageData(
+            pages.append(PageData(
                 page_number=page_index + 1,
                 width=width,
                 height=height,
                 bitmap_path=str(bitmap_path),
                 text_blocks=text_blocks,
                 full_text=full_text,
-            )
-        finally:
-            doc.close()
+            ))
 
-    # Single-page fast path (no thread overhead)
-    if n_pages == 1:
-        return [_process_one(0)]
-
-    import os
-    workers = min(4, os.cpu_count() or 2, n_pages)
-    results: dict[int, PageData] = {}
-
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_process_one, i): i for i in range(n_pages)}
-        for future in as_completed(futures):
-            idx = futures[future]
-            results[idx] = future.result()
-
-    return [results[i] for i in range(n_pages)]
+        return pages
+    finally:
+        doc.close()
 
 
 def _process_image(image_path: Path, doc_id: str) -> list[PageData]:

@@ -321,7 +321,7 @@ export default function RegionSidebar({
             })}
           </div>
           {/* Bulk actions toolbar */}
-          {displayedRegions.length > 0 && (() => {
+          {tabRegions.length > 0 && (() => {
             // If items are selected, scope actions to selected visible items; otherwise all visible
             const hasSelection = selectedRegionIds.length > 0;
             const targetRegions = hasSelection
@@ -403,43 +403,6 @@ export default function RegionSidebar({
                 <Trash2 size={13} />
                 Remove
               </button>
-              <button
-                onClick={() => {
-                  if (!activeDocId) return;
-                  const ids = activeRegions.map(r => r.id);
-                  // Check if user wants to skip confirmation
-                  const skipConfirm = localStorage.getItem('clearRegionsNeverAsk') === 'true';
-                  if (skipConfirm) {
-                    pushUndo();
-                    ids.forEach(id => removeRegion(id));
-                    batchDeleteRegions(activeDocId, ids).catch(logError("batch-clear"));
-                  } else {
-                    clearConfirmRef.current.ids = ids;
-                    setClearNeverAsk(false);
-                    setClearConfirmOpen(true);
-                  }
-                }}
-                style={{
-                  flex: 1,
-                  padding: "5px 0",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 4,
-                  borderRadius: 4,
-                  cursor: "pointer",
-                  border: "1px solid transparent",
-                  background: "transparent",
-                  color: "var(--text-secondary)",
-                  transition: "all 0.15s ease",
-                }}
-                title="Clear regions"
-              >
-                <X size={13} />
-                Clear
-              </button>
               {/* Filter by type — ellipsis button */}
               <div ref={filterRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                 <button
@@ -505,6 +468,53 @@ export default function RegionSidebar({
                         </label>
                       );
                     })}
+                    {/* Divider + Clear checked types */}
+                    <div style={{ height: 1, background: 'var(--border-color)', margin: '6px 0' }} />
+                    <button
+                      onClick={() => {
+                        if (!activeDocId) return;
+                        // Only clear regions whose types are currently checked
+                        const checkedTypes = enabledTypes === null
+                          ? new Set(availableTypes)
+                          : enabledTypes;
+                        const targetRegions = tabRegions.filter(
+                          r => checkedTypes.has(r.pii_type) && r.action !== "CANCEL"
+                        );
+                        if (targetRegions.length === 0) return;
+                        const ids = targetRegions.map(r => r.id);
+                        const skipConfirm = localStorage.getItem('clearRegionsNeverAsk') === 'true';
+                        if (skipConfirm) {
+                          pushUndo();
+                          ids.forEach(id => removeRegion(id));
+                          batchDeleteRegions(activeDocId, ids).catch(logError("batch-clear"));
+                        } else {
+                          clearConfirmRef.current.ids = ids;
+                          setClearNeverAsk(false);
+                          setClearConfirmOpen(true);
+                        }
+                        setTypeFilterOpen(false);
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '5px 12px',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: '#f44336',
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        width: '100%',
+                        textAlign: 'left',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(244,67,54,0.08)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                      title="Clear all regions matching checked types"
+                    >
+                      <X size={13} />
+                      Clear checked types
+                    </button>}
                   </div>
                 )}
               </div>

@@ -487,6 +487,7 @@ export default function RegionSidebar({
                           pushUndo();
                           ids.forEach(id => removeRegion(id));
                           batchDeleteRegions(activeDocId, ids).catch(logError("batch-clear"));
+                          setEnabledTypes(null);
                         } else {
                           clearConfirmRef.current.ids = ids;
                           setClearNeverAsk(false);
@@ -514,7 +515,7 @@ export default function RegionSidebar({
                     >
                       <X size={13} />
                       Clear checked types
-                    </button>}
+                    </button>
                   </div>
                 )}
               </div>
@@ -816,6 +817,7 @@ export default function RegionSidebar({
                   const ids = clearConfirmRef.current.ids;
                   ids.forEach(id => removeRegion(id));
                   batchDeleteRegions(activeDocId, ids).catch(logError("batch-clear"));
+                  setEnabledTypes(null);
                 }}
                 style={{
                   padding: '6px 14px',

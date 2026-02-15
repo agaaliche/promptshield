@@ -233,6 +233,19 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
     }
   }, [activeDocId, regions, removeRegion, pushUndo]);
 
+  const handleResetPage = useCallback(async (page: number) => {
+    if (!activeDocId) return;
+    const ids = regions.filter((r) => r.page_number === page).map((r) => r.id);
+    if (ids.length === 0) return;
+    try {
+      pushUndo();
+      await batchDeleteRegions(activeDocId, ids);
+      ids.forEach((id) => removeRegion(id));
+    } catch (e: any) {
+      console.error("Reset page failed:", e);
+    }
+  }, [activeDocId, regions, removeRegion, pushUndo]);
+
   const handleAutodetect = useCallback(
     async (autodetectOpts: {
       fuzziness: number;
@@ -312,6 +325,7 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
     handlePasteRegions,
     handleBatchAction,
     handleResetAll,
+    handleResetPage,
     handleAutodetect,
     handleResetDetection,
   };

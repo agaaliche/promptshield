@@ -117,6 +117,11 @@ textarea {
 }
 input:focus, textarea:focus { border-color: var(--accent-primary); }
 
+/* Slider row inside autodetect panel */
+.slider-row {
+  padding: 16px 12px 12px 12px !important;
+}
+
 /* Spinner animation */
 @keyframes spin {
   from { transform: rotate(0deg); }

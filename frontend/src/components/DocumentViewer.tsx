@@ -74,6 +74,7 @@ export default function DocumentViewer() {
     setRightSidebarWidth,
     isSidebarDragging,
     llmStatus,
+    leftSidebarWidth,
   } = useAppStore();
 
   // ── UI chrome (toolbars, sidebar, cursor tool) ──
@@ -119,7 +120,7 @@ export default function DocumentViewer() {
     handleRegionAction, handleRefreshRegion, handleClearRegion,
     handleHighlightAll, handleUpdateLabel, handleUpdateText,
     handlePasteRegions,
-    handleAutodetect, handleResetDetection,
+    handleAutodetect, handleResetAll, handleResetPage,
   } = useRegionActions({
     activeDocId: activeDocId ?? null,
     activePage,
@@ -265,7 +266,6 @@ export default function DocumentViewer() {
 
       {/* Toolbar */}
       <div ref={topToolbarRef} style={styles.toolbar}>
-        <div style={{ position: "relative" }}>
         <button
           className="btn-primary"
           onClick={() => setShowAutodetect(!showAutodetect)}
@@ -288,18 +288,24 @@ export default function DocumentViewer() {
               isProcessing={isProcessing}
               activePage={activePage}
               llmStatus={llmStatus}
+              rightOffset={sidebarCollapsed ? 60 : rightSidebarWidth}
+              leftOffset={leftSidebarWidth}
+              pageNavWidth={pageCount > 1 ? (pageNavCollapsed ? 28 : 148) : 0}
               onDetect={(opts) => {
                 setShowAutodetect(false);
                 handleAutodetect(opts);
               }}
               onReset={() => {
                 setShowAutodetect(false);
-                handleResetDetection();
+                handleResetAll();
+              }}
+              onResetPage={(page) => {
+                setShowAutodetect(false);
+                handleResetPage(page);
               }}
               onClose={() => setShowAutodetect(false)}
             />
         )}
-        </div>
         <button
           className="btn-success"
           onClick={() => setShowExportDialog(true)}
@@ -463,7 +469,7 @@ export default function DocumentViewer() {
       {/* Canvas area */}
       <div ref={containerRef} style={{
         ...styles.canvasArea,
-        paddingRight: (sidebarCollapsed ? 60 : rightSidebarWidth) + (pageCount > 1 ? (pageNavCollapsed ? 28 : 120) : 0),
+        paddingRight: (sidebarCollapsed ? 60 : rightSidebarWidth) + (pageCount > 1 ? (pageNavCollapsed ? 28 : 148) : 0),
         transition: isSidebarDragging ? 'none' : 'padding-right 0.2s ease',
       }}>
         <div

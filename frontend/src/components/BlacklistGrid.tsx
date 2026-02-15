@@ -1,6 +1,7 @@
 /** Excel-like grid for blacklist term entry with copy/paste support. */
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { Key, Trash2 } from "lucide-react";
 
 const DEFAULT_COLS = 3;
 const DEFAULT_VISIBLE_ROWS = 10;
@@ -25,7 +26,7 @@ export interface BlacklistGridProps {
 }
 
 /** Create an empty grid with given dimensions. */
-export function createEmptyGrid(rows = DEFAULT_VISIBLE_ROWS, cols = DEFAULT_COLS): string[][] {
+export function createEmptyGrid(rows = MAX_ROWS, cols = MAX_COLS): string[][] {
   return Array.from({ length: rows }, () => Array(cols).fill(""));
 }
 
@@ -137,7 +138,7 @@ export default function BlacklistGrid({
   const colWidth = Math.max(CELL_MIN_WIDTH, Math.floor(280 / numCols));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 0 }}>
       {/* Grid */}
       <div
         ref={gridRef}
@@ -145,7 +146,8 @@ export default function BlacklistGrid({
           border: "1px solid var(--border-color)",
           borderRadius: 4,
           overflow: "auto",
-          maxHeight: DEFAULT_VISIBLE_ROWS * CELL_HEIGHT + 2,
+          flex: 1,
+          minHeight: 0,
           background: "rgba(0,0,0,0.15)",
         }}
         onPaste={handlePaste}
@@ -184,7 +186,7 @@ export default function BlacklistGrid({
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 10, color: "var(--text-muted)",
               background: "rgba(0,0,0,0.1)",
-              borderBottom: "1px solid rgba(255,255,255,0.04)",
+              borderBottom: "1px solid #d0d0d0",
               borderRight: "1px solid var(--border-color)",
               flexShrink: 0,
             }}>
@@ -195,10 +197,10 @@ export default function BlacklistGrid({
               const isEditing = editingCell?.row === ri && editingCell?.col === ci;
               const key = `${ri},${ci}`;
               const status = matchStatus?.get(key);
-              let cellBg = "transparent";
-              if (status === "matched") cellBg = "rgba(76,175,80,0.15)";
-              else if (status === "no-match") cellBg = "rgba(255,152,0,0.15)";
-              else if (status === "exists") cellBg = "rgba(33,150,243,0.12)";
+              let cellBg = "#ffffff";
+              if (status === "matched") cellBg = "#e8f5e9";
+              else if (status === "no-match") cellBg = "#fff3e0";
+              else if (status === "exists") cellBg = "#e3f2fd";
 
               return (
                 <div
@@ -210,8 +212,8 @@ export default function BlacklistGrid({
                   onDoubleClick={() => setEditingCell({ row: ri, col: ci })}
                   style={{
                     width: colWidth, minWidth: colWidth, height: CELL_HEIGHT,
-                    borderBottom: "1px solid rgba(255,255,255,0.04)",
-                    borderRight: ci < numCols - 1 ? "1px solid rgba(255,255,255,0.04)" : "none",
+                    borderBottom: "1px solid #d0d0d0",
+                    borderRight: ci < numCols - 1 ? "1px solid #d0d0d0" : "none",
                     outline: isSelected ? "2px solid var(--accent-primary)" : "none",
                     outlineOffset: -2,
                     background: cellBg,
@@ -229,8 +231,8 @@ export default function BlacklistGrid({
                       style={{
                         width: "100%", height: "100%",
                         border: "none", outline: "none",
-                        background: "rgba(0,0,0,0.3)",
-                        color: "var(--text-primary)",
+                        background: "#fff",
+                        color: "#111",
                         fontSize: 12, padding: "0 6px",
                         fontFamily: "inherit",
                       }}
@@ -241,7 +243,7 @@ export default function BlacklistGrid({
                       display: "flex", alignItems: "center",
                       padding: "0 6px",
                       fontSize: 12,
-                      color: cellVal ? "var(--text-primary)" : "var(--text-muted)",
+                      color: cellVal ? "#111" : "#999",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -260,23 +262,58 @@ export default function BlacklistGrid({
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
         gap: 8, flexWrap: "wrap",
+        padding: "6px 0", marginTop: 0,
       }}>
         {/* Action toggles */}
-        <div style={{ display: "flex", gap: 4 }}>
+        <div style={{ display: "flex", gap: 6 }}>
           <button
-            className={`btn-sm ${action === "tokenize" ? "btn-primary" : "btn-ghost"}`}
             onClick={() => onActionChange(action === "tokenize" ? "none" : "tokenize")}
-            style={{ fontSize: 11, padding: "4px 10px" }}
+            style={{
+              flex: 1,
+              padding: "5px 12px",
+              fontSize: 11,
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 4,
+              borderRadius: 4,
+              cursor: "pointer",
+              border: action === "tokenize" ? "1px solid #9c27b0" : "1px solid transparent",
+              background: action === "tokenize" ? "rgba(156,39,176,0.15)" : "transparent",
+              color: "#9c27b0",
+              boxShadow: action === "tokenize" ? "0 0 8px rgba(156,39,176,0.3)" : "none",
+              textShadow: "none",
+              transition: "all 0.15s ease",
+            }}
             title="Flag matched regions for tokenization"
           >
+            <Key size={13} />
             Tokenize
           </button>
           <button
-            className={`btn-sm ${action === "remove" ? "btn-danger" : "btn-ghost"}`}
             onClick={() => onActionChange(action === "remove" ? "none" : "remove")}
-            style={{ fontSize: 11, padding: "4px 10px" }}
+            style={{
+              flex: 1,
+              padding: "5px 12px",
+              fontSize: 11,
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 4,
+              borderRadius: 4,
+              cursor: "pointer",
+              border: action === "remove" ? "1px solid #f44336" : "1px solid transparent",
+              background: action === "remove" ? "rgba(244,67,54,0.15)" : "transparent",
+              color: "#f44336",
+              boxShadow: action === "remove" ? "0 0 8px rgba(244,67,54,0.3)" : "none",
+              textShadow: "none",
+              transition: "all 0.15s ease",
+            }}
             title="Flag matched regions for removal"
           >
+            <Trash2 size={13} />
             Remove
           </button>
         </div>

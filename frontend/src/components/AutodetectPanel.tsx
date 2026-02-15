@@ -1,7 +1,7 @@
 /** Autodetect PII settings dropdown panel with Blacklist grid. */
 
 import { useState, useCallback, useRef } from "react";
-import { ScanSearch, SlidersHorizontal, X } from "lucide-react";
+import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X } from "lucide-react";
 import { Z_TOP_DIALOG } from "../zIndex";
 import BlacklistGrid, { type BlacklistAction, createEmptyGrid } from "./BlacklistGrid";
 
@@ -23,7 +23,14 @@ interface AutodetectPanelProps {
     blacklistAction: BlacklistAction;
   }) => void;
   onReset: () => void;
+  onResetPage: (page: number) => void;
   onClose: () => void;
+  /** Sidebar width (or collapsed width) so panel can't overlap it */
+  rightOffset?: number;
+  /** Left sidebar width so maximized panel starts after it */
+  leftOffset?: number;
+  /** Page navigator width so maximized panel stops before it */
+  pageNavWidth?: number;
 }
 
 const MIN_PANEL_W = 340;
@@ -37,7 +44,11 @@ export default function AutodetectPanel({
   llmStatus,
   onDetect,
   onReset,
+  onResetPage,
   onClose,
+  rightOffset = 0,
+  leftOffset = 0,
+  pageNavWidth = 0,
 }: AutodetectPanelProps) {
   const [fuzziness, setFuzziness] = useState(0.55);
   const [scope, setScope] = useState<"page" | "all">("page");
@@ -52,6 +63,8 @@ export default function AutodetectPanel({
     PERSON: true, ORG: true, LOCATION: true, CUSTOM: false,
   });
   const [llmEnabled, setLlmEnabled] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
+  const [toolbarBottom, setToolbarBottom] = useState(0);
 
   // Blacklist state
   const [blCells, setBlCells] = useState(() => createEmptyGrid());
@@ -61,6 +74,7 @@ export default function AutodetectPanel({
   // Resize state
   const [panelSize, setPanelSize] = useState({ w: DEFAULT_PANEL_W, h: DEFAULT_PANEL_H });
   const resizeRef = useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const regexEnabled = Object.values(regexTypes).some(Boolean);
   const nerEnabled = Object.values(nerTypes).some(Boolean);
@@ -87,13 +101,15 @@ export default function AutodetectPanel({
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    const panelLeft = panelRef.current?.getBoundingClientRect().left ?? 0;
     resizeRef.current = { startX: e.clientX, startY: e.clientY, startW: panelSize.w, startH: panelSize.h };
     const onMove = (me: MouseEvent) => {
       if (!resizeRef.current) return;
       const dx = me.clientX - resizeRef.current.startX;
       const dy = me.clientY - resizeRef.current.startY;
+      const maxW = window.innerWidth - panelLeft - rightOffset - 8;
       setPanelSize({
-        w: Math.max(MIN_PANEL_W, resizeRef.current.startW + dx),
+        w: Math.min(maxW, Math.max(MIN_PANEL_W, resizeRef.current.startW + dx)),
         h: Math.max(MIN_PANEL_H, resizeRef.current.startH + dy),
       });
     };
@@ -108,30 +124,48 @@ export default function AutodetectPanel({
 
   return (
     <div
-      style={{
+      ref={panelRef}
+      style={isMaximized ? {
+        position: "fixed",
+        top: toolbarBottom,
+        left: leftOffset,
+        right: rightOffset + pageNavWidth,
+        bottom: 0,
+        background: "var(--bg-secondary)",
+        border: "1px solid var(--border-color)",
+        borderRadius: 0,
+        boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
+        zIndex: Z_TOP_DIALOG,
+        display: "flex",
+        flexDirection: "column" as const,
+        overflow: "hidden",
+      } : {
         position: "absolute",
-        top: "100%",
-        left: 0,
-        marginTop: 6,
+        top: "calc(100% + 8px)",
+        left: 6,
         background: "var(--bg-secondary)",
         border: "1px solid var(--border-color)",
         borderRadius: 8,
         boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
         zIndex: Z_TOP_DIALOG,
         width: showTabs ? panelSize.w : 340,
+        maxWidth: `calc(100vw - ${rightOffset + 8}px)`,
         maxHeight: showTabs ? panelSize.h : undefined,
         display: "flex",
-        flexDirection: "column",
+        flexDirection: "column" as const,
         overflow: "hidden",
       }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      {/* Scope tabs */}
+      {/* Scope tabs + window controls */}
       <div style={{
         display: "flex",
+        gap: 2,
         borderBottom: "1px solid var(--border-color)",
         background: "rgba(0,0,0,0.15)",
         flexShrink: 0,
+        padding: "0 10px",
+        alignItems: "center",
       }}>
         {([
           { key: "page" as const, label: "Current page" },
@@ -143,8 +177,7 @@ export default function AutodetectPanel({
               key={key}
               onClick={() => setScope(key)}
               style={{
-                flex: 1,
-                padding: "8px 0",
+                padding: "8px 12px",
                 fontSize: 12,
                 fontWeight: isActive ? 600 : 400,
                 color: isActive ? "var(--accent-primary)" : "var(--text-muted)",
@@ -158,18 +191,102 @@ export default function AutodetectPanel({
                 alignItems: "center",
                 justifyContent: "center",
                 gap: 6,
+                whiteSpace: "nowrap",
               }}
             >
               {label}
             </button>
           );
         })}
+
+        {/* Spacer + window controls */}
+        <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", gap: 2, marginLeft: 8 }}>
+          <button
+            onClick={() => {
+              if (!isMaximized && panelRef.current) {
+                const parent = panelRef.current.offsetParent as HTMLElement | null;
+                setToolbarBottom(parent ? parent.getBoundingClientRect().bottom : 48);
+                if (!showTabs) setShowTabs(true);
+              }
+              setIsMaximized(prev => !prev);
+            }}
+            style={{
+              width: 26, height: 26,
+              padding: 0,
+              background: "transparent",
+              border: "none",
+              borderRadius: 4,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--text-secondary)",
+              transition: "all 0.15s ease",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "var(--text-primary)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-secondary)"; }}
+            title={isMaximized ? "Restore" : "Maximize"}
+          >
+            {isMaximized ? <Minimize2 size={14} strokeWidth={2.2} /> : <Maximize2 size={14} strokeWidth={2.2} />}
+          </button>
+          <button
+            onClick={onClose}
+            style={{
+              width: 26, height: 26,
+              padding: 0,
+              background: "transparent",
+              border: "none",
+              borderRadius: 4,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--text-secondary)",
+              transition: "all 0.15s ease",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(220,38,38,0.25)"; e.currentTarget.style.color = "#f87171"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-secondary)"; }}
+            title="Close"
+          >
+            <X size={14} strokeWidth={2.2} />
+          </button>
+        </div>
       </div>
 
-      {/* Sensitivity slider + filter button on same line */}
-      <div style={{ display: "flex", alignItems: "stretch", padding: "10px 14px 0", gap: 8 }}>
+      {/* Filter button + Sensitivity slider on same line */}
+      <div className="slider-row" style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+        {/* Filter adjustment button — top-left */}
+        <button
+          onClick={() => {
+            const willHide = showTabs;
+            setShowTabs(prev => !prev);
+            if (willHide && isMaximized) setIsMaximized(false);
+          }}
+          style={{
+            width: 32,
+            height: 32,
+            flexShrink: 0,
+            marginTop: 1,
+            marginRight: 4,
+            background: showTabs ? "rgba(var(--accent-primary-rgb, 59,130,246), 0.12)" : "rgba(255,255,255,0.04)",
+            border: showTabs ? "1px solid var(--accent-primary)" : "1px solid var(--border-color)",
+            borderRadius: 6,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: showTabs ? "var(--accent-primary)" : "var(--text-muted)",
+            transition: "all 0.15s ease",
+            padding: 0,
+          }}
+          title={showTabs ? "Hide detection settings" : "Show detection settings"}
+        >
+          <SlidersHorizontal size={16}  />
+        </button>
+
         {/* Slider column */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, marginRight: 12, marginLeft: 4 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--text-secondary)", marginBottom: 3 }}>
             <span>Sensitivity</span>
             <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{fuzziness.toFixed(2)}</span>
@@ -185,34 +302,12 @@ export default function AutodetectPanel({
             <span>Fewer results</span>
           </div>
         </div>
-
-        {/* Filter adjustment button — full height of slider area */}
-        <button
-          onClick={() => setShowTabs(prev => !prev)}
-          style={{
-            width: 32,
-            flexShrink: 0,
-            background: showTabs ? "rgba(var(--accent-primary-rgb, 59,130,246), 0.12)" : "rgba(255,255,255,0.04)",
-            border: showTabs ? "1px solid var(--accent-primary)" : "1px solid var(--border-color)",
-            borderRadius: 6,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: showTabs ? "var(--accent-primary)" : "var(--text-muted)",
-            transition: "all 0.15s ease",
-            padding: 0,
-          }}
-          title={showTabs ? "Hide detection settings" : "Show detection settings"}
-        >
-          {showTabs ? <X size={16} /> : <SlidersHorizontal size={16} />}
-        </button>
       </div>
 
       {/* Detection settings tabs (collapsible via gear) */}
       {showTabs && (<>
         {/* 4-tab bar: Patterns | Blacklist | AI Recognition | Deep Analysis */}
-        <div style={{ display: "flex", borderBottom: "1px solid var(--border-color)", flexShrink: 0, marginTop: 6 }}>
+        <div style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-color)", flexShrink: 0, marginTop: 6, padding: "0 10px" }}>
           {([
             { key: "patterns" as const, label: "Patterns", active: regexEnabled },
             { key: "blacklist" as const, label: "Blacklist", active: blCells.flat().some(c => c.trim()) },
@@ -225,8 +320,7 @@ export default function AutodetectPanel({
                 key={key}
                 onClick={() => setTab(key)}
                 style={{
-                  flex: 1,
-                  padding: "9px 4px",
+                  padding: "9px 10px",
                   fontSize: 11,
                   fontWeight: isSel ? 600 : 400,
                   color: isSel ? "var(--accent-primary)" : active ? "var(--text-secondary)" : "var(--text-muted)",
@@ -237,6 +331,7 @@ export default function AutodetectPanel({
                   cursor: "pointer",
                   transition: "all 0.15s ease",
                   opacity: active ? 1 : 0.5,
+                  whiteSpace: "nowrap",
                 }}
               >
                 {label}
@@ -246,7 +341,7 @@ export default function AutodetectPanel({
         </div>
 
         {/* Tab content */}
-        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10, flex: 1, overflowY: "auto", minHeight: 0 }}>
+        <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10, flex: 1, overflowY: tab === "blacklist" ? "hidden" : "auto", minHeight: 0 }}>
 
           {/* Patterns tab (regex) */}
           {tab === "patterns" && (<>
@@ -291,18 +386,20 @@ export default function AutodetectPanel({
           </>)}
 
           {/* Blacklist tab */}
-          {tab === "blacklist" && (<>
-            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
-              Enter words or phrases to find and flag in the document. Paste from Excel or CSV supported.
+          {tab === "blacklist" && (
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 6 }}>
+                Enter words or phrases to find and flag in the document. Paste from Excel or CSV supported.
+              </div>
+              <BlacklistGrid
+                cells={blCells}
+                onCellsChange={setBlCells}
+                action={blAction}
+                onActionChange={setBlAction}
+                matchStatus={blMatchStatus}
+              />
             </div>
-            <BlacklistGrid
-              cells={blCells}
-              onCellsChange={setBlCells}
-              action={blAction}
-              onActionChange={setBlAction}
-              matchStatus={blMatchStatus}
-            />
-          </>)}
+          )}
 
           {/* AI Recognition tab (NER) */}
           {tab === "ai" && (<>
@@ -386,55 +483,59 @@ export default function AutodetectPanel({
         </div>
       </>)}
 
-      {/* Run button */}
-      <div style={{ padding: "10px 14px 14px", display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+      {/* Run + Clear all buttons side by side */}
+      <div style={{ padding: "10px 14px 14px", display: "flex", gap: 6, flexShrink: 0 }}>
         <button
           className="btn-primary"
           onClick={handleRun}
           disabled={isProcessing || (!regexEnabled && !nerEnabled && !llmEnabled && !blCells.flat().some(c => c.trim()))}
-          style={{ width: "100%" }}
+          style={{ whiteSpace: "nowrap" }}
         >
           <ScanSearch size={14} />
           {isProcessing ? "Detecting…" : `Run on ${scope === "page" ? `page ${activePage}` : "all pages"}`}
         </button>
         <button
           className="btn-ghost btn-sm"
-          onClick={() => { onClose(); onReset(); }}
+          onClick={() => {
+            onClose();
+            if (scope === "page") { onResetPage(activePage); } else { onReset(); }
+          }}
           disabled={isProcessing}
           style={{
-            width: "100%",
             fontSize: 11,
             color: "var(--text-muted)",
-            padding: "6px 0",
+            padding: "6px 12px",
+            whiteSpace: "nowrap",
           }}
-          title="Clear ALL existing detections and run a fresh scan from scratch"
+          title={scope === "page" ? `Delete all regions on page ${activePage}` : "Delete all detected regions from the document"}
         >
-          Reset detection (clear &amp; rescan)
+          {scope === "page" ? `Clear page ${activePage}` : "Clear all pages"}
         </button>
       </div>
 
       {/* Resize handle (bottom-right corner) */}
-      {showTabs && (
+      {showTabs && !isMaximized && (
         <div
           onMouseDown={handleResizeStart}
           style={{
             position: "absolute",
             bottom: 0,
             right: 0,
-            width: 16,
-            height: 16,
+            width: 20,
+            height: 20,
             cursor: "nwse-resize",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            opacity: 0.4,
-            fontSize: 10,
-            color: "var(--text-muted)",
             userSelect: "none",
           }}
           title="Drag to resize"
         >
-          ⋱
+          <svg width="14" height="14" viewBox="0 0 10 10" style={{ opacity: 0.85 }}>
+            <line x1="9" y1="1" x2="1" y2="9" stroke="var(--text-muted)" strokeWidth="1.2" />
+            <line x1="9" y1="4.5" x2="4.5" y2="9" stroke="var(--text-muted)" strokeWidth="1.2" />
+            <line x1="9" y1="8" x2="8" y2="9" stroke="var(--text-muted)" strokeWidth="1.2" />
+          </svg>
         </div>
       )}
     </div>

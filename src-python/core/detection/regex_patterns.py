@@ -57,6 +57,9 @@ CONTEXT_KEYWORDS: dict[PIIType, list[str]] = {
         "portable", "fixe", "desk", "direct", "ligne",
         "rufnummer", "telefon", "handy", "mobil",
         "teléfono", "telefono", "cellulare", "celular",
+        "télécopieur", "telecopieur", "téléc", "telec", "telex",
+        "telefax", "facsimile", "facs", "telecópia", "telecopia",
+        "téléph", "teleph", "mob", "port", "rufnr", "telecop", "telecóp",
     ],
     PIIType.EMAIL: [
         "email", "e-mail", "mail", "courriel", "courrier",
@@ -1244,7 +1247,7 @@ LABEL_NAME_PATTERNS: list[tuple[re.Pattern, PIIType, float, frozenset[str] | Non
     # ── Address after label ──
     (re.compile(
         r"(?:Address|Adresse|Anschrift|Direcci[oó]n|Indirizzo|Domicile|Domicilio|Residenza)"
-        r"[ \t]*[:][ \t]*([^\n\r]{10,80}?)(?=\s*(?:\n|\r|$|(?:Phone|Tel|Email|Fax|Date|Name|Nom|Nome|Cognome)\b))",
+        r"[ \t]*[:][ \t]*([^\n\r]{10,80}?)(?=\s*(?:\n|\r|$|(?:Phone|Tel(?:e(?:phone|fon|fax))?|T[ée]l|Mob|Cell|Fax|Facs|Email|Date|Name|Nom|Nome|Cognome)\b))",
         re.IGNORECASE,
     ), PIIType.ADDRESS, 0.80, _ALL),
 
@@ -1265,7 +1268,8 @@ LABEL_NAME_PATTERNS: list[tuple[re.Pattern, PIIType, float, frozenset[str] | Non
 
     # ── Phone after label ──
     (re.compile(
-        r"(?:Phone|Tel|T[ée]l[ée]phone|Mobile|Cell|Fax|Portable|Fixe|Rufnummer|Telefon)"
+        r"(?:Phone|Tel(?:e(?:phone|fon|fax))?|T[ée]l(?:[ée]ph(?:one)?)?|T[ée]l[ée]c(?:opieur)?|Telex|Facs(?:imile)?|Telec[óo]p(?:ia)?|Mob(?:ile?)?|Cell|Fax|Port(?:able)?|Fixe|Rufn(?:ummer|r)?|Handy)"
+        r"\.?"
         r"[ \t]*(?:No\.?|Number|Num[ée]ro|#|N°)?[ \t]*[:]?[ \t]*([\d\s\+\(\)\.\-]{7,20})",
         re.IGNORECASE,
     ), PIIType.PHONE, 0.88, _ALL),

@@ -717,14 +717,20 @@ _STRUCTURED_MIN_DIGITS: dict[PIIType, int] = {
 
 # These labels (and their multilingual counterparts) indicate a phone/fax
 # line.  They should never be part of a detected ADDRESS region.
+# Anchored to start-of-line, newline, OR whitespace so it also matches
+# phone labels on the same visual line as the address (OCR text uses
+# spaces between blocks on the same line, not newlines).
 _PHONE_LABEL_RE = _re.compile(
-    r"(?:^|\n)\s*"
+    r"(?:^|\n|\s+)"
     r"(?:"
-    r"Phone|Tel(?:ephone|efon|[ée]phone)?|T[ée]l(?:[ée]phone)?|"
-    r"Mobile|Cell(?:ulare)?|Celular|Fax|"
-    r"Portable|Fixe|Rufnummer|Handy|Mobil|"
+    r"Phone|Tel(?:e(?:phone|fon|fax))?|T[ée]l(?:[ée]ph(?:one)?)?|"
+    r"T[ée]l[ée]c(?:opieur)?|Telex|Facs(?:imile)?|"
+    r"Telec[óo]p(?:ia)?|"
+    r"Mob(?:ile?)?|Cell(?:ulare)?|Celular|Fax|"
+    r"Port(?:able)?|Fixe|Rufn(?:ummer|r)?|Handy|"
     r"Tel[ée]fono"
     r")"
+    r"\.?"                         # optional abbreviation dot (Tél.)
     r"(?:\s*(?:No\.?|Number|Num[ée]ro|#|N°))?"
     r"\s*[:.]?\s*"
     r"[\d\s\+\(\)\.\-]*$",
@@ -739,6 +745,5 @@ def _strip_phone_labels_from_address(text: str) -> str:
     an adjacent "Tel: 555-1234" line.  This strips it and returns the
     cleaned address text.
     """
-    # Strip phone label lines from end
     cleaned = _PHONE_LABEL_RE.sub("", text).strip()
     return cleaned if cleaned else text

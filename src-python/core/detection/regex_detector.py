@@ -220,10 +220,13 @@ def _is_valid_italian_piva(text: str) -> bool:
 # Used for bidirectional proximity check (before AND after the match).
 _PHONE_LABEL_KEYWORDS: frozenset[str] = frozenset({
     "phone", "tel", "tél", "téléphone", "telephone",
-    "mobile", "cell", "cellulare", "celular",
-    "fax", "portable", "fixe",
-    "rufnummer", "telefon", "handy", "mobil",
+    "mobile", "mob", "cell", "cellulare", "celular",
+    "fax", "portable", "port", "fixe",
+    "rufnummer", "rufnr", "telefon", "handy", "mobil",
     "teléfono", "telefono",
+    "télécopieur", "telecopieur", "téléc", "telec", "telex",
+    "telefax", "facsimile", "facs", "telecópia", "telecopia",
+    "téléph", "teleph", "telecóp", "telecop",
 })
 
 # Penalty applied to PHONE matches with no nearby label keyword.
@@ -253,6 +256,14 @@ def _context_boost(text: str, match_start: int, pii_type: PIIType,
     for kw in keywords:
         if kw in before:
             return 0.25
+
+    # For PHONE, also check phone-specific labels in the before-window
+    # (covers abbreviations like "Port.", "Mob." that may only be in
+    # _PHONE_LABEL_KEYWORDS and not in the broader CONTEXT_KEYWORDS).
+    if pii_type == PIIType.PHONE:
+        for kw in _PHONE_LABEL_KEYWORDS:
+            if kw in before:
+                return 0.25
 
     # For PHONE, also look AFTER the match (e.g. "418.368.3700 (tel)")
     if pii_type == PIIType.PHONE and match_end is not None:

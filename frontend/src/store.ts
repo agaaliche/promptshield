@@ -130,6 +130,11 @@ interface AppState {
   addToUploadQueue: (items: UploadItem[]) => void;
   updateUploadItem: (id: string, updates: Partial<UploadItem>) => void;
   clearCompletedUploads: () => void;
+  showUploadErrorDialog: boolean;
+  setShowUploadErrorDialog: (v: boolean) => void;
+  dismissingErrorUploads: boolean;
+  setDismissingErrorUploads: (v: boolean) => void;
+  removeErrorUploads: () => void;
 }
 
 export const useAppStore = create<AppState>()(devtools((set) => ({
@@ -368,6 +373,13 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
   })),
   clearCompletedUploads: () => set((s) => ({
     uploadQueue: s.uploadQueue.filter((u) => u.status !== "done"),
+  })),
+  showUploadErrorDialog: false,
+  setShowUploadErrorDialog: (v) => set({ showUploadErrorDialog: v }),
+  dismissingErrorUploads: false,
+  setDismissingErrorUploads: (v) => set({ dismissingErrorUploads: v }),
+  removeErrorUploads: () => set((s) => ({
+    uploadQueue: s.uploadQueue.filter((u) => u.status !== "error"),
   })),
 }), { name: "doc-anonymizer-store", enabled: import.meta.env.DEV }));
 

@@ -65,6 +65,7 @@ import DetokenizeView from "./components/DetokenizeView";
 import SettingsView from "./components/SettingsView";
 import AuthScreen from "./components/AuthScreen";
 import RevalidationDialog from "./components/RevalidationDialog";
+import UploadErrorDialog from "./components/UploadErrorDialog";
 
 function App() {
   const {
@@ -306,6 +307,7 @@ function App() {
   return (
     <div style={{ display: "flex", height: "100vh", width: "100vw" }}>
       <Snackbar />
+      <UploadErrorDialog />
       {showRevalidation && (
         <RevalidationDialog
           daysRemaining={licenseStatus.days_remaining}

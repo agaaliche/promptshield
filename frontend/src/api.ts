@@ -131,9 +131,25 @@ export function warmupModels(): void {
 // ──────────────────────────────────────────────
 
 export async function detectPII(docId: string): Promise<DetectionResult> {
-  return request<DetectionResult>(`/api/documents/${docId}/detect`, {
-    method: "POST",
-  });
+  // Retry on 409 (detection lock busy) with exponential backoff
+  const maxRetries = 5;
+  const baseDelay = 2000; // 2 seconds
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await request<DetectionResult>(`/api/documents/${docId}/detect`, {
+        method: "POST",
+      });
+    } catch (err: any) {
+      const is409 = err?.message?.includes("API error 409");
+      if (is409 && attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt); // 2s, 4s, 8s, 16s, 32s
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Detection failed after retries");
 }
 
 export async function getDetectionProgress(docId: string): Promise<DetectionProgressData> {

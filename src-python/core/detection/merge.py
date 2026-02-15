@@ -22,6 +22,7 @@ from core.detection.noise_filters import (
     _is_loc_pipeline_noise,
     _is_person_pipeline_noise,
     _is_address_number_only,
+    _strip_phone_labels_from_address,
     _STRUCTURED_MIN_DIGITS,
 )
 from core.detection.region_shapes import (
@@ -361,6 +362,15 @@ def _merge_detections(
             page_data.page_number, len(merged) - len(_addr_merged),
         )
     merged = _addr_merged
+
+    # ── Strip phone/fax labels from ADDRESS text ─────────────────────
+    for item in merged:
+        if item["pii_type"] == PIIType.ADDRESS:
+            cleaned = _strip_phone_labels_from_address(item["text"])
+            if cleaned != item["text"]:
+                # Adjust end offset to reflect the trimmed text
+                item["text"] = cleaned
+                item["end"] = item["start"] + len(cleaned)
 
     # ── Convert to PIIRegion with per-line bboxes ─────────────────────
 

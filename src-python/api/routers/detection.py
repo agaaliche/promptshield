@@ -26,6 +26,8 @@ from api.deps import (
     save_doc,
     acquire_detection_lock,
     release_detection_lock,
+    acquire_config_lock,
+    release_config_lock,
     config_override,
 )
 
@@ -200,7 +202,7 @@ async def detect_pii(doc_id: str) -> dict[str, Any]:
             detection_progress[doc_id]["error"] = str(e)
         raise HTTPException(500, detail="Detection failed. Check server logs for details.")
     finally:
-        release_detection_lock()
+        release_detection_lock(doc_id)
 
 
 class RedetectRequest(_PydanticBaseModel):
@@ -234,6 +236,9 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
 
     if not acquire_detection_lock(doc_id):
         raise HTTPException(409, detail="Detection already in progress. Please wait.")
+    if not acquire_config_lock(doc_id):
+        release_detection_lock(doc_id)
+        raise HTTPException(409, detail="Another detection with custom settings is running. Please wait.")
 
     try:
         from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages, _bbox_overlap_area, _bbox_area
@@ -587,7 +592,8 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
             detection_progress[doc_id]["error"] = str(e)
         raise HTTPException(500, detail="Redetect failed. Check server logs for details.")
     finally:
-        release_detection_lock()
+        release_config_lock()
+        release_detection_lock(doc_id)
 
 
 @router.post("/documents/{doc_id}/reset-detection")
@@ -711,7 +717,7 @@ async def reset_detection(doc_id: str) -> dict[str, Any]:
             detection_progress[doc_id]["error"] = str(e)
         raise HTTPException(500, detail="Reset detection failed. Check server logs for details.")
     finally:
-        release_detection_lock()
+        release_detection_lock(doc_id)
 
 
 @router.get("/documents/{doc_id}/regions")

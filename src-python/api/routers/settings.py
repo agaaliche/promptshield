@@ -63,13 +63,13 @@ async def get_settings() -> dict[str, Any]:
 @router.patch("/settings")
 async def update_settings(body: SettingsUpdate) -> dict[str, Any]:
     """Update app settings (partial update with Pydantic validation)."""
-    from api.deps import acquire_detection_lock, release_detection_lock
+    from api.deps import acquire_config_lock, release_config_lock
 
     updates = body.model_dump(exclude_none=True)
     applied = {}
 
-    # H2: Acquire detection lock; if busy, reject with 409 instead of ignoring
-    lock_held = acquire_detection_lock("settings-update")
+    # H2: Acquire config lock; if busy, reject with 409 instead of ignoring
+    lock_held = acquire_config_lock("settings-update")
     if not lock_held:
         raise HTTPException(
             status_code=409,
@@ -95,7 +95,7 @@ async def update_settings(body: SettingsUpdate) -> dict[str, Any]:
             config.save_user_settings()
     finally:
         if lock_held:
-            release_detection_lock()
+            release_config_lock()
 
     return {"status": "ok", "applied": applied}
 

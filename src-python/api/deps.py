@@ -44,9 +44,13 @@ def cleanup_stale_progress() -> None:
     for k in stale:
         detection_progress.pop(k, None)
 
-# Detection lock — prevents concurrent detection runs from racing on config
-_detection_lock = threading.Lock()
-_detection_lock_acquired_at: float | None = None
+# Detection lock — per-document to allow parallel detection of different docs.
+# A separate config lock prevents concurrent config mutations (redetect, settings).
+_doc_locks: dict[str, threading.Lock] = {}
+_doc_lock_times: dict[str, float] = {}
+_doc_locks_guard = threading.Lock()  # protects _doc_locks dict itself
+_config_lock = threading.Lock()
+_config_lock_acquired_at: float | None = None
 _DETECTION_LOCK_TIMEOUT_S: float = 600.0  # 10 minutes max
 
 
@@ -128,47 +132,100 @@ def get_active_llm_engine() -> object | None:
 
 
 def acquire_detection_lock(doc_id: str) -> bool:
-    """Try to acquire the detection lock (non-blocking). Returns True if acquired.
+    """Try to acquire the per-document detection lock (non-blocking).
 
-    If a previous lock has been held longer than ``_DETECTION_LOCK_TIMEOUT_S``,
-    it is considered stale and forcibly released before re-acquiring.
+    Returns True if acquired.  Different documents can detect in parallel;
+    only the *same* document is serialised.
+
+    If a previous lock for this doc has been held longer than
+    ``_DETECTION_LOCK_TIMEOUT_S``, it is considered stale and forcibly
+    released before re-acquiring.
     """
-    global _detection_lock_acquired_at
+    with _doc_locks_guard:
+        if doc_id not in _doc_locks:
+            _doc_locks[doc_id] = threading.Lock()
+        lock = _doc_locks[doc_id]
 
-    acquired = _detection_lock.acquire(blocking=False)
+    acquired = lock.acquire(blocking=False)
     if acquired:
-        _detection_lock_acquired_at = _time.time()
+        _doc_lock_times[doc_id] = _time.time()
         return True
 
     # Check for stale lock
-    if _detection_lock_acquired_at is not None:
-        held_for = _time.time() - _detection_lock_acquired_at
+    acq_time = _doc_lock_times.get(doc_id)
+    if acq_time is not None:
+        held_for = _time.time() - acq_time
         if held_for > _DETECTION_LOCK_TIMEOUT_S:
             logger.warning(
-                "Detection lock held for %.0fs (>%.0fs) — forcing release (stale lock for doc %s)",
-                held_for, _DETECTION_LOCK_TIMEOUT_S, doc_id,
+                "Detection lock for doc %s held for %.0fs (>%.0fs) — forcing release (stale)",
+                doc_id, held_for, _DETECTION_LOCK_TIMEOUT_S,
             )
             try:
-                _detection_lock.release()
+                lock.release()
             except RuntimeError:
                 pass
-            acquired = _detection_lock.acquire(blocking=False)
+            acquired = lock.acquire(blocking=False)
             if acquired:
-                _detection_lock_acquired_at = _time.time()
+                _doc_lock_times[doc_id] = _time.time()
                 return True
 
-    logger.warning(f"Detection already running — rejecting request for {doc_id}")
+    logger.warning("Detection already running for doc %s — rejecting", doc_id)
     return False
 
 
-def release_detection_lock() -> None:
-    """Release the detection lock."""
-    global _detection_lock_acquired_at
-    _detection_lock_acquired_at = None
+def release_detection_lock(doc_id: str) -> None:
+    """Release the per-document detection lock."""
+    _doc_lock_times.pop(doc_id, None)
+    with _doc_locks_guard:
+        lock = _doc_locks.get(doc_id)
+    if lock is None:
+        return
     try:
-        _detection_lock.release()
+        lock.release()
     except RuntimeError:
-        logger.warning("Detection lock was already released — possible double-release bug")
+        logger.warning("Detection lock for doc %s was already released", doc_id)
+
+
+def acquire_config_lock(doc_id: str) -> bool:
+    """Acquire the global config lock (for redetect / settings that mutate config).
+
+    Only one config-mutating operation can run at a time.
+    """
+    global _config_lock_acquired_at
+    acquired = _config_lock.acquire(blocking=False)
+    if acquired:
+        _config_lock_acquired_at = _time.time()
+        return True
+
+    # Check for stale config lock
+    if _config_lock_acquired_at is not None:
+        held_for = _time.time() - _config_lock_acquired_at
+        if held_for > _DETECTION_LOCK_TIMEOUT_S:
+            logger.warning(
+                "Config lock held for %.0fs (>%.0fs) — forcing release",
+                held_for, _DETECTION_LOCK_TIMEOUT_S,
+            )
+            try:
+                _config_lock.release()
+            except RuntimeError:
+                pass
+            acquired = _config_lock.acquire(blocking=False)
+            if acquired:
+                _config_lock_acquired_at = _time.time()
+                return True
+
+    logger.warning("Config lock busy — rejecting request for %s", doc_id)
+    return False
+
+
+def release_config_lock() -> None:
+    """Release the global config lock."""
+    global _config_lock_acquired_at
+    _config_lock_acquired_at = None
+    try:
+        _config_lock.release()
+    except RuntimeError:
+        logger.warning("Config lock was already released")
 
 
 @contextmanager
@@ -176,7 +233,7 @@ def config_override(**overrides: Any) -> Generator[None, None, None]:
     """Temporarily override config attributes in a thread-safe manner.
 
     C6: This mutates a global singleton. Must ONLY be used while the
-    detection lock is held to prevent concurrent mutations.
+    config lock is held to prevent concurrent mutations.
     """
     originals = {}
     for key, value in overrides.items():

@@ -51,6 +51,7 @@ export default function Sidebar() {
     updateDocument,
     regions: storeRegions,
     uploadQueue,
+    dismissingErrorUploads,
   } = useAppStore();
 
   const isDragging = useRef(false);
@@ -252,7 +253,15 @@ export default function Sidebar() {
               }}>
                 {/* Upload queue — progress items (hide done items immediately) */}
                 {uploadQueue.filter((item) => item.status !== "done").map((item) => (
-                  <div key={item.id} style={{ padding: "4px 6px", fontSize: 11 }}>
+                  <div key={item.id} style={{
+                    padding: "4px 6px",
+                    fontSize: 11,
+                    transition: item.status === "error" ? "opacity 0.35s ease, transform 0.35s ease, max-height 0.35s ease" : undefined,
+                    opacity: item.status === "error" && dismissingErrorUploads ? 0 : 1,
+                    transform: item.status === "error" && dismissingErrorUploads ? "translateX(-20px)" : undefined,
+                    maxHeight: item.status === "error" && dismissingErrorUploads ? 0 : 60,
+                    overflow: "hidden",
+                  }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
                       <FileText size={10} style={{ flexShrink: 0, color: "var(--text-muted)" }} />
                       <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, color: item.status === "error" ? "#f44336" : "var(--text-secondary)" }}>

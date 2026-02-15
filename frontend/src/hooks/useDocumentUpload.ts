@@ -44,6 +44,7 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
     setDocDetecting,
     setDocLoadingMessage,
     setStatusMessage,
+    setShowUploadErrorDialog,
   } = useAppStore();
 
   const documents = useAppStore((s) => s.documents);
@@ -122,6 +123,14 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
       }
 
       clearCompletedUploads();
+
+      // Show error dialog if any uploads failed
+      const hasErrors = items.some(({ item }) =>
+        useAppStore.getState().uploadQueue.find((u) => u.id === item.id)?.status === "error"
+      );
+      if (hasErrors) {
+        setShowUploadErrorDialog(true);
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -140,6 +149,7 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
       setDocDetecting,
       setDocLoadingMessage,
       setStatusMessage,
+      setShowUploadErrorDialog,
     ],
   );
 

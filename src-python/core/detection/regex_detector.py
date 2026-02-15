@@ -216,19 +216,54 @@ def _is_valid_italian_piva(text: str) -> bool:
 # Context keyword proximity boost
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _context_boost(text: str, match_start: int, pii_type: PIIType) -> float:
-    """Return a confidence boost (0.0 – 0.25) if context keywords are nearby."""
+# Phone-specific labels that indicate a phone/fax line.
+# Used for bidirectional proximity check (before AND after the match).
+_PHONE_LABEL_KEYWORDS: frozenset[str] = frozenset({
+    "phone", "tel", "tél", "téléphone", "telephone",
+    "mobile", "cell", "cellulare", "celular",
+    "fax", "portable", "fixe",
+    "rufnummer", "telefon", "handy", "mobil",
+    "teléfono", "telefono",
+})
+
+# Penalty applied to PHONE matches with no nearby label keyword.
+# This pushes bare numbers (base 0.55) below the confidence threshold
+# while numbers already boosted by proximity (+0.25) are unaffected.
+_PHONE_NO_LABEL_PENALTY = 0.15
+
+
+def _context_boost(text: str, match_start: int, pii_type: PIIType,
+                   match_end: int | None = None) -> float:
+    """Return a confidence adjustment for context keyword proximity.
+
+    For PHONE type, uses bidirectional search (before + after) and applies
+    a penalty (-0.15) when no label is found, so that bare digit sequences
+    without any "Tel:", "Phone:", etc. nearby are penalised.
+
+    For all other types, returns +0.25 if a keyword is nearby, else 0.0.
+    """
     keywords = _CONTEXT_KEYWORDS.get(pii_type)
     if not keywords:
         return 0.0
 
-    # Look at the text window before the match
+    # Look at the text window BEFORE the match
     window_start = max(0, match_start - _CTX_WINDOW)
-    context = text[window_start:match_start].lower()
+    before = text[window_start:match_start].lower()
 
     for kw in keywords:
-        if kw in context:
+        if kw in before:
             return 0.25
+
+    # For PHONE, also look AFTER the match (e.g. "418.368.3700 (tel)")
+    if pii_type == PIIType.PHONE and match_end is not None:
+        window_end = min(len(text), match_end + _CTX_WINDOW)
+        after = text[match_end:window_end].lower()
+        for kw in _PHONE_LABEL_KEYWORDS:
+            if kw in after:
+                return 0.25
+        # No label found anywhere near this phone number → penalise
+        return -_PHONE_NO_LABEL_PENALTY
+
     return 0.0
 
 
@@ -371,7 +406,7 @@ def detect_regex(text: str, allowed_types: list[str] | None = None,
                 continue
 
             # ── Context keyword proximity boost ──
-            boost = _context_boost(text, m.start(), pii_type)
+            boost = _context_boost(text, m.start(), pii_type, m.end())
             confidence = min(1.0, confidence + boost)
 
             all_matches.append(RegexMatch(
@@ -401,7 +436,7 @@ def detect_regex(text: str, allowed_types: list[str] | None = None,
             if adjusted == 0.0:
                 continue
 
-            boost = _context_boost(text, name_start, pii_type)
+            boost = _context_boost(text, name_start, pii_type, name_end)
             confidence = min(1.0, base_confidence + boost)
 
             all_matches.append(RegexMatch(

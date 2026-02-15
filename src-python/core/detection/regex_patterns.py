@@ -303,11 +303,12 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     # ──────────────────────────────────────────────────────────────────
     # PHONE — international coverage
     # ──────────────────────────────────────────────────────────────────
-    # US: (555) 123-4567
-    (r"\(\d{3}\)\s?\d{3}[-.\s]?\d{4}", PIIType.PHONE, 0.92, _NOFLAGS, _EN),
+    # US/CA: (555) 123-4567, 1 (555) 123-4567
+    (r"(?:\b1[-.\s])?\(\d{3}\)\s?\d{3}[-.\s]?\d{4}", PIIType.PHONE, 0.92, _NOFLAGS, _ENFR_CA),
 
-    # US/CA bare: 555-123-4567, 555.123.4567
-    (r"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b", PIIType.PHONE, 0.55, _NOFLAGS, _EN),
+    # US/CA bare: 555-123-4567, 555.123.4567, 1-555-123-4567, 1.555.123.4567
+    (r"\b1[-.\s]\d{3}[-.\s]\d{3}[-.\s]\d{4}\b", PIIType.PHONE, 0.90, _NOFLAGS, _ENFR_CA),
+    (r"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b", PIIType.PHONE, 0.55, _NOFLAGS, _ENFR_CA),
 
     # International with +  :  +33 6 12 34 56 78, +1-555-987-6543, (+33) 6 12 34 56 78
     (r"\(?\+\d{1,3}\)?[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{2,4}[-.\s]?\d{2,4}(?:[-.\s]?\d{2,4})?",
@@ -317,8 +318,8 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     (r"(?:(?:\+|00)33\s?|0)[1-9](?:[\s.\-]?\d{2}){4}",
      PIIType.PHONE, 0.90, _NOFLAGS, _FR),
 
-    # UK: 07xxx xxxxxx, 020 xxxx xxxx
-    (r"\b0[1-9]\d{2,3}\s?\d{3}\s?\d{3,4}\b", PIIType.PHONE, 0.50, _NOFLAGS, _EN),
+    # UK: 07xxx xxxxxx, 020 xxxx xxxx, 020 7946 0958
+    (r"\b0[1-9]\d{1,3}\s?\d{3,4}\s?\d{3,4}\b", PIIType.PHONE, 0.50, _NOFLAGS, _EN),
 
     # German: 030 12345678, 089 1234-5678, 0171 1234567, 0171-1234567
     (r"(?:(?:\+|00)49\s?|0)\d{2,4}[\s/\-]?\d{3,4}[\s\-]?\d{3,5}",
@@ -340,9 +341,9 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     (r"(?:(?:\+|00)351\s?)?\b(?:2\d|9[1-6])\d?\s?\d{3}\s?\d{3,4}\b",
      PIIType.PHONE, 0.80, _NOFLAGS, _PT),
 
-    # Toll-free US
+    # Toll-free US/CA
     (r"\b1[-.] 8(?:00|44|55|66|77|88)\b[-.\s]?\d{3}[-.\s]\d{4}\b",
-     PIIType.PHONE, 0.90, _NOFLAGS, _EN),
+     PIIType.PHONE, 0.90, _NOFLAGS, _ENFR_CA),
 
     # ──────────────────────────────────────────────────────────────────
     # CREDIT CARD

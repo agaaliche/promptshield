@@ -711,3 +711,34 @@ _STRUCTURED_MIN_DIGITS: dict[PIIType, int] = {
     PIIType.SSN: 7,
     PIIType.DRIVER_LICENSE: 6,
 }
+
+
+# ── Phone-label stripping for ADDRESS regions ────────────────────────────
+
+# These labels (and their multilingual counterparts) indicate a phone/fax
+# line.  They should never be part of a detected ADDRESS region.
+_PHONE_LABEL_RE = _re.compile(
+    r"(?:^|\n)\s*"
+    r"(?:"
+    r"Phone|Tel(?:ephone|efon|[ée]phone)?|T[ée]l(?:[ée]phone)?|"
+    r"Mobile|Cell(?:ulare)?|Celular|Fax|"
+    r"Portable|Fixe|Rufnummer|Handy|Mobil|"
+    r"Tel[ée]fono"
+    r")"
+    r"(?:\s*(?:No\.?|Number|Num[ée]ro|#|N°))?"
+    r"\s*[:.]?\s*"
+    r"[\d\s\+\(\)\.\-]*$",
+    _re.IGNORECASE | _re.MULTILINE,
+)
+
+
+def _strip_phone_labels_from_address(text: str) -> str:
+    """Remove trailing/leading phone label lines from address text.
+
+    Addresses merged from NER or label-value patterns sometimes absorb
+    an adjacent "Tel: 555-1234" line.  This strips it and returns the
+    cleaned address text.
+    """
+    # Strip phone label lines from end
+    cleaned = _PHONE_LABEL_RE.sub("", text).strip()
+    return cleaned if cleaned else text

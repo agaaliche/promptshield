@@ -5,6 +5,7 @@
  */
 
 import { useState, useCallback } from "react";
+import { useAppStore } from "../store";
 import {
   setRegionAction,
   batchRegionAction,
@@ -106,6 +107,7 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
       if (!activeDocId) return;
       const region = regions.find((r) => r.id === regionId);
       if (!region) return;
+      const addSnackbar = useAppStore.getState().addSnackbar;
       try {
         pushUndo();
         const resp = await highlightAllRegions(activeDocId, regionId);
@@ -118,9 +120,12 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
             ? `Found ${resp.all_ids.length} occurrences of "${region.text}" (${resp.created} new)`
             : `Highlighted ${resp.all_ids.length} existing region${resp.all_ids.length !== 1 ? "s" : ""} matching "${region.text}"`;
         setStatusMessage(msg);
+        addSnackbar(msg, "success");
       } catch (e: any) {
         console.error("Highlight all failed:", e);
-        setStatusMessage(`Highlight all failed: ${e.message}`);
+        const errMsg = `Highlight all failed: ${e.message}`;
+        setStatusMessage(errMsg);
+        addSnackbar(errMsg, "error");
       }
     },
     [activeDocId, regions, setRegions, setSelectedRegionIds, setStatusMessage, pushUndo],

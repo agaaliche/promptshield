@@ -34,6 +34,22 @@ CONTEXT_KEYWORDS: dict[PIIType, list[str]] = {
         "nif", "contribuinte", "número de contribuinte",
         # Italian
         "codice fiscale", "tessera sanitaria",
+        # UK NHS
+        "nhs", "nhs number", "nhs no",
+        # US EIN
+        "ein", "employer id", "employer identification", "fein",
+        # German health insurance
+        "krankenversichertennummer", "versichertennummer", "kvnr",
+        "versicherten-nr", "krankenkasse",
+        # Patient context
+        "patient id", "patient number", "medical record", "mrn",
+        "numéro de patient", "patientennummer", "patientenakte",
+        # Portuguese
+        "niss", "segurança social",
+        # Spanish
+        "seguridad social", "tarjeta sanitaria", "afiliación",
+        # Brazilian
+        "cpf", "cadastro",
     ],
     PIIType.PHONE: [
         "phone", "tel", "téléphone", "telephone", "mobile", "cell",
@@ -56,6 +72,10 @@ CONTEXT_KEYWORDS: dict[PIIType, list[str]] = {
         "compte", "bancaire", "banque", "rib",
         "kontonummer", "bankverbindung", "konto",
         "cuenta", "conto", "rekening",
+        # Sort code / routing
+        "sort code", "routing", "aba", "transit",
+        "account number", "acct", "numéro de compte",
+        "rekeningnummer", "número de cuenta", "numero conto",
     ],
     PIIType.DATE: [
         "born", "birth", "dob", "date of birth", "expires", "expiry",
@@ -99,6 +119,21 @@ CONTEXT_KEYWORDS: dict[PIIType, list[str]] = {
         # Spanish / Italian
         "nombre", "apellido", "cognome", "nome", "señor", "señora",
         "signor", "signora",
+        # Contract roles
+        "signed by", "signature", "witness", "notary", "party",
+        "signé par", "notaire", "témoin", "partie",
+        "unterschrieben", "notar", "zeuge", "partei",
+        "firmado", "testigo", "parte",
+        "firmato", "testimone",
+        "ondertekend", "getuige",
+        # Medical roles
+        "physician", "doctor", "attending", "treating",
+        "médecin", "praticien", "arzt", "ärztin",
+        "medico", "dottore", "arts",
+        # Financial roles
+        "beneficiary", "payee", "guarantor", "representative",
+        "bénéficiaire", "garant", "mandataire",
+        "begünstigter", "bürge",
     ],
     PIIType.ADDRESS: [
         "address", "street", "city", "state", "zip", "postal",
@@ -147,6 +182,22 @@ CONTEXT_KEYWORDS: dict[PIIType, list[str]] = {
         "case", "file", "dossier", "numéro dossier", "n° dossier",
         "reference", "référence", "matricule", "registration",
         "vat", "tva", "tax", "ust-idnr", "ust",
+        # Company registration
+        "siren", "siret", "rcs", "handelsregister", "hrb", "hra",
+        "amtsgericht", "registro mercantil", "cif",
+        "kvk", "kamer van koophandel", "companies house",
+        "partita iva", "p.iva", "cnpj",
+        # BIC/SWIFT
+        "bic", "swift", "swift code", "bic code",
+        # Insurance
+        "policy", "police", "polizza", "póliza", "apolice",
+        "policennummer", "polisnummer",
+        # Medical
+        "medical record", "mrn", "patient id", "dossier médical",
+        "patientenakte", "cartella clinica", "historial",
+        "prontuário", "prontuario",
+        "health insurance", "assurance maladie", "krankenkasse",
+        "tessera sanitaria", "tarjeta sanitaria", "zorgverzekering",
     ],
 }
 
@@ -672,7 +723,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}){0,4}"
         r"\s+(?:(?i:"
         r"Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP|SAS"
-        r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH"
+        r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH|e\.?V\.?"
         r"|BV|B\.?V\.?|NV|N\.?V\.?|V\.?O\.?F\.?|C\.?V\.?"
         r"|S\.?A\.?R\.?L\.?|S\.A\.?|S\.?L\.?U?\.?|S\.?C\.?|S\.?R\.?L\.?"
         r"|S\.?p\.?A\.?|S\.?a\.?s\.?|S\.?n\.?c\.?|S\.?s\.?"
@@ -681,6 +732,39 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"|A/S|ApS|ASA|AB|Oy|Oyj|HB|KB"
         r")|SA|SE|AS)\b\.?",
         PIIType.ORG, 0.88, _NOFLAGS, _ALL,
+    ),
+    # German compound legal forms: "Name GmbH & Co. KG", "Name SE & Co. KGaA"
+    (
+        r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}"
+        r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü&\-']{1,30}){0,4}"
+        r"\s+(?:(?i:"
+        r"GmbH\s*&\s*Co\.?\s*(?:KG|OHG|KGaA)"
+        r"|SE\s*&\s*Co\.?\s*KGaA"
+        r"|UG\s*\(haftungsbeschr[äa]nkt\)"
+        r"))\b\.?",
+        PIIType.ORG, 0.92, _NOFLAGS, _ALL,
+    ),
+    # German association/club: "1. FC Union Berlin e.V."
+    # Allows numbers and dots at the start for clubs like "1. FC"
+    (
+        r"\b(?:\d{1,2}\.\s*)?[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-]{1,25}"
+        r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-]{1,25}){0,4}"
+        r"\s+(?i:e\.?\s?V\.?)\b",
+        PIIType.ORG, 0.90, _NOFLAGS, _ALL,
+    ),
+    # Quoted company names followed by legal suffix (DE style):
+    # '"An der Alten Försterei" Stadionbetriebs AG'
+    (
+        r'["\u201C\u201E\u00AB][^"\u201D\u201F\u00BB]{3,60}["\u201D\u201F\u00BB]'
+        r'\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-]{1,25}'
+        r'(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-]{1,25}){0,2}'
+        r'\s+(?:(?i:'
+        r'GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH|e\.?V\.?'
+        r'|GmbH\s*&\s*Co\.?\s*(?:KG|OHG|KGaA)'
+        r'|Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP|SAS'
+        r'|S\.?A\.?R\.?L\.?|S\.A\.?|S\.?R\.?L\.?'
+        r')|SA|SE|AS)\b\.?',
+        PIIType.ORG, 0.92, _NOFLAGS, _ALL,
     ),
     # Multilingual "Group/Company/Society X" prefix pattern
     # FR: Groupe, Société, Compagnie, Établissements, Cabinet, Maison
@@ -733,12 +817,13 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r")"
         r"\s+[a-zA-ZÀ-üÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"  # After connecting word, allow lowercase start
         r"|\s+[a-zà-ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"  # OR plain lowercase word (body text)
-        r"){1,5}"
+        r"){1,3}"
         r"\s+(?:(?i:"  # Make suffix case-insensitive (SA/SE/AS are case-sensitive outside)
         r"Lt[ée]e|Limit[ée]e|Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP|SAS"
         r"|SARL|EURL|SCI|SNC|SENC|S\.?E\.?N\.?C\.?"
         r"|Enr\.?g?\.?"
-        r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH"
+        r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH|e\.?V\.?"
+        r"|GmbH\s*&\s*Co\.?\s*(?:KG|OHG|KGaA)"
         r"|BV|B\.?V\.?|NV|N\.?V\.?|V\.?O\.?F\.?|C\.?V\.?"
         r"|S\.?A\.?R\.?L\.?|S\.A\.?|S\.?L\.?U?\.?|S\.?C\.?|S\.?R\.?L\.?"
         r"|S\.?p\.?A\.?|S\.?a\.?s\.?|S\.?n\.?c\.?|S\.?s\.?"
@@ -755,7 +840,8 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"\b\d{3,10}(?:-\d{3,10})?"  # 3-10 digits, optionally followed by dash and more digits
         r"\s+(?:[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{2,20}\s+){1,3}"  # Require 1-3 words (min 3 chars each)
         r"(?:(?i:Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP|SAS"
-        r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH"
+        r"|GmbH|AG|KG|KGaA|OHG|e\.?K\.?|UG|mbH|e\.?V\.?"
+        r"|GmbH\s*&\s*Co\.?\s*(?:KG|OHG|KGaA)"
         r"|BV|B\.?V\.?|NV|N\.?V\.?"
         r"|S\.?A\.?R\.?L\.?|S\.A\.?|S\.?L\.?U?\.?|S\.?C\.?|S\.?R\.?L\.?"
         r"|S\.?p\.?A\.?|S\.?a\.?s\.?|S\.?n\.?c\.?"
@@ -839,6 +925,127 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     # ──────────────────────────────────────────────────────────────────
     (r"\b(?:FR|DE|ES|IT|BE|NL|AT|PT|PL|SE|DK|FI|IE|LU|CZ|SK|HU|RO|BG|HR|SI|EE|LV|LT|CY|MT|GR|EL|GB)[A-Z0-9]{8,12}\b",
      PIIType.CUSTOM, 0.40, _NOFLAGS, _ALL),
+
+    # ──────────────────────────────────────────────────────────────────
+    # BIC / SWIFT codes  (financial / contracts)
+    # ──────────────────────────────────────────────────────────────────
+    # 8 or 11 chars:  BNPAFRPP, DEUTDEFF500
+    (r"\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b",
+     PIIType.CUSTOM, 0.35, _NOFLAGS, _ALL),
+
+    # ──────────────────────────────────────────────────────────────────
+    # French SIREN / SIRET  (contracts / financial)
+    # ──────────────────────────────────────────────────────────────────
+    # SIREN — 9 digits grouped 3×3:  362 521 879
+    (r"\b\d{3}\s\d{3}\s\d{3}\b",
+     PIIType.CUSTOM, 0.40, _NOFLAGS, _FR),
+    # SIRET — 14 digits grouped 3×3×3+5:  362 521 879 00034
+    (r"\b\d{3}\s\d{3}\s\d{3}\s\d{5}\b",
+     PIIType.CUSTOM, 0.55, _NOFLAGS, _FR),
+    # SIRET compact or dotted: 36252187900034, 362.521.879.00034
+    (r"\b\d{3}[.\s]?\d{3}[.\s]?\d{3}[.\s]?\d{5}\b",
+     PIIType.CUSTOM, 0.50, _NOFLAGS, _FR),
+
+    # ──────────────────────────────────────────────────────────────────
+    # German Handelsregister (HRB/HRA)  (contracts)
+    # ──────────────────────────────────────────────────────────────────
+    # HRB 12345, HRA 6789, HRB 137077 B
+    (r"\bHR[AB]\s?\d{3,7}(?:\s?[A-Z])?\b",
+     PIIType.CUSTOM, 0.70, _NOFLAGS, _DE),
+
+    # ──────────────────────────────────────────────────────────────────
+    # US EIN — Employer Identification Number  (contracts / financial)
+    # ──────────────────────────────────────────────────────────────────
+    # XX-XXXXXXX (2 digits, dash, 7 digits)
+    (r"\b\d{2}-\d{7}\b",
+     PIIType.SSN, 0.35, _NOFLAGS, _EN),
+
+    # ──────────────────────────────────────────────────────────────────
+    # Spanish CIF — company tax ID  (contracts / financial)
+    # ──────────────────────────────────────────────────────────────────
+    # Letter (A-H,J,N,P-S,U,V,W) + 7 digits + control (digit or letter)
+    (r"\b[ABCDEFGHJNPQRSUVW]\d{7}[A-J0-9]\b",
+     PIIType.CUSTOM, 0.45, _NOFLAGS, _ES),
+
+    # ──────────────────────────────────────────────────────────────────
+    # Italian Partita IVA — 11 digits  (financial / contracts)
+    # ──────────────────────────────────────────────────────────────────
+    (r"\b\d{11}\b",
+     PIIType.CUSTOM, 0.25, _NOFLAGS, _IT),
+
+    # ──────────────────────────────────────────────────────────────────
+    # UK NHS Number — 10 digits  (patient / medical)
+    # ──────────────────────────────────────────────────────────────────
+    # Commonly displayed as 3-3-4: 943 476 5919
+    (r"\b\d{3}\s\d{3}\s\d{4}\b",
+     PIIType.SSN, 0.30, _NOFLAGS, _EN),
+    # Compact 10 digits (very low confidence — boosted by context)
+    (r"\b\d{10}\b",
+     PIIType.SSN, 0.20, _NOFLAGS, _EN),
+
+    # ──────────────────────────────────────────────────────────────────
+    # German Krankenversichertennummer  (patient / medical)
+    # ──────────────────────────────────────────────────────────────────
+    # Letter + 9 digits:  A123456789
+    (r"\b[A-Z]\d{9}\b",
+     PIIType.SSN, 0.35, _NOFLAGS, _DE),
+
+    # ──────────────────────────────────────────────────────────────────
+    # German Personalausweisnummer (ID card)  (contracts)
+    # ──────────────────────────────────────────────────────────────────
+    # New format: LXXXXXXXX (letter + 8 alphanum), e.g. T22000129
+    (r"\b[CFGHJKLMNPRTVWXYZ]\d{2}[0-9CFGHJKLMNPRTVWXYZ]{6}\b",
+     PIIType.SSN, 0.35, _NOFLAGS, _DE),
+
+    # ──────────────────────────────────────────────────────────────────
+    # Italian Carta d'Identità  (contracts / patient)
+    # ──────────────────────────────────────────────────────────────────
+    # Old format: AA 1234567, New format: CA12345AA
+    (r"\b[A-Z]{2}\s?\d{5}[A-Z]{2}\b",
+     PIIType.SSN, 0.40, _NOFLAGS, _IT),
+
+    # ──────────────────────────────────────────────────────────────────
+    # UK Sort Code + Account  (financial / contracts)
+    # ──────────────────────────────────────────────────────────────────
+    # 12-34-56 12345678
+    (r"\b\d{2}-\d{2}-\d{2}\s+\d{8}\b",
+     PIIType.IBAN, 0.70, _NOFLAGS, _EN),
+
+    # ──────────────────────────────────────────────────────────────────
+    # US Routing + Account Number  (financial / contracts)
+    # ──────────────────────────────────────────────────────────────────
+    # 9-digit routing number followed by account digits
+    (r"\b\d{9}\s+\d{6,17}\b",
+     PIIType.IBAN, 0.30, _NOFLAGS, _EN),
+
+    # ──────────────────────────────────────────────────────────────────
+    # Portuguese NISS — Social Security  (patient / contracts)
+    # ──────────────────────────────────────────────────────────────────
+    # 11 digits
+    (r"\b\d{11}\b",
+     PIIType.SSN, 0.20, _NOFLAGS, _PT),
+
+    # ──────────────────────────────────────────────────────────────────
+    # Spanish Tarjeta Sanitaria  (patient)
+    # ──────────────────────────────────────────────────────────────────
+    # Format varies by region but many follow: 2-letter province + 12 digits
+    # or NASS format: XX / XXXXXXXXXX / XX
+    (r"\b[A-Z]{2}\d{12}\b",
+     PIIType.SSN, 0.30, _NOFLAGS, _ES),
+
+    # ──────────────────────────────────────────────────────────────────
+    # Medical Record Number patterns  (patient)
+    # ──────────────────────────────────────────────────────────────────
+    # Common format: MRN-XXXXXXX, MR-XXXX, Dossier-XXXX
+    (r"\b(?:MRN|MR|PAT|DOS)\s*[-:]\s*[A-Z0-9]{4,12}\b",
+     PIIType.CUSTOM, 0.70, _IC, _ALL),
+
+    # ──────────────────────────────────────────────────────────────────
+    # Insurance Policy Number patterns  (patient / financial)
+    # ──────────────────────────────────────────────────────────────────
+    # Letters + digits, 8-15 chars — common group health policy IDs
+    (r"\b[A-Z]{2,4}\d{6,12}\b",
+     PIIType.CUSTOM, 0.25, _NOFLAGS, _ALL),
 
     # ──────────────────────────────────────────────────────────────────
     # LOCATION — GPS coordinates
@@ -1068,4 +1275,281 @@ LABEL_NAME_PATTERNS: list[tuple[re.Pattern, PIIType, float, frozenset[str] | Non
         r"[ \t]*[:][ \t]*([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})",
         re.IGNORECASE,
     ), PIIType.EMAIL, 0.95, _ALL),
+
+    # ══════════════════════════════════════════════════════════════════
+    # CONTRACT-DOMAIN label-value patterns
+    # ══════════════════════════════════════════════════════════════════
+
+    # ── Signatory / signed by ──
+    (re.compile(
+        r"(?:Signed\s*by|Signature\s*of|Executed\s*by|Authorized\s*by|"
+        r"Signé\s*par|Signature\s*de|"
+        r"Unterschrieben\s*von|Unterschrift\s*von|"
+        r"Firmado\s*por|Firma\s*de|"
+        r"Firmato\s*da|Firma\s*di|"
+        r"Ondertekend\s*door|Handtekening\s*van|"
+        r"Assinado\s*por|Assinatura\s*de)"
+        r"[ \t]*[:]?[ \t]*"
+        r"([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}(?:[ \t]+(?:de|di|da|van|von|du|del|dos|das)?[ \t]*[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}){1,4})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.88, _ALL),
+
+    # ── Notary names ──
+    (re.compile(
+        r"(?:Notaire|Notary|Notar(?:in)?|Notaio|Notario|Notaris|Tabelião|Tabeli[ãa]o)"
+        r"[ \t]*[:]?[ \t]*"
+        r"((?:M[ae]ître|Ma[iî]tre|Me\.?|Dr\.?|Prof\.?)?\s*"
+        r"[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}){1,3})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.88, _ALL),
+
+    # ── Witness names ──
+    (re.compile(
+        r"(?:Witness|Témoin|Zeuge|Zeugin|Testigo|Testimone|Getuige|Testemunha)"
+        r"[ \t]*[:]?[ \t]*"
+        r"([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}){1,3})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.85, _ALL),
+
+    # ── Company registration numbers ──
+    # SIREN after label
+    (re.compile(
+        r"(?:SIREN|N[°º]?\s*SIREN|Numéro\s*SIREN|Numero\s*SIREN)"
+        r"[ \t]*[:]?[ \t]*(\d{3}\s?\d{3}\s?\d{3})",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.92, _FR),
+    # SIRET after label
+    (re.compile(
+        r"(?:SIRET|N[°º]?\s*SIRET|Numéro\s*SIRET|Numero\s*SIRET)"
+        r"[ \t]*[:]?[ \t]*(\d{3}\s?\d{3}\s?\d{3}\s?\d{5})",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.92, _FR),
+    # RCS (Registre du Commerce et des Sociétés) — e.g. "RCS Paris 362 521 879"
+    (re.compile(
+        r"(?:RCS|R\.C\.S\.)"
+        r"[ \t]+([A-ZÀ-Ü][a-zà-ü]+\s+\d{3}\s?\d{3}\s?\d{3})",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.90, _FR),
+    # HRB / HRA after label
+    (re.compile(
+        r"(?:Handelsregister|HR|Amtsgericht)"
+        r"[ \t]*[:]?[ \t]*((?:[A-ZÀ-Ü][a-zà-ü]+\s+)?HR[AB]\s?\d{3,7}(?:\s?[A-Z])?)",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.90, _DE),
+    # Spanish CIF / NIF after label (company)
+    (re.compile(
+        r"(?:CIF|NIF|C\.I\.F|N\.I\.F)"
+        r"[ \t]*[:]?[ \t]*([ABCDEFGHJNPQRSUVW]\d{7}[A-J0-9])",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.90, _ES),
+    # Italian Partita IVA after label
+    (re.compile(
+        r"(?:Partita\s*IVA|P\.?\s*IVA|P\.I\.)"
+        r"[ \t]*[:]?[ \t]*(?:IT)?(\d{11})",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.90, _IT),
+    # UK Companies House number
+    (re.compile(
+        r"(?:Company\s*(?:Number|No\.?|Registration)|Companies\s*House|Registered\s*No\.?)"
+        r"[ \t]*[:]?[ \t]*([A-Z]{0,2}\d{6,8})",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.88, _EN),
+    # Dutch KvK (Kamer van Koophandel) number
+    (re.compile(
+        r"(?:KvK|Kamer\s*van\s*Koophandel|KvK-nummer)"
+        r"[ \t]*(?:No\.?|Number|Nr\.?|Nummer)?[ \t]*[:]?[ \t]*(\d{8})",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.90, _NL),
+
+    # ── BIC/SWIFT after label ──
+    (re.compile(
+        r"(?:BIC|SWIFT|SWIFT\s*Code|BIC\s*Code|Code\s*BIC|Code\s*SWIFT)"
+        r"[ \t]*[:]?[ \t]*([A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.92, _ALL),
+
+    # ── Sort Code / Routing Number after label ──
+    (re.compile(
+        r"(?:Sort\s*Code|Routing\s*(?:Number|No\.?)|ABA)"
+        r"[ \t]*[:]?[ \t]*(\d{2}-\d{2}-\d{2}|\d{6}|\d{9})",
+        re.IGNORECASE,
+    ), PIIType.IBAN, 0.85, _EN),
+    # Account Number after label (non-IBAN)
+    (re.compile(
+        r"(?:Account\s*(?:Number|No\.?|#)|Acct\.?\s*(?:No\.?|#)|"
+        r"N[°º]?\s*(?:de\s*)?[Cc]ompte|Kontonummer|Kontonr\.?|"
+        r"N[°º]?\s*(?:de\s*)?[Cc]uenta|Numero\s*[Cc]onto|Rekeningnummer)"
+        r"[ \t]*[:]?[ \t]*(\d{6,17})",
+        re.IGNORECASE,
+    ), PIIType.IBAN, 0.80, _ALL),
+
+    # ══════════════════════════════════════════════════════════════════
+    # PATIENT / MEDICAL-DOMAIN label-value patterns
+    # ══════════════════════════════════════════════════════════════════
+
+    # ── Doctor / Physician names ──
+    (re.compile(
+        r"(?:Physician|Doctor|Attending|Treating|Referring|"
+        r"M[ée]decin(?:\s*traitant)?|Praticien|"
+        r"Arzt|[ÄA]rztin|Behandelnder\s*Arzt|"
+        r"M[ée]dico|Dottore|Dott\.?(?:ssa)?|"
+        r"Arts|Behandelend\s*arts)"
+        r"[ \t]*[:]?[ \t]*"
+        r"((?:Dr\.?|Prof\.?|Dott\.?(?:ssa)?)\s*"
+        r"[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}){1,3})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.90, _ALL),
+
+    # ── Hospital / Clinic names ──
+    (re.compile(
+        r"(?:Hospital|Clinic|Medical\s*Center|Health\s*(?:Centre|Center)|"
+        r"H[ôo]pital|Clinique|Centre\s*(?:hospitalier|m[ée]dical)|CHU|"
+        r"Krankenhaus|Klinik|Universit[äa]tsklinikum|"
+        r"Ospedale|Clinica|Policlinico|"
+        r"Ziekenhuis|Kliniek|"
+        r"Hospital|Cl[ií]nica|Centro\s*(?:Hospitalar|M[ée]dico))"
+        r"[ \t]*[:]?[ \t]*((?:[A-ZÀ-Ü][a-zA-Zà-ü'\-]+\s*){1,6})",
+        re.IGNORECASE,
+    ), PIIType.ORG, 0.85, _ALL),
+
+    # ── Medical record number after label ──
+    (re.compile(
+        r"(?:Medical\s*Record\s*(?:Number|No\.?|#)|"
+        r"MRN|Patient\s*(?:ID|Number|No\.?|#)|"
+        r"Dossier\s*(?:m[ée]dical)?(?:\s*n[°º]?)?|"
+        r"N[°º]?\s*(?:de\s*)?dossier(?:\s*m[ée]dical)?|"
+        r"Patientenakte|Patientennummer|"
+        r"Cartella\s*clinica|N[°º]?\s*cartella|"
+        r"Historial(?:\s*cl[ií]nico)?|"
+        r"Pati[ëe]ntnummer|Dossiernummer|"
+        r"Prontu[áa]rio|Processo\s*cl[ií]nico)"
+        r"[ \t]*[:]?[ \t]*([A-Z0-9][\w\-]{3,15})",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.90, _ALL),
+
+    # ── Health insurance number after label ──
+    (re.compile(
+        r"(?:Health\s*Insurance|Insurance\s*(?:Number|No\.?|ID|Policy)|"
+        r"(?:Carte\s*)?[Vv]itale|Assurance\s*[Mm]aladie|"
+        r"N[°º]?\s*(?:d[e']\s*)?Assur[ée](?:\s*social)?|"
+        r"Krankenversichertennummer|Versichertennummer|Kassennummer|"
+        r"Krankenkasse(?:nnummer)?|"
+        r"Tessera\s*[Ss]anitaria|N[°º]?\s*tessera|"
+        r"Tarjeta\s*[Ss]anitaria|N[°º]?\s*(?:de\s*)?afiliaci[oó]n|"
+        r"Zorgverzekering(?:snummer)?|Polisnummer|UZOVI|"
+        r"N[°º]?\s*(?:de\s*)?[Uu]tente|Cart[ãa]o\s*(?:de\s*)?[Ss]a[úu]de)"
+        r"[ \t]*[:]?[ \t]*([A-Z0-9][\w\s\-]{5,25})",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.88, _ALL),
+
+    # ── NHS Number after label (UK) ──
+    (re.compile(
+        r"(?:NHS\s*(?:Number|No\.?|#)|NHS\s*ID)"
+        r"[ \t]*[:]?[ \t]*(\d{3}\s?\d{3}\s?\d{4})",
+        re.IGNORECASE,
+    ), PIIType.SSN, 0.92, _EN),
+
+    # ── German Krankenversichertennummer after label ──
+    (re.compile(
+        r"(?:Krankenversichertennummer|Versichertennummer|KVNR|Versicherten-Nr)"
+        r"[ \t]*[:]?[ \t]*([A-Z]\d{9})",
+        re.IGNORECASE,
+    ), PIIType.SSN, 0.92, _DE),
+
+    # ── Italian Tessera Sanitaria number after label ──
+    (re.compile(
+        r"(?:Tessera\s*[Ss]anitaria|N\.?\s*Tessera|Cod(?:ice)?\s*Sanitario)"
+        r"[ \t]*[:]?[ \t]*(\d{20}|[A-Z0-9]{10,20})",
+        re.IGNORECASE,
+    ), PIIType.SSN, 0.88, _IT),
+
+    # ── Emergency contact ──
+    (re.compile(
+        r"(?:Emergency\s*Contact|Next\s*of\s*Kin|In\s*Case\s*of\s*Emergency|ICE|"
+        r"Personne\s*[àa]\s*(?:contacter|pr[ée]venir)|Contact\s*d['\u2019]urgence|"
+        r"Notfallkontakt|Kontaktperson|"
+        r"Contacto\s*de\s*emergencia|"
+        r"Contatto\s*(?:di\s*)?emergenza|"
+        r"Noodcontact|Contactpersoon|"
+        r"Contacto\s*de\s*emerg[êe]ncia|Pessoa\s*de\s*contacto)"
+        r"[ \t]*[:]?[ \t]*"
+        r"([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}){1,3})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.85, _ALL),
+
+    # ── Blood type / Group (signals patient context, captures nearby name) ──
+    # Not PII itself but confirms medical doc context
+
+    # ── Portuguese NISS after label ──
+    (re.compile(
+        r"(?:NISS|N[°º]?\s*(?:de\s*)?Segurança\s*Social|"
+        r"Seguran[çc]a\s*Social(?:\s*n[°º]?)?)"
+        r"[ \t]*[:]?[ \t]*(\d{11})",
+        re.IGNORECASE,
+    ), PIIType.SSN, 0.90, _PT),
+
+    # ── Brazilian CPF after label (PT context) ──
+    (re.compile(
+        r"(?:CPF|Cadastro\s*(?:de\s*)?Pessoa\s*F[ií]sica)"
+        r"[ \t]*[:]?[ \t]*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})",
+        re.IGNORECASE,
+    ), PIIType.SSN, 0.90, _PT),
+    # Brazilian CNPJ after label
+    (re.compile(
+        r"(?:CNPJ|Cadastro\s*(?:Nacional\s*(?:de\s*)?)?Pessoa\s*Jur[ií]dica)"
+        r"[ \t]*[:]?[ \t]*(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.90, _PT),
+
+    # ══════════════════════════════════════════════════════════════════
+    # FINANCIAL-DOMAIN label-value patterns
+    # ══════════════════════════════════════════════════════════════════
+
+    # ── Insurance policy after label ──
+    (re.compile(
+        r"(?:Policy\s*(?:Number|No\.?|#)|Police\s*(?:d['\u2019]assurance\s*)?(?:n[°º]?)?|"
+        r"Policennummer|Polizza|P[oó]liza|Polisnummer|Ap[oó]lice)"
+        r"[ \t]*[:]?[ \t]*([A-Z0-9][\w\-]{5,20})",
+        re.IGNORECASE,
+    ), PIIType.CUSTOM, 0.85, _ALL),
+
+    # ── Beneficiary / Payee names ──
+    (re.compile(
+        r"(?:Beneficiary|Payee|Pay\s*to(?:\s*the\s*order\s*of)?|"
+        r"B[ée]n[ée]ficiaire|Ordre\s*de|"
+        r"Beg[üu]nstigter|Zahlungsempf[äa]nger|"
+        r"Beneficiario|Destinatario|"
+        r"Begunstigde|"
+        r"Benefici[áa]rio)"
+        r"[ \t]*[:]?[ \t]*"
+        r"([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}){1,4})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.85, _ALL),
+
+    # ── Guarantor / Surety names ──
+    (re.compile(
+        r"(?:Guarantor|Surety|Co-signer|"
+        r"Garant|Caution(?:naire)?|"
+        r"B[üu]rge|"
+        r"Garante|Fideiussore|Fidejussore|"
+        r"Borg|"
+        r"Fiador|Avalista)"
+        r"[ \t]*[:]?[ \t]*"
+        r"([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}){1,3})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.85, _ALL),
+
+    # ── Power of Attorney / Representative ──
+    (re.compile(
+        r"(?:Power\s*of\s*Attorney|Attorney-in-Fact|Legal\s*Representative|"
+        r"Mandataire|Repr[ée]sentant(?:\s*l[ée]gal)?|Fond[ée]\s*de\s*pouvoir|"
+        r"Bevollm[äa]chtigter|Rechtsvertreter|Vertretungsberechtigt|"
+        r"Procuratore|Rappresentante\s*legale|"
+        r"Apoderado|Representante\s*legal|"
+        r"Gevolmachtigde|Vertegenwoordiger|"
+        r"Procurador|Mandatário|Mandat[áa]rio)"
+        r"[ \t]*[:]?[ \t]*"
+        r"([A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}(?:[ \t]+[A-ZÀ-Ü][a-zA-Zà-ü'\-]{1,25}){1,4})",
+        re.IGNORECASE,
+    ), PIIType.PERSON, 0.88, _ALL),
 ]

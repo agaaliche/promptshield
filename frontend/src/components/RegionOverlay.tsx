@@ -7,7 +7,7 @@ import { useState, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
 import { PII_COLORS, getPIIColor, loadLabelConfig, type PIIRegion, type RegionAction, type PIIType } from "../types";
 import { CURSOR_GRAB, CURSOR_GRABBING } from "../cursors";
-import { X, Trash2, Key, Edit3, Tag, ChevronRight, ChevronLeft, Type, Search } from "lucide-react";
+import { X, Trash2, Key, Edit3, Tag, ChevronRight, ChevronLeft, ReplaceAll, Search } from "lucide-react";
 
 export type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
@@ -554,7 +554,7 @@ function RegionOverlay({
               title="Replace all matching"
               className="btn-ghost btn-sm"
             >
-              <Type size={16} />
+              <ReplaceAll size={16} />
               {toolbarExpanded && "Replace all"}
             </button>
 

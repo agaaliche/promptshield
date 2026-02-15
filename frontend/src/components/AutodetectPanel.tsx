@@ -1,11 +1,35 @@
 /** Autodetect PII settings dropdown panel with Blacklist grid. */
 
-import { useState, useCallback, useRef } from "react";
-import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X } from "lucide-react";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X, Save, Trash2, MoreHorizontal } from "lucide-react";
 import { Z_TOP_DIALOG } from "../zIndex";
 import BlacklistGrid, { type BlacklistAction, createEmptyGrid } from "./BlacklistGrid";
 
 type TabKey = "patterns" | "blacklist" | "ai" | "deep";
+
+/** Saved detection template stored in localStorage */
+interface DetectionTemplate {
+  name: string;
+  fuzziness: number;
+  regexTypes: Record<string, boolean>;
+  nerTypes: Record<string, boolean>;
+  llmEnabled: boolean;
+  blCells: string[][];
+  blAction: BlacklistAction;
+}
+
+const TEMPLATES_KEY = "doc-anon-detection-templates";
+
+function loadTemplates(): DetectionTemplate[] {
+  try {
+    const raw = localStorage.getItem(TEMPLATES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveTemplates(templates: DetectionTemplate[]) {
+  localStorage.setItem(TEMPLATES_KEY, JSON.stringify(templates));
+}
 
 interface AutodetectPanelProps {
   isProcessing: boolean;
@@ -66,15 +90,77 @@ export default function AutodetectPanel({
   const [isMaximized, setIsMaximized] = useState(false);
   const [toolbarBottom, setToolbarBottom] = useState(0);
 
+  // Templates
+  const [templates, setTemplates] = useState<DetectionTemplate[]>(loadTemplates);
+  const [templateName, setTemplateName] = useState("");
+  const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [showSaveMenu, setShowSaveMenu] = useState(false);
+
   // Blacklist state
   const [blCells, setBlCells] = useState(() => createEmptyGrid());
   const [blAction, setBlAction] = useState<BlacklistAction>("none");
   const [blMatchStatus, setBlMatchStatus] = useState<Map<string, "matched" | "no-match" | "exists">>(new Map());
 
+  // Auto-save option changes back to the selected template
+  useEffect(() => {
+    if (!selectedTemplate) return;
+    const tpl: DetectionTemplate = {
+      name: selectedTemplate,
+      fuzziness,
+      regexTypes: { ...regexTypes },
+      nerTypes: { ...nerTypes },
+      llmEnabled,
+      blCells: blCells.map(r => [...r]),
+      blAction,
+    };
+    setTemplates(prev => {
+      const updated = prev.map(t => t.name === selectedTemplate ? tpl : t);
+      saveTemplates(updated);
+      return updated;
+    });
+  }, [selectedTemplate, fuzziness, regexTypes, nerTypes, llmEnabled, blCells, blAction]);
+
   // Resize state
   const [panelSize, setPanelSize] = useState({ w: DEFAULT_PANEL_W, h: DEFAULT_PANEL_H });
   const resizeRef = useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Drag state
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    if (isMaximized) return;
+    // Don't start drag on window-control buttons (maximize/close)
+    if ((e.target as HTMLElement).closest("[data-nodrag]")) return;
+    e.preventDefault();
+    const rect = panelRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const origX = dragPos?.x ?? rect.left;
+    const origY = dragPos?.y ?? rect.top;
+    // Top boundary = bottom of the document viewer toolbar (panel's parent)
+    const toolbar = panelRef.current?.parentElement as HTMLElement | null;
+    const topBound = toolbar ? toolbar.getBoundingClientRect().bottom : 48;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origX, origY };
+    const onMove = (me: MouseEvent) => {
+      if (!dragRef.current) return;
+      const dx = me.clientX - dragRef.current.startX;
+      const dy = me.clientY - dragRef.current.startY;
+      const pw = rect.width;
+      const ph = rect.height;
+      setDragPos({
+        x: Math.max(leftOffset, Math.min(window.innerWidth - rightOffset - pageNavWidth - pw, dragRef.current.origX + dx)),
+        y: Math.max(topBound, Math.min(window.innerHeight - ph, dragRef.current.origY + dy)),
+      });
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [isMaximized, dragPos, leftOffset, rightOffset, pageNavWidth]);
 
   const regexEnabled = Object.values(regexTypes).some(Boolean);
   const nerEnabled = Object.values(nerTypes).some(Boolean);
@@ -139,6 +225,21 @@ export default function AutodetectPanel({
         display: "flex",
         flexDirection: "column" as const,
         overflow: "hidden",
+      } : dragPos ? {
+        position: "fixed",
+        top: dragPos.y,
+        left: dragPos.x,
+        background: "var(--bg-secondary)",
+        border: "1px solid var(--border-color)",
+        borderRadius: 8,
+        boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
+        zIndex: Z_TOP_DIALOG,
+        width: showTabs ? panelSize.w : 340,
+        maxWidth: `calc(100vw - ${rightOffset + 8}px)`,
+        maxHeight: showTabs ? panelSize.h : undefined,
+        display: "flex",
+        flexDirection: "column" as const,
+        overflow: "hidden",
       } : {
         position: "absolute",
         top: "calc(100% + 8px)",
@@ -157,16 +258,20 @@ export default function AutodetectPanel({
       }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      {/* Scope tabs + window controls */}
-      <div style={{
-        display: "flex",
-        gap: 2,
-        borderBottom: "1px solid var(--border-color)",
-        background: "rgba(0,0,0,0.15)",
-        flexShrink: 0,
-        padding: "0 10px",
-        alignItems: "center",
-      }}>
+      {/* Scope tabs + window controls — drag handle */}
+      <div
+        onMouseDown={handleDragStart}
+        style={{
+          display: "flex",
+          gap: 2,
+          borderBottom: "1px solid var(--border-color)",
+          background: "rgba(0,0,0,0.15)",
+          flexShrink: 0,
+          padding: "0 10px",
+          alignItems: "center",
+          cursor: isMaximized ? "default" : "grab",
+          userSelect: "none",
+        }}>
         {([
           { key: "page" as const, label: "Current page" },
           { key: "all" as const, label: "All pages" },
@@ -201,7 +306,7 @@ export default function AutodetectPanel({
 
         {/* Spacer + window controls */}
         <div style={{ flex: 1 }} />
-        <div style={{ display: "flex", gap: 2, marginLeft: 8 }}>
+        <div data-nodrag style={{ display: "flex", gap: 2, marginLeft: 8 }}>
           <button
             onClick={() => {
               if (!isMaximized && panelRef.current) {
@@ -303,6 +408,175 @@ export default function AutodetectPanel({
           </div>
         </div>
       </div>
+
+      {/* Saved templates select — only when templates exist */}
+      {templates.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 14px", marginTop: 6, position: "relative" }}>
+          <select
+            value={selectedTemplate}
+            onChange={(e) => {
+              const name = e.target.value;
+              setSelectedTemplate(name);
+              const tpl = templates.find(t => t.name === name);
+              if (!tpl) return;
+              setFuzziness(tpl.fuzziness);
+              setRegexTypes(tpl.regexTypes);
+              setNerTypes(tpl.nerTypes);
+              setLlmEnabled(tpl.llmEnabled);
+              setBlCells(tpl.blCells);
+              setBlAction(tpl.blAction);
+              if (!showTabs) setShowTabs(true);
+            }}
+            style={{
+              flex: 1,
+              height: 28,
+              fontSize: 11,
+              background: "var(--bg-surface)",
+              color: "var(--text-primary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 4,
+              padding: "0 6px",
+              cursor: "pointer",
+            }}
+          >
+            <option value="" disabled>Load template…</option>
+            {templates.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+          </select>
+          {selectedTemplate && (
+            <button
+              title="Delete selected template"
+              onClick={() => {
+                const updated = templates.filter(t => t.name !== selectedTemplate);
+                saveTemplates(updated);
+                setTemplates(updated);
+                setSelectedTemplate("");
+              }}
+              style={{
+                width: 28, height: 28, padding: 0,
+                background: "transparent",
+                border: "1px solid var(--border-color)",
+                borderRadius: 4,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "var(--text-muted)",
+                transition: "all 0.15s ease",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(220,38,38,0.15)"; e.currentTarget.style.color = "#f87171"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-muted)"; }}
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
+          {/* Ellipsis (save-as) button */}
+          <button
+            title="Save as template"
+            onClick={() => setShowSaveMenu(v => !v)}
+            style={{
+              width: 28, height: 28, padding: 0,
+              marginLeft: selectedTemplate ? 16 : 0,
+              background: showSaveMenu ? "var(--bg-surface)" : "transparent",
+              border: "1px solid var(--border-color)",
+              borderRadius: 4,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--text-muted)",
+              transition: "all 0.15s ease",
+            }}
+            onMouseEnter={(e) => { if (!showSaveMenu) e.currentTarget.style.background = "var(--bg-surface)"; }}
+            onMouseLeave={(e) => { if (!showSaveMenu) e.currentTarget.style.background = "transparent"; }}
+          >
+            <MoreHorizontal size={14} />
+          </button>
+          {/* Save-as dropdown menu */}
+          {showSaveMenu && (
+            <div
+              style={{
+                position: "absolute",
+                top: "100%",
+                left: 14,
+                right: 14,
+                marginTop: 4,
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border-color)",
+                borderRadius: 6,
+                boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+                padding: 8,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                zIndex: 10,
+              }}
+            >
+              <input
+                autoFocus
+                type="text"
+                placeholder="Template name…"
+                value={templateName}
+                onChange={(e) => setTemplateName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") document.getElementById("save-tpl-btn")?.click();
+                  if (e.key === "Escape") setShowSaveMenu(false);
+                }}
+                style={{
+                  flex: 1,
+                  height: 28,
+                  fontSize: 11,
+                  background: "var(--bg-secondary)",
+                  color: "var(--text-primary)",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: 4,
+                  padding: "0 8px",
+                }}
+              />
+              <button
+                id="save-tpl-btn"
+                disabled={!templateName.trim()}
+                onClick={() => {
+                  const name = templateName.trim();
+                  if (!name) return;
+                  const tpl: DetectionTemplate = {
+                    name,
+                    fuzziness,
+                    regexTypes: { ...regexTypes },
+                    nerTypes: { ...nerTypes },
+                    llmEnabled,
+                    blCells: blCells.map(r => [...r]),
+                    blAction,
+                  };
+                  const updated = [...templates.filter(t => t.name !== name), tpl];
+                  saveTemplates(updated);
+                  setTemplates(updated);
+                  setSelectedTemplate(name);
+                  setTemplateName("");
+                  setShowSaveMenu(false);
+                }}
+                title="Save current settings as template"
+                style={{
+                  height: 28,
+                  padding: "0 10px",
+                  fontSize: 11,
+                  fontWeight: 500,
+                  background: "var(--accent-primary)",
+                  color: "white",
+                  border: "none",
+                  borderRadius: 4,
+                  cursor: templateName.trim() ? "pointer" : "not-allowed",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  opacity: templateName.trim() ? 1 : 0.5,
+                }}
+              >
+                <Save size={12} /> Save
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Detection settings tabs (collapsible via gear) */}
       {showTabs && (<>

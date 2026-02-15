@@ -9,7 +9,7 @@ import {
   Trash2,
   X,
   Key,
-  Type,
+  ReplaceAll,
 } from "lucide-react";
 import { CURSOR_GRAB, CURSOR_GRABBING } from "../cursors";
 import {
@@ -179,7 +179,7 @@ export default function MultiSelectToolbar({
             title="Replace all matching text"
             className="btn-ghost btn-sm"
           >
-            <Type size={16} />
+            <ReplaceAll size={16} />
             {expanded && "Replace all"}
           </button>
 

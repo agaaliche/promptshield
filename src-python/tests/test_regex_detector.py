@@ -652,3 +652,469 @@ class TestLinkedGroup:
         for r in org_regions:
             assert r.text == text
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Contract-domain patterns
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestBIC:
+    """BIC / SWIFT code detection."""
+
+    def test_bic_with_label(self):
+        text = "BIC: BNPAFRPP"
+        matches = _of_type(detect_regex(text), "CUSTOM")
+        assert any("BNPAFRPP" in m.text for m in matches)
+
+    def test_bic_11_char(self):
+        text = "SWIFT Code: DEUTDEFF500"
+        matches = _of_type(detect_regex(text), "CUSTOM")
+        assert any("DEUTDEFF500" in m.text for m in matches)
+
+    def test_bic_invalid_country(self):
+        """BIC with invalid country code should be rejected by validation."""
+        text = "Code: ABCDXX2L"
+        matches = _of_type(detect_regex(text), "CUSTOM")
+        bic_matches = [m for m in matches if len(m.text.strip()) in (8, 11)
+                       and m.text.strip().isalnum()]
+        assert len(bic_matches) == 0
+
+
+class TestSIREN:
+    """French SIREN / SIRET detection."""
+
+    def test_siren_label(self):
+        text = "SIREN: 362 521 879"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "CUSTOM")
+        assert any("362 521 879" in m.text for m in matches)
+
+    def test_siret_label(self):
+        text = "SIRET: 362 521 879 00034"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "CUSTOM")
+        assert any("362 521 879 00034" in m.text for m in matches)
+
+    def test_rcs(self):
+        text = "RCS Paris 362 521 879"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "CUSTOM")
+        assert any("362 521 879" in m.text for m in matches)
+
+
+class TestHRB:
+    """German Handelsregister detection."""
+
+    def test_hrb_standalone(self):
+        text = "eingetragen im Handelsregister HRB 137077"
+        matches = _of_type(detect_regex(text, detection_language="de"), "CUSTOM")
+        assert any("HRB 137077" in m.text for m in matches)
+
+    def test_hrb_label(self):
+        text = "Handelsregister: München HRB 12345"
+        matches = _of_type(detect_regex(text, detection_language="de"), "CUSTOM")
+        assert len(matches) >= 1
+
+
+class TestEIN:
+    """US EIN detection."""
+
+    def test_ein_with_context(self):
+        text = "EIN: 12-3456789"
+        matches = _of_type(detect_regex(text, detection_language="en"), "SSN")
+        assert any("12-3456789" in m.text for m in matches)
+
+
+class TestSpanishCIF:
+    """Spanish CIF detection."""
+
+    def test_cif_standalone(self):
+        text = "CIF: B12345678"
+        matches = _of_type(detect_regex(text, detection_language="es"), "CUSTOM")
+        assert any("B12345678" in m.text for m in matches)
+
+    def test_cif_with_label(self):
+        text = "N.I.F: A87654321"
+        matches = _of_type(detect_regex(text, detection_language="es"), "CUSTOM")
+        assert any("A87654321" in m.text for m in matches)
+
+
+class TestSignatory:
+    """Contract signatory label-value patterns."""
+
+    def test_signed_by_en(self):
+        text = "Signed by: John William Smith"
+        matches = _of_type(detect_regex(text), "PERSON")
+        assert any("John William Smith" in m.text for m in matches)
+
+    def test_signe_par_fr(self):
+        text = "Signé par: Jean-Pierre Dupont"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "PERSON")
+        assert any("Jean-Pierre Dupont" in m.text for m in matches)
+
+    def test_firmado_por_es(self):
+        text = "Firmado por: María García López"
+        matches = _of_type(detect_regex(text, detection_language="es"), "PERSON")
+        assert any("García López" in m.text for m in matches)
+
+    def test_unterschrieben_von_de(self):
+        text = "Unterschrieben von: Hans Müller"
+        matches = _of_type(detect_regex(text, detection_language="de"), "PERSON")
+        assert any("Hans Müller" in m.text for m in matches)
+
+    def test_firmato_da_it(self):
+        text = "Firmato da: Giuseppe Rossi"
+        matches = _of_type(detect_regex(text, detection_language="it"), "PERSON")
+        assert any("Giuseppe Rossi" in m.text for m in matches)
+
+
+class TestNotary:
+    """Notary name detection."""
+
+    def test_notaire(self):
+        text = "Notaire: Maître François Lefèvre"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "PERSON")
+        assert any("Lefèvre" in m.text for m in matches)
+
+    def test_notar(self):
+        text = "Notar: Dr. Wolfgang Schneider"
+        matches = _of_type(detect_regex(text, detection_language="de"), "PERSON")
+        assert any("Schneider" in m.text for m in matches)
+
+
+class TestWitness:
+    """Witness name detection."""
+
+    def test_witness_en(self):
+        text = "Witness: Sarah Johnson"
+        matches = _of_type(detect_regex(text), "PERSON")
+        assert any("Sarah Johnson" in m.text for m in matches)
+
+    def test_temoin_fr(self):
+        text = "Témoin: Michel Blanc"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "PERSON")
+        assert any("Michel Blanc" in m.text for m in matches)
+
+
+class TestCompanyRegistration:
+    """Company registration number label-value patterns."""
+
+    def test_kvk_nl(self):
+        text = "KvK-nummer: 12345678"
+        matches = _of_type(detect_regex(text, detection_language="nl"), "CUSTOM")
+        assert any("12345678" in m.text for m in matches)
+
+    def test_companies_house_uk(self):
+        text = "Company Number: 01234567"
+        matches = _of_type(detect_regex(text, detection_language="en"), "CUSTOM")
+        assert any("01234567" in m.text for m in matches)
+
+    def test_partita_iva_label(self):
+        text = "Partita IVA: IT12345678901"
+        matches = _of_type(detect_regex(text, detection_language="it"), "CUSTOM")
+        assert len(matches) >= 1
+
+
+class TestBankAccountLabels:
+    """Sort code, routing number, and account number label patterns."""
+
+    def test_sort_code(self):
+        text = "Sort Code: 12-34-56"
+        matches = _of_type(detect_regex(text, detection_language="en"), "IBAN")
+        assert any("12-34-56" in m.text for m in matches)
+
+    def test_account_number(self):
+        text = "Account Number: 12345678"
+        matches = _of_type(detect_regex(text), "IBAN")
+        assert any("12345678" in m.text for m in matches)
+
+    def test_kontonummer(self):
+        text = "Kontonummer: 1234567890"
+        matches = _of_type(detect_regex(text, detection_language="de"), "IBAN")
+        assert any("1234567890" in m.text for m in matches)
+
+
+class TestPowerOfAttorney:
+    """Power of attorney / representative label patterns."""
+
+    def test_poa_en(self):
+        text = "Attorney-in-Fact: Robert James Williams"
+        matches = _of_type(detect_regex(text), "PERSON")
+        assert any("Robert James Williams" in m.text for m in matches)
+
+    def test_mandataire_fr(self):
+        text = "Mandataire: Sophie Martin"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "PERSON")
+        assert any("Sophie Martin" in m.text for m in matches)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Financial-domain patterns
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestUKSortCodeAccount:
+    """UK sort code + account number standalone pattern."""
+
+    def test_sort_code_plus_account(self):
+        text = "Payment to 12-34-56 12345678"
+        matches = _of_type(detect_regex(text, detection_language="en"), "IBAN")
+        assert any("12-34-56 12345678" in m.text for m in matches)
+
+
+class TestInsurancePolicy:
+    """Insurance policy number label-value patterns."""
+
+    def test_policy_en(self):
+        text = "Policy Number: POL123456789"
+        matches = _of_type(detect_regex(text), "CUSTOM")
+        assert any("POL123456789" in m.text for m in matches)
+
+    def test_police_fr(self):
+        text = "Police d'assurance n°: ASS987654321"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "CUSTOM")
+        assert any("ASS987654321" in m.text for m in matches)
+
+
+class TestBeneficiary:
+    """Beneficiary / payee label-value patterns."""
+
+    def test_beneficiary_en(self):
+        text = "Beneficiary: Alice Marie Johnson"
+        matches = _of_type(detect_regex(text), "PERSON")
+        assert any("Alice Marie Johnson" in m.text for m in matches)
+
+    def test_beneficiaire_fr(self):
+        text = "Bénéficiaire: Pierre Durand"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "PERSON")
+        assert any("Pierre Durand" in m.text for m in matches)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Patient / medical-domain patterns
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestNHSNumber:
+    """UK NHS number detection."""
+
+    def test_nhs_label(self):
+        text = "NHS Number: 943 476 5919"
+        matches = _of_type(detect_regex(text, detection_language="en"), "SSN")
+        assert any("943 476 5919" in m.text for m in matches)
+
+    def test_nhs_validation(self):
+        """NHS with valid check digit — should NOT be rejected."""
+        from core.detection.regex_detector import _is_valid_nhs_number
+        # 943 476 5919 → check last digit
+        assert _is_valid_nhs_number("9434765919")
+
+
+class TestGermanHealthInsurance:
+    """German Krankenversichertennummer detection."""
+
+    def test_kvnr_label(self):
+        text = "Krankenversichertennummer: A123456789"
+        matches = _of_type(detect_regex(text, detection_language="de"), "SSN")
+        assert any("A123456789" in m.text for m in matches)
+
+    def test_kvnr_standalone(self):
+        text = "Versicherten-Nr: T987654321"
+        matches = _of_type(detect_regex(text, detection_language="de"), "SSN")
+        assert any("T987654321" in m.text for m in matches)
+
+
+class TestMedicalRecordNumber:
+    """Medical record number / dossier patterns."""
+
+    def test_mrn_en(self):
+        text = "MRN: 12345678"
+        matches = _of_type(detect_regex(text), "CUSTOM")
+        assert any("12345678" in m.text for m in matches)
+
+    def test_dossier_medical_fr(self):
+        text = "Dossier médical n°: PAT2024001"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "CUSTOM")
+        assert any("PAT2024001" in m.text for m in matches)
+
+    def test_patientenakte_de(self):
+        text = "Patientennummer: P-00012345"
+        matches = _of_type(detect_regex(text, detection_language="de"), "CUSTOM")
+        assert any("P-00012345" in m.text for m in matches)
+
+    def test_cartella_it(self):
+        text = "N° cartella: CC2024-7890"
+        matches = _of_type(detect_regex(text, detection_language="it"), "CUSTOM")
+        assert any("CC2024-7890" in m.text for m in matches)
+
+
+class TestDoctorNames:
+    """Doctor / physician name detection."""
+
+    def test_physician_en(self):
+        text = "Physician: Dr. James Wilson"
+        matches = _of_type(detect_regex(text), "PERSON")
+        assert any("James Wilson" in m.text for m in matches)
+
+    def test_medecin_fr(self):
+        text = "Médecin traitant: Dr. Marie Lefebvre"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "PERSON")
+        assert any("Marie Lefebvre" in m.text for m in matches)
+
+    def test_arzt_de(self):
+        text = "Behandelnder Arzt: Dr. Thomas Schneider"
+        matches = _of_type(detect_regex(text, detection_language="de"), "PERSON")
+        assert any("Thomas Schneider" in m.text for m in matches)
+
+
+class TestHospitalNames:
+    """Hospital / clinic name detection."""
+
+    def test_hospital_en(self):
+        text = "Hospital: Saint Mary General"
+        matches = _of_type(detect_regex(text), "ORG")
+        assert any("Saint Mary" in m.text for m in matches)
+
+    def test_hopital_fr(self):
+        text = "Hôpital: Pitié Salpêtrière"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "ORG")
+        assert any("Pitié" in m.text or "Salpêtrière" in m.text for m in matches)
+
+    def test_krankenhaus_de(self):
+        text = "Krankenhaus: Universitätsklinikum München"
+        matches = _of_type(detect_regex(text, detection_language="de"), "ORG")
+        assert len(matches) >= 1
+
+
+class TestHealthInsuranceLabel:
+    """Health insurance number label-value patterns."""
+
+    def test_health_insurance_en(self):
+        text = "Health Insurance: ABC123456789"
+        matches = _of_type(detect_regex(text), "CUSTOM")
+        assert any("ABC123456789" in m.text for m in matches)
+
+    def test_carte_vitale_fr(self):
+        text = "Carte Vitale: 1850578006084"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "CUSTOM")
+        assert len(matches) >= 1
+
+    def test_krankenkasse_de(self):
+        text = "Krankenkassennummer: T0012345678"
+        matches = _of_type(detect_regex(text, detection_language="de"), "CUSTOM")
+        assert any("T0012345678" in m.text for m in matches)
+
+
+class TestEmergencyContact:
+    """Emergency contact label-value patterns."""
+
+    def test_emergency_en(self):
+        text = "Emergency Contact: Jane Elizabeth Smith"
+        matches = _of_type(detect_regex(text), "PERSON")
+        assert any("Jane Elizabeth Smith" in m.text for m in matches)
+
+    def test_urgence_fr(self):
+        text = "Contact d'urgence: Michel Dupont"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "PERSON")
+        assert any("Michel Dupont" in m.text for m in matches)
+
+    def test_notfallkontakt_de(self):
+        text = "Notfallkontakt: Anna Müller"
+        matches = _of_type(detect_regex(text, detection_language="de"), "PERSON")
+        assert any("Anna Müller" in m.text for m in matches)
+
+
+class TestPortugueseNISS:
+    """Portuguese NISS label-value patterns."""
+
+    def test_niss_label(self):
+        text = "NISS: 12345678901"
+        matches = _of_type(detect_regex(text, detection_language="es"), "SSN")
+        assert any("12345678901" in m.text for m in matches)
+
+
+class TestBrazilianCPF:
+    """Brazilian CPF/CNPJ label-value patterns."""
+
+    def test_cpf_label(self):
+        text = "CPF: 123.456.789-09"
+        matches = _of_type(detect_regex(text, detection_language="es"), "SSN")
+        assert any("123.456.789-09" in m.text for m in matches)
+
+    def test_cnpj_label(self):
+        text = "CNPJ: 12.345.678/0001-95"
+        matches = _of_type(detect_regex(text, detection_language="es"), "CUSTOM")
+        assert any("12.345.678/0001-95" in m.text for m in matches)
+
+
+class TestItalianCartaIdentita:
+    """Italian Carta d'Identità detection."""
+
+    def test_carta_identita(self):
+        text = "Carta d'identità: CA12345AA"
+        matches = _of_type(detect_regex(text, detection_language="it"), "SSN")
+        assert any("CA12345AA" in m.text for m in matches)
+
+
+class TestGuarantor:
+    """Guarantor / surety name detection."""
+
+    def test_guarantor_en(self):
+        text = "Guarantor: William Robert Davis"
+        matches = _of_type(detect_regex(text), "PERSON")
+        assert any("William Robert Davis" in m.text for m in matches)
+
+    def test_garant_fr(self):
+        text = "Caution: Philippe Lambert"
+        matches = _of_type(detect_regex(text, detection_language="fr"), "PERSON")
+        assert any("Philippe Lambert" in m.text for m in matches)
+
+
+class TestMRNStandalone:
+    """Standalone MRN/PAT/DOS pattern."""
+
+    def test_mrn_prefix(self):
+        text = "Please refer to MRN-A12345678"
+        matches = _of_type(detect_regex(text), "CUSTOM")
+        assert any("MRN-A12345678" in m.text for m in matches)
+
+    def test_dos_prefix(self):
+        text = "Voir DOS: PAT2024001"
+        matches = _of_type(detect_regex(text), "CUSTOM")
+        assert len(matches) >= 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Validation function unit tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestNHSValidation:
+    def test_valid_nhs(self):
+        from core.detection.regex_detector import _is_valid_nhs_number
+        # Known valid: 4505577104 (example from NHS spec)
+        assert _is_valid_nhs_number("4505577104")
+
+    def test_invalid_nhs(self):
+        from core.detection.regex_detector import _is_valid_nhs_number
+        assert not _is_valid_nhs_number("1234567890")
+
+
+class TestBICValidation:
+    def test_valid_bic(self):
+        from core.detection.regex_detector import _is_valid_bic
+        assert _is_valid_bic("BNPAFRPP")
+        assert _is_valid_bic("DEUTDEFF500")
+
+    def test_invalid_bic_bad_country(self):
+        from core.detection.regex_detector import _is_valid_bic
+        assert not _is_valid_bic("ABCDXX2L")
+
+
+class TestItalianPIVAValidation:
+    def test_valid_piva(self):
+        from core.detection.regex_detector import _is_valid_italian_piva
+        # Example valid P.IVA: 07643520567
+        assert _is_valid_italian_piva("07643520567")
+
+    def test_invalid_piva(self):
+        from core.detection.regex_detector import _is_valid_italian_piva
+        assert not _is_valid_italian_piva("00000000001")
+

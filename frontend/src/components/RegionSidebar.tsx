@@ -8,7 +8,7 @@ import {
   Key,
   Trash2,
   X,
-  Type,
+  ReplaceAll,
   Search,
   Edit3,
   MoreVertical,
@@ -602,7 +602,7 @@ export default function RegionSidebar({
                 title="Replace all matching"
                 style={styles.sidebarBtn}
               >
-                <Type size={13} />
+                <ReplaceAll size={13} />
               </button>
               {/* Detect */}
               <button

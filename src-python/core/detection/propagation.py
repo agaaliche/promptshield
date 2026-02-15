@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import bisect
 import logging
+import unicodedata
 import uuid
 from collections import defaultdict
 
@@ -25,7 +26,9 @@ from core.detection.block_offsets import (
 )
 from core.detection.noise_filters import (
     _is_loc_pipeline_noise,
+    _is_org_pipeline_noise,
     _is_person_pipeline_noise,
+    has_legal_suffix,
     _STRUCTURED_MIN_DIGITS,
 )
 from models.schemas import (
@@ -35,6 +38,27 @@ from models.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Accent-agnostic helpers — strip diacritics while preserving string length
+# ---------------------------------------------------------------------------
+
+def _strip_accents(text: str) -> str:
+    """Strip diacritics/accents while preserving string length.
+
+    Each original character maps to exactly one output character (the base
+    letter without combining marks), so ``len(result) == len(text)`` and
+    character-offset indices remain valid.
+
+    Examples: é→e, ü→u, ñ→n, ö→o, ç→c, ß→ß (no decomposition).
+    """
+    out: list[str] = []
+    for ch in text:
+        nfd = unicodedata.normalize("NFD", ch)
+        base = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
+        out.append(base if base else ch)
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -128,9 +152,11 @@ def propagate_regions_across_pages(
                 continue
             if r.pii_type == PIIType.SSN and any(c in key for c in '$€£'):
                 continue
-        existing = text_to_template.get(key)
+        # Accent-agnostic keying so "Société" and "Societe" merge
+        norm_key = _strip_accents(key)
+        existing = text_to_template.get(norm_key)
         if existing is None or r.confidence > existing.confidence:
-            text_to_template[key] = r
+            text_to_template[norm_key] = r
 
     if not text_to_template:
         logger.debug("Propagation: no propagatable PII texts found")
@@ -143,10 +169,12 @@ def propagate_regions_across_pages(
 
     # X1: Cache block offsets per page (computed once, reused for all texts)
     block_offsets_cache: dict[int, list] = {}
+    # Cache accent-stripped full_text per page for accent-agnostic search
+    norm_full_cache: dict[int, str] = {}
 
     propagated: list[PIIRegion] = []
 
-    for pii_text, template in text_to_template.items():
+    for norm_pii_text, template in text_to_template.items():
         for page_data in pages:
             full_text = page_data.full_text
             if not full_text:
@@ -155,13 +183,18 @@ def propagate_regions_across_pages(
             pn = page_data.page_number
             intervals = page_intervals[pn]
 
+            # Accent-agnostic search: compare stripped versions
+            if pn not in norm_full_cache:
+                norm_full_cache[pn] = _strip_accents(full_text)
+            norm_full = norm_full_cache[pn]
+
             start = 0
             while True:
-                idx = full_text.find(pii_text, start)
+                idx = norm_full.find(norm_pii_text, start)
                 if idx == -1:
                     break
                 char_start = idx
-                char_end = idx + len(pii_text)
+                char_end = idx + len(norm_pii_text)
                 start = char_end
 
                 if intervals.has_overlap(char_start, char_end, 0.5):
@@ -191,7 +224,7 @@ def propagate_regions_across_pages(
                         id=uuid.uuid4().hex[:12],
                         page_number=page_data.page_number,
                         bbox=clamped,
-                        text=pii_text,
+                        text=full_text[char_start:char_end],
                         pii_type=template.pii_type,
                         confidence=template.confidence,
                         source=template.source,
@@ -218,6 +251,229 @@ def propagate_regions_across_pages(
         result.extend(_resolve_bbox_overlaps(page_regions))
 
     # Clamp every region to its page bounds 
+    clamped_result: list[PIIRegion] = []
+    for r in result:
+        pd = page_map.get(r.page_number)
+        if pd is None:
+            clamped_result.append(r)
+            continue
+        cb = _clamp_bbox(r.bbox, pd.width, pd.height)
+        if cb.x1 - cb.x0 < 1.0 or cb.y1 - cb.y0 < 1.0:
+            continue
+        if cb != r.bbox:
+            r = r.model_copy(update={"bbox": cb})
+        clamped_result.append(r)
+
+    return clamped_result
+
+
+# ---------------------------------------------------------------------------
+# Partial ORG name propagation
+# ---------------------------------------------------------------------------
+
+def _generate_contiguous_subphrases(words: list[str], min_words: int = 2) -> list[str]:
+    """Return all contiguous sub-phrases of *words* with >= *min_words* words.
+
+    Excludes the full phrase itself (already handled by exact propagation).
+    """
+    n = len(words)
+    subphrases: list[str] = []
+    for length in range(min_words, n):          # skip n (the full phrase)
+        for start in range(n - length + 1):
+            subphrases.append(" ".join(words[start : start + length]))
+    return subphrases
+
+
+def propagate_partial_org_names(
+    regions: list[PIIRegion],
+    pages: list[PageData],
+) -> list[PIIRegion]:
+    """Find 2+-word sub-phrases of detected ORG names in every page.
+
+    When "Deutsche Bank AG" has been detected, this function also flags
+    occurrences of "Deutsche Bank" (2+ contiguous words from the original).
+
+    * Only ORG regions with 3+ words are used as sources.
+    * Sub-phrases that are noise (common dictionary words only, no legal
+      suffix) are skipped.
+    * New regions are created with confidence reduced by 15 %.
+    * Existing regions are never duplicated (overlap check).
+    """
+    if not regions or not pages:
+        return regions
+
+    # 1. Collect unique multi-word ORG texts (accent-agnostic keying)
+    org_texts: dict[str, PIIRegion] = {}
+    for r in regions:
+        if r.pii_type != PIIType.ORG:
+            continue
+        key = r.text.strip()
+        words = key.split()
+        if len(words) < 3:
+            continue
+        norm_key = _strip_accents(key)
+        existing = org_texts.get(norm_key)
+        if existing is None or r.confidence > existing.confidence:
+            org_texts[norm_key] = r
+
+    if not org_texts:
+        return regions
+
+    # 2. Build sub-phrase → template mapping (best parent confidence wins)
+    #    Since these are derived from *confirmed* ORG names, we use a lighter
+    #    filter than _is_org_pipeline_noise: only skip sub-phrases composed
+    #    entirely of function words (articles, prepositions, conjunctions).
+    _FUNCTION_WORDS: frozenset[str] = frozenset({
+        # English
+        "the", "a", "an", "of", "and", "or", "for", "in", "on", "at", "to",
+        "by", "with", "from", "as", "is", "are", "was", "were",
+        # French
+        "le", "la", "les", "de", "du", "des", "et", "ou", "en", "au", "aux",
+        "un", "une", "sur", "dans", "pour", "par", "avec",
+        # German
+        "der", "die", "das", "den", "dem", "des", "und", "oder", "für", "fuer",
+        "mit", "von", "zu", "auf", "ein", "eine", "am", "im", "an", "bei",
+        "aus", "nach", "über", "ueber",
+        # Spanish
+        "el", "los", "las", "del", "y", "o", "para", "con", "por",
+        "al", "una", "uno",
+        # Italian
+        "il", "lo", "gli", "della", "dello", "dei", "degli", "delle", "e",
+        "di", "da", "al", "alla", "alle", "ai", "nel", "nella",
+        "sul", "sulla", "dal", "dalla",
+        # Dutch
+        "het", "een", "van", "voor", "met", "op", "te", "bij", "uit",
+        # Portuguese
+        "o", "os", "do", "da", "dos", "das", "com", "em", "no", "na",
+        "nos", "nas", "ao", "aos", "um", "uma",
+    })
+    _NORM_FUNCTION_WORDS = frozenset(_strip_accents(w) for w in _FUNCTION_WORDS)
+
+    sub_to_template: dict[str, PIIRegion] = {}
+    for org_text, template in org_texts.items():
+        words = org_text.split()
+        for sub in _generate_contiguous_subphrases(words, min_words=2):
+            # Skip sub-phrases made entirely of function words
+            sub_words = sub.lower().split()
+            if all(w in _NORM_FUNCTION_WORDS for w in sub_words):
+                continue
+            existing = sub_to_template.get(sub)
+            if existing is None or template.confidence > existing.confidence:
+                sub_to_template[sub] = template
+
+    # Remove sub-phrases that are already exact-match regions (any type)
+    existing_texts: set[str] = {_strip_accents(r.text.strip()) for r in regions}
+    for txt in list(sub_to_template):
+        if txt in existing_texts:
+            del sub_to_template[txt]
+
+    if not sub_to_template:
+        return regions
+
+    # 3. Build per-page interval index from existing regions
+    page_intervals: dict[int, _PageIntervals] = defaultdict(_PageIntervals)
+    for r in regions:
+        page_intervals[r.page_number].add(r.char_start, r.char_end)
+
+    # Block-offset cache
+    block_offsets_cache: dict[int, list] = {}
+    # Cache accent-stripped full_text per page
+    norm_full_cache: dict[int, str] = {}
+
+    propagated: list[PIIRegion] = []
+    _CONF_FACTOR = 0.85  # sub-phrase confidence reduction
+
+    # Process longer sub-phrases first so they claim intervals before
+    # shorter overlapping ones.
+    sorted_subs = sorted(sub_to_template.items(), key=lambda kv: -len(kv[0]))
+
+    for sub_text, template in sorted_subs:
+        conf = round(template.confidence * _CONF_FACTOR, 4)
+        for page_data in pages:
+            full_text = page_data.full_text
+            if not full_text:
+                continue
+
+            pn = page_data.page_number
+            intervals = page_intervals[pn]
+
+            # Accent-agnostic search
+            if pn not in norm_full_cache:
+                norm_full_cache[pn] = _strip_accents(full_text)
+            norm_full = norm_full_cache[pn]
+
+            start = 0
+            while True:
+                idx = norm_full.find(sub_text, start)
+                if idx == -1:
+                    break
+                char_start = idx
+                char_end = idx + len(sub_text)
+                start = char_end
+
+                # Require word boundaries to avoid matching inside words
+                if char_start > 0 and full_text[char_start - 1].isalnum():
+                    continue
+                if char_end < len(full_text) and full_text[char_end].isalnum():
+                    continue
+
+                if intervals.has_overlap(char_start, char_end, 0.5):
+                    continue
+
+                # Compute bbox
+                if pn not in block_offsets_cache:
+                    block_offsets_cache[pn] = _compute_block_offsets(
+                        page_data.text_blocks, full_text,
+                    )
+                block_offsets = block_offsets_cache[pn]
+
+                line_bboxes = _char_offsets_to_line_bboxes(
+                    char_start, char_end, block_offsets,
+                )
+                if not line_bboxes:
+                    bbox = _char_offset_to_bbox(char_start, char_end, block_offsets)
+                    if bbox is None:
+                        continue
+                    line_bboxes = [bbox]
+
+                for bbox in line_bboxes:
+                    clamped = _clamp_bbox(bbox, page_data.width, page_data.height)
+                    if clamped.x1 - clamped.x0 < 1.0 or clamped.y1 - clamped.y0 < 1.0:
+                        continue
+                    new_region = PIIRegion(
+                        id=uuid.uuid4().hex[:12],
+                        page_number=page_data.page_number,
+                        bbox=clamped,
+                        text=full_text[char_start:char_end],
+                        pii_type=PIIType.ORG,
+                        confidence=conf,
+                        source=template.source,
+                        char_start=char_start,
+                        char_end=char_end,
+                        action=template.action,
+                    )
+                    propagated.append(new_region)
+                intervals.add(char_start, char_end)
+
+    if propagated:
+        logger.info(
+            "Partial-ORG propagation: added %d regions from %d sub-phrases of %d ORG names",
+            len(propagated), len(sub_to_template), len(org_texts),
+        )
+
+    if not propagated:
+        return regions
+
+    all_regions = regions + propagated
+
+    # Overlap resolution + clamping (same as main propagation)
+    page_map: dict[int, PageData] = {p.page_number: p for p in pages}
+    result: list[PIIRegion] = []
+    pages_with_regions: set[int] = {r.page_number for r in all_regions}
+    for pn in sorted(pages_with_regions):
+        page_regions = [r for r in all_regions if r.page_number == pn]
+        result.extend(_resolve_bbox_overlaps(page_regions))
+
     clamped_result: list[PIIRegion] = []
     for r in result:
         pd = page_map.get(r.page_number)

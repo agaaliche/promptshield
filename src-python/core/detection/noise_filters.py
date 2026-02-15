@@ -1,12 +1,23 @@
-"""Pipeline-level noise word sets and predicate functions.
+"""Pipeline-level noise filtering using language dictionaries and pattern rules.
 
 Centralises all noise filtering logic so that pipeline, merge, and
 propagation modules share a single definition.
+
+ORG noise filtering uses comprehensive language dictionaries (~30k words each)
+for all 7 supported languages (EN, FR, DE, ES, IT, NL, PT).  A candidate ORG
+match is filtered when all its words are common dictionary words and it lacks
+a legal company suffix.
+
+LOCATION and PERSON noise filtering uses domain-specific curated sets
+(building/facility terms, financial terms) because proper nouns (city names,
+person names) naturally appear in language dictionaries and must not be
+filtered.
 """
 
 from __future__ import annotations
 
 import re as _re
+from pathlib import Path
 from typing import Set
 
 from models.schemas import PIIType
@@ -17,6 +28,7 @@ from models.schemas import PIIType
 
 LEGAL_SUFFIX_RE: _re.Pattern[str] = _re.compile(
     r'\b(?:inc|corp|ltd|llc|llp|plc|co|lp|sas|sarl|gmbh|ag|bv|nv|'
+    r'kg|kgaa|ohg|ug|mbh|e\.?k\.?|e\.?v\.?|se|'
     r'lt[ée]e|limit[ée]e|enr|s\.?e\.?n\.?c\.?|'
     r's\.?a\.?r?\.?l?\.?|s\.?p\.?a\.?|s\.?r\.?l\.?)\b\.?',
     _re.IGNORECASE,
@@ -28,288 +40,68 @@ def has_legal_suffix(text: str) -> bool:
     return bool(LEGAL_SUFFIX_RE.search(text.strip()))
 
 
-# ── ORG noise ─────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Language dictionaries — loaded once at import time
+# ---------------------------------------------------------------------------
 
-_ORG_PIPELINE_NOISE: Set[str] = {
-    # English
-    "department", "section", "division", "group", "team",
-    "committee", "board", "council", "commission",
-    "act", "law", "regulation", "policy", "standard",
-    "agreement", "contract", "report", "summary",
-    "schedule", "exhibit", "annex", "appendix",
-    "article", "clause", "provision", "amendment",
-    "table", "figure", "chart", "graph", "page",
-    "total", "subtotal", "grand", "amount", "balance",
-    "net", "tax", "note", "notes", "other", "non",
-    "assets", "asset", "liabilities", "liability", "equity",
-    "revenue", "revenues", "expenses", "expense", "income",
-    "profit", "loss", "cash", "capital", "debt",
-    "depreciation", "amortization", "provision", "provisions",
-    "interest", "dividend", "dividends",
-    "goodwill", "inventory", "receivable", "receivables",
-    "payable", "payables", "deferred", "retained",
-    "earnings", "cost", "costs", "margin", "surplus", "deficit",
-    "current", "long", "short", "term",
-    "inc", "llc", "ltd", "corp", "co", "plc", "sa", "se",
-    # French
-    "société", "societe", "entreprise", "compagnie", "filiale",
-    "département", "departement", "service", "bureau", "direction",
-    "division", "commission", "comité", "comite",
-    "conseil", "ministère", "ministere", "gouvernement",
-    "article", "clause", "alinéa", "alinea", "annexe",
-    "tableau", "graphique",
-    "loi", "décret", "decret", "arrêté", "arrete",
-    "règlement", "reglement",
-    "contrat", "accord", "convention", "rapport",
-    "résumé", "resume",
-    "actif", "passif", "actifs", "passifs",
-    "court", "long", "terme",
-    "encaisse", "emprunt", "immobilisation", "immobilisations",
-    "amortissement", "solde",
-    "résultat", "resultat", "résultats", "resultats",
-    "bénéfice", "benefice", "perte", "pertes",
-    "bilan", "exercice", "exercices", "clos", "clôt",
-    "excédent", "excedent", "excédents", "excedents",
-    "norme", "normes", "canadienne", "canadiennes", "canadien", "canadiens",
-    "charges", "produits", "compte", "comptes",
-    "exploitation", "financement", "investissement",
-    "achats", "coût", "cout", "frais",
-    "client", "fournisseur",
-    "taux", "location", "acquisition", "acquisitions",
-    "location-acquisition", "lave-vaisselle",
-    "dotation", "dotations", "reprise", "reprises",
-    "écart", "ecart", "écarts", "ecarts",
-    "valeur", "valeurs", "emprunt", "emprunts",
-    "titre", "titres", "fonds", "caisse",
-    "trésorerie", "tresorerie",
-    "recette", "recettes", "facture", "factures",
-    "poste", "postes", "créance", "creance", "créances", "creances",
-    "dette", "dettes", "subvention", "subventions",
-    "cra", "senc", "osbl", "obnl",
-    "fournitures", "fourniture",
-    "instruments", "instrument",
-    "créances", "creances", "créance", "creance",
-    "douteuses", "douteuse", "douteux",
-    "catégorie", "categorie", "catégories", "categories",
-    "mère", "mere",
-    "consolidés", "consolides", "consolidé", "consolide",
-    "organisme", "organismes",
-    "préparation", "preparation", "préparations", "preparations",
-    "renouvellement", "renouvellements",
-    "complexe", "nautique",
-    "équipements", "equipements", "équipement", "equipement",
-    "matériel", "materiel", "matériels", "materiels",
-    "informatique", "informatiques",
-    "installation", "installations",
-    "réservoirs", "reservoirs", "réservoir", "reservoir",
-    "pontons", "ponton", "quai", "quais",
-    "bâtiment", "batiment", "bâtiments", "batiments",
-    "principales", "principaux", "principale", "principal",
-    "général", "generale", "generaux", "générale", "généraux",
-    "comptables", "comptable", "comptabilité", "comptabilite",
-    "financier", "financiere", "financiers", "financieres",
-    "financière", "financières",
-    "corporelles", "corporels", "corporel", "corporelle",
-    "méthodes", "methodes", "méthode", "methode",
-    "statuts", "statut", "nature",
-    "activités", "activites", "activité", "activite",
-    "éléments", "elements", "élément", "element",
-    "informations", "information",
-    "établissement", "etablissement",
-    "établissements", "etablissements",
-    "opérations", "operations", "opération", "operation",
-    "complémentaires", "complementaires",
-    "complémentaire", "complementaire",
-    "renseignements",
-    "sommaire", "introduction", "conclusion", "observations",
-    "vérification", "verification", "certification", "attestation",
-    "présentation", "presentation", "description", "recommandations",
-    "recommandation", "constatations", "constatation",
-    "objectifs", "objectif", "mandat", "portée", "portee",
-    "responsabilités", "responsabilites", "responsabilité", "responsabilite",
-    "états", "etats", "état", "etat",
-    "auditeurs", "auditeur", "auditrice", "auditrices",
-    "générales", "generales", "particulières", "particulieres",
-    "supplémentaires", "supplementaires", "relatives", "relatifs",
-    "aux", "sur", "des", "les", "par",
-    "additional", "supplementary", "complementary", "preliminary",
-    "consolidated", "independent", "overview", "background",
-    "disclosures", "disclosure", "requirements", "requirement",
-    "management", "discussion", "analysis", "review",
-    "assessment", "evaluation", "examination",
-    "statement", "statements", "financial",
-    "auditors", "auditor", "general", "specific",
-    "notes", "note",
-    "groupe", "section",
-    "société", "societe",
-    # Italian
-    "dipartimento", "servizio", "ufficio", "direzione",
-    "sezione", "articolo", "clausola", "allegato", "grafico",
-    "legge", "decreto", "ordinanza", "regolamento",
-    "contratto", "accordo", "convenzione",
-    "rapporto", "relazione",
-    "bilancio", "esercizio", "attivo", "passivo",
-    "patrimonio", "ricavi", "ricavo", "costi", "costo",
-    "utile", "perdita", "perdite",
-    "ammortamento", "ammortamenti",
-    "accantonamento", "accantonamenti",
-    "debiti", "debito", "crediti", "credito",
-    "fattura", "fatture", "fondi", "fondo",
-    "cassa", "tesoreria", "capitale",
-    "proventi", "provento", "oneri", "onere",
-    "ratei", "risconti", "rateo", "risconto",
-    "immobilizzazioni", "immobilizzazione",
-    "partecipazioni", "partecipazione",
-    "disponibilità", "disponibilita",
-    "imposte", "imposta", "iva",
-    "riserve", "riserva", "risultato", "risultati",
-    "voce", "voci", "nota", "note",
-    "conto", "conti", "economico", "finanziario",
-    "rendiconto", "prospetto",
-    "corporale", "corporali", "incorporale", "incorporali",
-    "materiale", "materiali", "immateriale", "immateriali",
-    # German
-    "gesellschaft", "unternehmen", "abteilung",
-    "firma", "konzern", "betrieb", "betriebe",
-    "vorstand", "aufsichtsrat", "geschäftsführung", "geschaeftsfuehrung",
-    "bilanz", "gewinn", "verlust", "ertrag", "erträge", "ertraege",
-    "aufwand", "aufwendungen", "kosten",
-    "umsatz", "umsätze", "umsaetze", "umsatzerlöse", "umsatzerloese",
-    "vermögen", "vermoegen", "verbindlichkeiten", "verbindlichkeit",
-    "eigenkapital", "fremdkapital",
-    "rückstellung", "rueckstellung", "rückstellungen", "rueckstellungen",
-    "abschreibung", "abschreibungen",
-    "anlage", "anlagen", "anlagevermögen", "anlagevermoegen",
-    "umlaufvermögen", "umlaufvermoegen",
-    "forderungen", "forderung",
-    "schulden", "schuld",
-    "rücklage", "ruecklage", "rücklagen", "ruecklagen",
-    "steuer", "steuern", "mehrwertsteuer",
-    "kapital", "kapitalgesellschaft",
-    "beteiligung", "beteiligungen",
-    "jahresabschluss", "geschäftsjahr", "geschaeftsjahr",
-    "bericht", "berichte", "lagebericht",
-    "vertrag", "verträge", "vertraege",
-    "gesetz", "verordnung", "satzung", "beschluss",
-    "anhang", "anlage", "tabelle", "abbildung",
-    "paragraph", "absatz", "bestimmung",
-    "ergebnis", "ergebnisse", "saldo", "betrag", "beträge", "betraege",
-    "zins", "zinsen", "dividende", "dividenden",
-    "inventar", "vorräte", "vorraete",
-    "kasse", "bank", "konto", "konten",
-    "buchung", "buchungen", "buchführung", "buchfuehrung",
-    "prüfung", "pruefung", "revision", "wirtschaftsprüfer", "wirtschaftspruefer",
-    "feststellung", "feststellungen",
-    "grundstück", "grundstueck", "grundstücke", "grundstuecke",
-    "gebäude", "gebaeude", "ausstattung",
-    "allgemein", "besonders", "ergänzend", "ergaenzend",
-    # Spanish
-    "empresa", "compañía", "compania", "división",
-    "sociedad", "corporación", "corporacion",
-    "departamento", "sección", "seccion", "junta", "comisión", "comision",
-    "balance", "activo", "activos", "pasivo", "pasivos",
-    "patrimonio", "ingresos", "ingreso", "gastos", "gasto",
-    "beneficio", "beneficios", "pérdida", "perdida", "pérdidas", "perdidas",
-    "amortización", "amortizacion", "depreciación", "depreciacion",
-    "provisión", "provision", "provisiones",
-    "deuda", "deudas", "crédito", "credito", "créditos", "creditos",
-    "factura", "facturas", "fondos", "fondo",
-    "caja", "tesorería", "tesoreria",
-    "impuesto", "impuestos", "iva",
-    "reserva", "reservas", "resultado", "resultados",
-    "cuenta", "cuentas", "partida", "partidas",
-    "ejercicio", "cierre", "consolidado", "consolidados",
-    "informe", "informes", "memoria", "memorias",
-    "ley", "decreto", "reglamento", "estatuto", "estatutos",
-    "contrato", "contratos", "acuerdo", "acuerdos",
-    "artículo", "articulo", "cláusula", "clausula", "anexo", "anexos",
-    "tabla", "gráfico", "grafico", "cuadro",
-    "capital", "acción", "accion", "acciones",
-    "inversión", "inversion", "inversiones",
-    "préstamo", "prestamo", "préstamos", "prestamos",
-    "interés", "interes", "intereses",
-    "dividendo", "dividendos",
-    "inventario", "existencias",
-    "auditoría", "auditoria", "auditor", "auditores",
-    "verificación", "verificacion", "certificación", "certificacion",
-    "observaciones", "recomendaciones", "conclusiones",
-    # Dutch
-    "vennootschap", "bedrijf", "onderneming", "maatschappij",
-    "afdeling", "bestuur", "raad", "commissie",
-    "balans", "activa", "passiva",
-    "eigen", "vermogen", "vreemd",
-    "omzet", "opbrengsten", "opbrengst",
-    "kosten", "lasten", "baten",
-    "winst", "verlies",
-    "afschrijving", "afschrijvingen",
-    "voorziening", "voorzieningen",
-    "schuld", "schulden", "vordering", "vorderingen",
-    "factuur", "facturen",
-    "kas", "bank", "rekening", "rekeningen",
-    "belasting", "belastingen", "btw",
-    "reserve", "reserves", "resultaat", "resultaten",
-    "jaarrekening", "boekjaar",
-    "verslag", "rapport", "rapportage",
-    "wet", "verordening", "statuut", "statuten",
-    "overeenkomst", "contract", "contracten",
-    "artikel", "clausule", "bijlage", "bijlagen",
-    "tabel", "grafiek", "overzicht",
-    "kapitaal", "aandeel", "aandelen",
-    "investering", "investeringen",
-    "lening", "leningen",
-    "rente", "dividend",
-    "voorraad", "voorraden",
-    "accountant", "controle", "certificering",
-    "toelichting", "opmerkingen", "aanbevelingen", "conclusie",
-    # Portuguese
-    "empresa", "companhia", "sociedade", "corporação", "corporacao",
-    "departamento", "seção", "secao", "diretoria", "comissão", "comissao",
-    "balanço", "balanco", "ativo", "ativos", "passivo", "passivos",
-    "patrimônio", "patrimonio", "receita", "receitas",
-    "despesa", "despesas", "custo", "custos",
-    "lucro", "lucros", "prejuízo", "prejuizo", "prejuízos", "prejuizos",
-    "amortização", "amortizacao", "depreciação", "depreciacao",
-    "provisão", "provisao", "provisões", "provisoes",
-    "dívida", "divida", "dívidas", "dividas",
-    "crédito", "credito", "créditos", "creditos",
-    "fatura", "faturas", "fundo", "fundos",
-    "caixa", "tesouraria",
-    "imposto", "impostos",
-    "reserva", "reservas", "resultado", "resultados",
-    "conta", "contas",
-    "exercício", "exercicio",
-    "relatório", "relatorio", "relatórios", "relatorios",
-    "lei", "decreto", "regulamento", "estatuto", "estatutos",
-    "contrato", "contratos", "acordo", "acordos",
-    "artigo", "cláusula", "clausula", "anexo", "anexos",
-    "tabela", "gráfico", "grafico", "quadro",
-    "capital", "ação", "acao", "ações", "acoes",
-    "investimento", "investimentos",
-    "empréstimo", "emprestimo", "empréstimos", "emprestimos",
-    "juro", "juros", "dividendo", "dividendos",
-    "inventário", "inventario", "estoque", "estoques",
-    "auditoria", "auditor", "auditores",
-    "verificação", "verificacao", "certificação", "certificacao",
-    "observações", "observacoes", "recomendações", "recomendacoes",
-}
+_DICT_DIR = Path(__file__).parent / "dictionaries"
+_SUPPORTED_LANGS = ("en", "fr", "de", "es", "it", "nl", "pt")
+
+
+def _load_dictionaries() -> frozenset[str]:
+    """Load per-language dictionary files into a single lowercase word set."""
+    words: set[str] = set()
+    for lang in _SUPPORTED_LANGS:
+        dict_path = _DICT_DIR / f"{lang}.txt"
+        if dict_path.exists():
+            with open(dict_path, encoding="utf-8") as f:
+                words.update(line.strip() for line in f if line.strip())
+    return frozenset(words)
+
+
+def _load_single_dict(lang: str) -> frozenset[str]:
+    """Load a single language dictionary file."""
+    path = _DICT_DIR / f"{lang}.txt"
+    if not path.exists():
+        return frozenset()
+    with open(path, encoding="utf-8") as f:
+        return frozenset(line.strip() for line in f if line.strip())
+
+
+_common_words: frozenset[str] = _load_dictionaries()
+_german_words: frozenset[str] = _load_single_dict("de")
+
+
+# ── ORG noise (dictionary-based) ─────────────────────────────────────────
+# No hand-curated word list — uses _common_words from language dictionaries.
+# A candidate is noise if all its words are ordinary dictionary words and
+# it doesn't carry a legal company suffix.
+
+# Leading-article regex shared by all three noise functions
+_ARTICLE_PREFIX_RE = _re.compile(
+    r"^(?:[LlDd]['\u2019]\s*"  # FR: l', d'
+    r"|[Ll][eao]s?\s+|[Dd][eiu]s?\s+|[Uu]n[ea]?\s+"  # FR
+    r"|[Ee]l\s+|[Ll]os\s+|[Ll]as\s+"  # ES
+    r"|[Ii]l\s+|[Gg]li\s+|[Uu]n[oa]?\s+"  # IT
+    r"|[Dd](?:er|ie|as|en|em|es)\s+|[Ee]in[e]?\s+"  # DE
+    r"|[Hh]et\s+|[Dd]e\s+|[Ee]en\s+"  # NL
+    r"|[Oo]s?\s+|[Aa]s?\s+"  # PT
+    r")"
+)
 
 
 def _is_org_pipeline_noise(text: str) -> bool:
-    """Return True if *text* looks like a noisy ORG false-positive."""
+    """Return True if *text* looks like a noisy ORG false-positive.
+
+    Uses language dictionaries for vocabulary checks rather than a
+    hand-curated word list.
+    """
     clean = text.strip()
     low = clean.lower()
-    if low in _ORG_PIPELINE_NOISE:
+    if low in _common_words:
         return True
-    _stripped = _re.sub(
-        r"^(?:[LlDd]['\u2019]\s*"  # FR: l', d'
-        r"|[Ll][eao]s?\s+|[Dd][eiu]s?\s+|[Uu]n[ea]?\s+"  # FR
-        r"|[Ee]l\s+|[Ll]os\s+|[Ll]as\s+"  # ES
-        r"|[Ii]l\s+|[Gg]li\s+|[Uu]n[oa]?\s+"  # IT
-        r"|[Dd](?:er|ie|as|en|em|es)\s+|[Ee]in[e]?\s+"  # DE
-        r"|[Hh]et\s+|[Dd]e\s+|[Ee]en\s+"  # NL
-        r"|[Oo]s?\s+|[Aa]s?\s+"  # PT
-        r")", "", clean)
-    if _stripped and _stripped.lower() in _ORG_PIPELINE_NOISE:
+    _stripped = _ARTICLE_PREFIX_RE.sub("", clean)
+    if _stripped and _stripped.lower() in _common_words:
         return True
     if len(clean) <= 2:
         return True
@@ -328,8 +120,8 @@ def _is_org_pipeline_noise(text: str) -> bool:
         return True
     if len(words) == 1 and len(words[0]) <= 3:
         return True
-    if len(words) >= 2 and all(
-        w.lower() in _ORG_PIPELINE_NOISE
+    if len(words) >= 2 and not has_legal_suffix(clean) and all(
+        w.lower() in _common_words
         or all(c in "-\u2013\u2014/." for c in w)
         for w in words
     ):
@@ -413,13 +205,35 @@ def _is_org_pipeline_noise(text: str) -> bool:
     ):
         return True
     if any(w.lower() in ("pour", "para", "für", "fuer", "per", "voor") for w in words):
-        return True
+        if not has_legal_suffix(clean):
+            return True
     if len(words) >= 3:
         low_words = [w.lower() for w in words]
         if any(w in low_words for w in (
             "catégorie", "categorie", "category", "kategorie",
             "categoría", "categoria",
         )):
+            return True
+    # Generic corporate references like "die AG", "der GmbH", "la SA":
+    # text ending with article + bare legal suffix is not a real company name.
+    if len(words) >= 3:
+        penult = words[-2].lower()
+        _articles = {
+            "der", "die", "das", "den", "dem", "des", "ein", "eine",  # DE
+            "le", "la", "les", "l'", "un", "une",  # FR
+            "el", "la", "los", "las", "un", "una",  # ES
+            "il", "lo", "la", "gli", "le", "un", "una",  # IT
+            "de", "het", "een",  # NL
+            "o", "a", "os", "as", "um", "uma",  # PT
+            "the", "a", "an",  # EN
+        }
+        _bare_suffixes = {
+            "ag", "gmbh", "kg", "kgaa", "ohg", "ug", "mbh", "se",
+            "sa", "sarl", "sas", "srl", "spa", "snc",
+            "inc", "corp", "llc", "ltd", "llp", "plc", "co", "lp",
+            "bv", "nv",
+        }
+        if penult in _articles and words[-1].lower().rstrip(".") in _bare_suffixes:
             return True
     return False
 
@@ -716,6 +530,52 @@ _PERSON_PIPELINE_NOISE: Set[str] = {
 }
 
 
+# ── German compound-word decomposition ────────────────────────────────────
+# German creates compound nouns by concatenation (Haupt+Mieter → Hauptmieter).
+# wordfreq dictionaries miss most compounds.  If a single word can be split
+# into two known dictionary parts (with optional Fugen-element s/es/n/en/er/e)
+# it is almost certainly a common noun, not a person name.
+
+_FUGENLAUTE = ("es", "en", "er", "ns", "s", "n", "e")  # longest-first
+
+
+def _is_german_compound_noun(word: str) -> bool:
+    """Return True if *word* is a German compound of 2+ dictionary parts.
+
+    Works by trying every split of the (lowercased, optionally inflection-
+    stripped) form and checking left ∈ dict and right ∈ dict (with optional
+    Fugen-element between them).
+
+    Uses the German-only dictionary to avoid cross-language false positives
+    (e.g. "Martin" → "mar" (ES) + "tin" (EN)).
+    """
+    low = word.lower()
+    # Try original + forms after stripping common inflectional suffixes
+    forms: list[str] = [low]
+    for suffix in ("s", "es", "en", "n", "er", "e", "em"):
+        if low.endswith(suffix) and len(low) - len(suffix) >= 6:
+            stripped = low[: -len(suffix)]
+            if stripped not in forms:
+                forms.append(stripped)
+    for form in forms:
+        if len(form) < 7:  # need at least 4 + 3
+            continue
+        for i in range(4, len(form) - 2):
+            left = form[:i]
+            if left not in _german_words:
+                continue
+            right = form[i:]
+            if len(right) >= 3 and right in _german_words:
+                return True
+            # Try stripping a Fugen-element from the start of *right*
+            for fg in _FUGENLAUTE:
+                if right.startswith(fg):
+                    rest = right[len(fg):]
+                    if len(rest) >= 3 and rest in _german_words:
+                        return True
+    return False
+
+
 def _is_person_pipeline_noise(text: str) -> bool:
     """Return True if *text* looks like a noisy PERSON false-positive."""
     clean = text.strip()
@@ -753,10 +613,8 @@ def _is_person_pipeline_noise(text: str) -> bool:
         for w in words
     ):
         return True
-    if len(words) >= 2 and all(
-        _is_org_pipeline_noise(w) or w.lower() in _PERSON_PIPELINE_NOISE
-        for w in words
-    ):
+    # German compound nouns misidentified as PERSON (e.g. Hauptmieters)
+    if len(words) == 1 and len(clean) >= 8 and _is_german_compound_noun(clean):
         return True
     return False
 

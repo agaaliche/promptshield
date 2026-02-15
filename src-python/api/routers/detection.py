@@ -74,6 +74,7 @@ async def detect_pii(doc_id: str) -> dict[str, Any]:
 
     try:
         from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages
+        from core.detection.propagation import propagate_partial_org_names
         from core.detection.language import detect_language
         doc.status = DocumentStatus.DETECTING
         doc.regions = []
@@ -147,6 +148,9 @@ async def detect_pii(doc_id: str) -> dict[str, Any]:
         # Propagate: if text was detected on one page, flag it on every
         # other page where it also appears.
         doc.regions = propagate_regions_across_pages(all_regions, doc.pages)
+
+        # Partial ORG propagation: flag 2+-word sub-phrases of known ORG names
+        doc.regions = propagate_partial_org_names(doc.regions, doc.pages)
 
         # Final sweep: drop any ORG region with digit-only or very short text
         # Exception: numbered companies with legal suffixes (e.g., "9169270 Canada Inc.")
@@ -392,6 +396,20 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
         existing_on_scanned = [r for r in doc.regions if r.page_number in scanned_pages]
         existing_other = [r for r in doc.regions if r.page_number not in scanned_pages]
 
+        # Remove stale blacklist (MANUAL+CUSTOM+PENDING) regions on scanned
+        # pages so that deleted blacklist terms don't persist across runs.
+        from models.schemas import DetectionSource as _DetSourceFilter, RegionAction as _RActFilter
+        _bl_terms_lower = {t.lower() for t in (body.blacklist_terms or [])}
+        existing_on_scanned = [
+            r for r in existing_on_scanned
+            if not (
+                r.source == _DetSourceFilter.MANUAL
+                and (r.pii_type.value if hasattr(r.pii_type, 'value') else str(r.pii_type)) == "CUSTOM"
+                and r.action == _RActFilter.PENDING
+                and (r.text or "").strip().lower() not in _bl_terms_lower
+            )
+        ]
+
         # Build set of PII types that were explicitly excluded by the user
         # so we can remove stale regions of those types from previous runs.
         _regex_tab_types = {"EMAIL", "PHONE", "SSN", "CREDIT_CARD", "IBAN", "DATE",
@@ -591,6 +609,7 @@ async def reset_detection(doc_id: str) -> dict[str, Any]:
 
     try:
         from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages
+        from core.detection.propagation import propagate_partial_org_names
         from core.detection.language import detect_language as _detect_lang
 
         old_count = len(doc.regions)
@@ -660,6 +679,7 @@ async def reset_detection(doc_id: str) -> dict[str, Any]:
 
         all_regions = await asyncio.to_thread(_run)
         doc.regions = propagate_regions_across_pages(all_regions, doc.pages)
+        doc.regions = propagate_partial_org_names(doc.regions, doc.pages)
         doc.status = DocumentStatus.REVIEWING
         save_doc(doc)
 

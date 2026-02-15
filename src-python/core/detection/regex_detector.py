@@ -150,6 +150,68 @@ def _is_valid_portuguese_nif(text: str) -> bool:
     return int(digits[8]) == check
 
 
+def _is_valid_nhs_number(text: str) -> bool:
+    """Validate a UK NHS number (10 digits, modulus-11 check digit).
+
+    The check digit is in position 10. Weights are 10,9,8,...,2 for
+    positions 1-9; remainder = sum mod 11; check = 11 - remainder;
+    if check==11 it becomes 0; if check==10 the number is invalid.
+    """
+    digits = re.sub(r"[\s.\-]", "", text)
+    if len(digits) != 10 or not digits.isdigit():
+        return False
+    total = sum(int(d) * w for d, w in zip(digits[:9], range(10, 1, -1)))
+    remainder = total % 11
+    check = 11 - remainder
+    if check == 11:
+        check = 0
+    if check == 10:
+        return False  # invalid
+    return int(digits[9]) == check
+
+
+def _is_valid_bic(text: str) -> bool:
+    """Basic BIC/SWIFT structural validation.
+
+    8 or 11 chars: 4 bank code + 2 country ISO + 2 location + optional 3 branch.
+    Country code must be a valid ISO 3166-1 alpha-2 code (subset of common ones).
+    """
+    clean = text.strip().upper()
+    if len(clean) not in (8, 11):
+        return False
+    if not clean[:4].isalpha():
+        return False
+    country = clean[4:6]
+    # Reject obviously non-country codes
+    _valid_countries = {
+        "AD", "AE", "AT", "AU", "BE", "BG", "BH", "BR", "CA", "CH", "CL",
+        "CN", "CO", "CY", "CZ", "DE", "DK", "EE", "EG", "ES", "FI", "FR",
+        "GB", "GR", "HK", "HR", "HU", "ID", "IE", "IL", "IN", "IS", "IT",
+        "JP", "KR", "KW", "LB", "LI", "LT", "LU", "LV", "MA", "MC", "MT",
+        "MX", "MY", "NL", "NO", "NZ", "PE", "PH", "PL", "PT", "QA", "RO",
+        "RS", "RU", "SA", "SE", "SG", "SI", "SK", "TH", "TR", "TW", "UA",
+        "US", "UY", "VN", "ZA",
+    }
+    if country not in _valid_countries:
+        return False
+    return True
+
+
+def _is_valid_italian_piva(text: str) -> bool:
+    """Validate an Italian Partita IVA (11 digits, Luhn-like check)."""
+    digits = re.sub(r"[\s.\-]", "", text)
+    if len(digits) != 11 or not digits.isdigit():
+        return False
+    total = 0
+    for i, d in enumerate(int(c) for c in digits):
+        if i % 2 == 0:
+            total += d
+        else:
+            doubled = d * 2
+            total += doubled // 10 + doubled % 10
+    return total % 10 == 0
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Context keyword proximity boost
 # ═══════════════════════════════════════════════════════════════════════════
@@ -213,10 +275,13 @@ def _validate_match(text: str, matched_text: str, pii_type: PIIType,
             if not _valid_date(matched_text):
                 return 0.0
 
-    # IBAN: modulo-97 check
+    # IBAN: modulo-97 check — only for actual IBAN format (CC## ...)
+    # Skip validation for sort code, routing number, and account number patterns
     if pii_type == PIIType.IBAN:
-        if not _iban_mod97(matched_text):
-            return 0.0
+        clean_iban = matched_text.replace(" ", "").replace("-", "").upper()
+        if len(clean_iban) >= 15 and clean_iban[:2].isalpha() and clean_iban[2:4].isdigit():
+            if not _iban_mod97(matched_text):
+                return 0.0
 
     # French SSN: structural validation
     if pii_type == PIIType.SSN:
@@ -236,6 +301,28 @@ def _validate_match(text: str, matched_text: str, pii_type: PIIType,
                 clean[0] in "12356789" and _is_valid_portuguese_nif(clean)
             )
             if not is_valid_bsn and not is_valid_nif:
+                return 0.0
+
+    # NHS number: 10-digit numbers — validate mod-11 check digit
+    if pii_type == PIIType.SSN:
+        clean = matched_text.strip()
+        digits_only = re.sub(r"\s", "", clean)
+        if re.match(r"^\d{10}$", digits_only):
+            if not _is_valid_nhs_number(digits_only):
+                return 0.0
+
+    # BIC/SWIFT: structural validation
+    if pii_type == PIIType.CUSTOM:
+        clean = matched_text.strip().upper()
+        if re.match(r"^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$", clean):
+            if not _is_valid_bic(clean):
+                return 0.0
+
+    # Italian Partita IVA: 11-digit validation
+    if pii_type == PIIType.CUSTOM:
+        clean = matched_text.strip()
+        if re.match(r"^\d{11}$", clean):
+            if not _is_valid_italian_piva(clean):
                 return 0.0
 
     return -1.0  # no adjustment

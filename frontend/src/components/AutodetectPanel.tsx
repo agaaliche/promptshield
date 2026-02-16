@@ -303,37 +303,33 @@ export default function AutodetectPanel({
           cursor: isMaximized ? "default" : "grab",
           userSelect: "none",
         }}>
-        {([
-          { key: "page" as const, label: "Current page" },
-          { key: "all" as const, label: "All pages" },
-        ]).map(({ key, label }) => {
-          const isActive = scope === key;
-          return (
-            <button
+        <div style={{ display: "flex", gap: 16, padding: "8px 0" }}>
+          {([
+            { key: "page" as const, label: "Current page" },
+            { key: "all" as const, label: "All pages" },
+          ]).map(({ key, label }) => (
+            <label
               key={key}
-              onClick={() => setScope(key)}
               style={{
-                padding: "8px 12px",
-                fontSize: 12,
-                fontWeight: isActive ? 600 : 400,
-                color: isActive ? "var(--accent-primary)" : "var(--text-muted)",
-                background: "transparent",
-                border: "none",
-                borderBottom: isActive ? "2px solid var(--accent-primary)" : "2px solid transparent",
-                borderRadius: 0,
-                cursor: "pointer",
-                transition: "all 0.15s ease",
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
                 gap: 6,
-                whiteSpace: "nowrap",
+                fontSize: 12,
+                color: scope === key ? "var(--text-primary)" : "var(--text-muted)",
+                cursor: "pointer",
               }}
             >
+              <input
+                type="radio"
+                name="detect-scope"
+                checked={scope === key}
+                onChange={() => setScope(key)}
+                style={{ accentColor: "var(--accent-primary)" }}
+              />
               {label}
-            </button>
-          );
-        })}
+            </label>
+          ))}
+        </div>
 
         {/* Spacer + window controls */}
         <div style={{ flex: 1 }} />

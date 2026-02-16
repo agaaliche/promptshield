@@ -352,7 +352,7 @@ export default function BlacklistGrid({
         <div style={{ display: "flex", position: "sticky", top: 0, zIndex: 1 }}>
           <div style={{
             width: 32, minWidth: 32, height: 24,
-            background: "#d6e6f5",
+            background: "#e8eef4",
             borderBottom: "1px solid #a8c5e0",
             borderRight: "1px solid #a8c5e0",
           }} />
@@ -365,7 +365,7 @@ export default function BlacklistGrid({
                 display: "flex", alignItems: "center", justifyContent: "center",
                 fontSize: 10, fontWeight: 600,
                 color: "#1a4971",
-                background: "#d6e6f5",
+                background: "#e8eef4",
                 borderBottom: "1px solid #a8c5e0",
                 borderRight: ci < numCols - 1 ? "1px solid #a8c5e0" : "none",
                 cursor: "pointer",
@@ -387,7 +387,7 @@ export default function BlacklistGrid({
                 display: "flex", alignItems: "center", justifyContent: "center",
                 fontSize: 10, fontWeight: 600,
                 color: "#1a4971",
-                background: "#d6e6f5",
+                background: "#e8eef4",
                 borderBottom: "1px solid #a8c5e0",
                 borderRight: "1px solid #a8c5e0",
                 flexShrink: 0,

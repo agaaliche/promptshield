@@ -261,6 +261,7 @@ export default function DocumentViewer() {
               rightOffset={sidebarCollapsed ? 60 : rightSidebarWidth}
               leftOffset={leftSidebarWidth}
               pageNavWidth={pageCount > 1 ? (pageNavCollapsed ? 28 : 148) : 0}
+              regions={regions}
               onDetect={(opts) => {
                 setShowAutodetect(false);
                 handleAutodetect(opts);

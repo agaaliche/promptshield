@@ -1,9 +1,10 @@
 /** Autodetect PII settings dropdown panel with Blacklist grid. */
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X, Save, Trash2, MoreHorizontal } from "lucide-react";
 import { Z_TOP_DIALOG } from "../zIndex";
 import BlacklistGrid, { type BlacklistAction, createEmptyGrid } from "./BlacklistGrid";
+import type { PIIRegion } from "../types";
 
 type TabKey = "patterns" | "blacklist" | "ai" | "deep";
 
@@ -65,6 +66,8 @@ interface AutodetectPanelProps {
   leftOffset?: number;
   /** Page navigator width so maximized panel stops before it */
   pageNavWidth?: number;
+  /** Detected regions to highlight matched expressions */
+  regions?: PIIRegion[];
 }
 
 const MIN_PANEL_W = 340;
@@ -83,6 +86,7 @@ export default function AutodetectPanel({
   rightOffset = 0,
   leftOffset = 0,
   pageNavWidth = 0,
+  regions = [],
 }: AutodetectPanelProps) {
   const [fuzziness, setFuzziness] = useState(0.55);
   const [scope, setScope] = useState<"page" | "all">("page");
@@ -109,7 +113,37 @@ export default function AutodetectPanel({
   // Blacklist state
   const [blCells, setBlCells] = useState(() => createEmptyGrid());
   const [blAction, setBlAction] = useState<BlacklistAction>("none");
-  const [blMatchStatus, setBlMatchStatus] = useState<Map<string, "matched" | "no-match" | "exists">>(new Map());
+
+  // Compute match status: highlight expressions found in detected regions
+  const blMatchStatus = useMemo(() => {
+    const map = new Map<string, "matched" | "no-match" | "exists">();
+    if (regions.length === 0) return map;
+    
+    // Collect all detected text (lowercase for case-insensitive matching)
+    const detectedTexts = new Set(
+      regions.map(r => r.text.toLowerCase().trim()).filter(Boolean)
+    );
+    
+    // Check each cell: if its expression appears in detectedTexts, mark as matched
+    for (let row = 0; row < blCells.length; row++) {
+      for (let col = 0; col < blCells[row].length; col++) {
+        const cell = blCells[row][col].trim();
+        if (!cell) continue;
+        const key = `${row}-${col}`;
+        const cellLower = cell.toLowerCase();
+        // Check if any detected text contains this expression
+        let found = false;
+        for (const detected of detectedTexts) {
+          if (detected.includes(cellLower)) {
+            found = true;
+            break;
+          }
+        }
+        map.set(key, found ? "matched" : "no-match");
+      }
+    }
+    return map;
+  }, [regions, blCells]);
 
   // Restore last-used template on mount
   useEffect(() => {

@@ -53,10 +53,8 @@ export default function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) 
         tag === "SELECT" ||
         el.isContentEditable
       ) return;
-      // Skip most keys when inside BlacklistGrid (Excel-like control handles its own shortcuts)
-      // But allow Ctrl+Z/Y for global undo/redo
-      const inBlacklistGrid = el.closest("[data-blacklist-grid]");
-      if (inBlacklistGrid && !((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "y"))) return;
+      // Skip all keys when inside BlacklistGrid (Excel-like control handles its own shortcuts)
+      if (el.closest("[data-blacklist-grid]")) return;
       switch (e.key) {
         case "f":
           if (e.ctrlKey || e.metaKey) {

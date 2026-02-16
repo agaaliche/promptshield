@@ -42,6 +42,11 @@ export default function BlacklistGrid({
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [copiedBounds, setCopiedBounds] = useState<{ minRow: number; maxRow: number; minCol: number; maxCol: number } | null>(null);
+  
+  // Undo/redo stacks for grid-local history
+  const [undoStack, setUndoStack] = useState<string[][][]>([]);
+  const [redoStack, setRedoStack] = useState<string[][][]>([]);
+  
   const gridRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -79,6 +84,30 @@ export default function BlacklistGrid({
     }
   }, [editingCell]);
 
+  // Push current state to undo stack before making changes
+  const pushUndo = useCallback(() => {
+    setUndoStack(prev => [...prev.slice(-49), cells.map(r => [...r])]);
+    setRedoStack([]);
+  }, [cells]);
+
+  // Undo: restore last state from undo stack
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const prev = undoStack[undoStack.length - 1];
+    setUndoStack(s => s.slice(0, -1));
+    setRedoStack(s => [...s, cells.map(r => [...r])]);
+    onCellsChange(prev);
+  }, [undoStack, cells, onCellsChange]);
+
+  // Redo: restore last state from redo stack
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(s => s.slice(0, -1));
+    setUndoStack(s => [...s, cells.map(r => [...r])]);
+    onCellsChange(next);
+  }, [redoStack, cells, onCellsChange]);
+
   const updateCell = useCallback((row: number, col: number, value: string) => {
     const next = cells.map(r => [...r]);
     // Grow grid if needed
@@ -95,6 +124,7 @@ export default function BlacklistGrid({
     const text = e.clipboardData.getData("text/plain");
     if (!text) return;
 
+    pushUndo();
     const startRow = selectedCell?.row ?? 0;
     const startCol = selectedCell?.col ?? 0;
 
@@ -117,7 +147,7 @@ export default function BlacklistGrid({
     setEditingCell(null);
     setSelectionEnd(null);
     setCopiedBounds(null);
-  }, [cells, selectedCell, numCols, onCellsChange]);
+  }, [cells, selectedCell, numCols, onCellsChange, pushUndo]);
 
   // Handle copy — copies selected range as tab-separated text
   const handleCopy = useCallback((e: React.ClipboardEvent) => {
@@ -141,21 +171,28 @@ export default function BlacklistGrid({
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    // Stop propagation for clipboard/select shortcuts to prevent global shortcuts
-    if ((e.ctrlKey || e.metaKey) && ["c", "v", "a"].includes(e.key.toLowerCase())) {
+    // Stop propagation for clipboard/select/undo shortcuts to prevent global shortcuts
+    if ((e.ctrlKey || e.metaKey) && ["c", "v", "a", "z", "y"].includes(e.key.toLowerCase())) {
       e.stopPropagation();
+      e.preventDefault();
       // Ctrl+A: select all cells in the grid
       if (e.key.toLowerCase() === "a") {
-        e.preventDefault();
         setSelectedCell({ row: 0, col: 0 });
         setSelectionEnd({ row: numRows - 1, col: numCols - 1 });
         setEditingCell(null);
         setCopiedBounds(null);
       }
+      // Ctrl+Z: undo
+      if (e.key.toLowerCase() === "z") {
+        handleUndo();
+      }
+      // Ctrl+Y: redo
+      if (e.key.toLowerCase() === "y") {
+        handleRedo();
+      }
       // Ctrl+C and Ctrl+V are handled by onCopy/onPaste events
       return;
     }
-    // Let Ctrl+Z and Ctrl+Y bubble up to global undo/redo
 
     if (!selectedCell) return;
     const { row, col } = selectedCell;
@@ -219,6 +256,7 @@ export default function BlacklistGrid({
         // Clear all cells in selection
         const bounds = getSelectionBounds();
         if (bounds) {
+          pushUndo();
           const next = cells.map(r => [...r]);
           for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
             for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
@@ -231,13 +269,14 @@ export default function BlacklistGrid({
         e.stopPropagation();
       } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
         // Start editing on any printable character
+        pushUndo();
         setEditingCell({ row, col });
         setSelectionEnd(null);
         updateCell(row, col, "");
         e.stopPropagation();
       }
     }
-  }, [selectedCell, selectionEnd, editingCell, numRows, numCols, updateCell, getSelectionBounds, cells, onCellsChange]);
+  }, [selectedCell, selectionEnd, editingCell, numRows, numCols, updateCell, getSelectionBounds, cells, onCellsChange, handleUndo, handleRedo, pushUndo]);
 
   // Select entire column
   const selectColumn = useCallback((col: number) => {

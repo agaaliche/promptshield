@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -12,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import get_current_user
+from config import settings
 from database import get_db
 from models import LicenseKey, Machine, Subscription, User
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 ADMIN_EMAILS: set[str] = set(
-    e.strip() for e in os.getenv("PS_ADMIN_EMAILS", "").split(",") if e.strip()
+    e.strip() for e in settings.admin_emails.split(",") if e.strip()
 )
 
 
@@ -71,6 +71,7 @@ async def list_users(
 ):
     """List all users with pagination."""
     _require_admin(user)
+    limit = min(limit, 200)  # cap to prevent full-table dumps
 
     result = await db.execute(
         select(User).order_by(User.created_at.desc()).offset(skip).limit(limit)

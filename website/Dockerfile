@@ -24,10 +24,15 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
 
+# Non-root user for security
+RUN addgroup --system app && adduser --system --ingroup app app
+
 # Copy standalone output
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
+COPY --from=builder --chown=app:app /app/.next/standalone ./
+COPY --from=builder --chown=app:app /app/.next/static ./.next/static
+COPY --from=builder --chown=app:app /app/public ./public
+
+USER app
 
 EXPOSE 8080
 

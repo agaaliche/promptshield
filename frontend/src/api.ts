@@ -67,7 +67,11 @@ async function request<T>(
   try {
     const res = await fetch(url, {
       ...restOptions,
-      headers: { "Content-Type": "application/json", ...optHeaders as Record<string, string> },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        ...optHeaders as Record<string, string>,
+      },
       signal: signal ?? controller.signal,
     });
 
@@ -93,6 +97,7 @@ export async function uploadDocument(file: File): Promise<UploadResponse> {
 
   const res = await fetch(`${BASE_URL}/api/documents/upload`, {
     method: "POST",
+    headers: { "X-Requested-With": "XMLHttpRequest" },
     body: formData,
     signal: _globalAbort.signal,
   });
@@ -358,7 +363,7 @@ export async function batchAnonymize(docIds: string[]): Promise<string> {
   if (!_globalAbort) _globalAbort = new AbortController();
   const resp = await fetch(`${BASE_URL}/api/documents/batch-anonymize`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
     body: JSON.stringify({ doc_ids: docIds }),
     signal: _globalAbort.signal,
   });
@@ -395,6 +400,7 @@ export async function detokenizeFile(file: File): Promise<DetokenizeFileResult> 
   if (!_globalAbort) _globalAbort = new AbortController();
   const res = await fetch(`${BASE_URL}/api/detokenize/file`, {
     method: "POST",
+    headers: { "X-Requested-With": "XMLHttpRequest" },
     body: form,
     signal: _globalAbort.signal,
   });

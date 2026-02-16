@@ -55,9 +55,9 @@ def _save_encrypted_manifest(
         "tokens": token_manifest,
     }).encode("utf-8")
 
-    # Encrypt using the vault's Fernet instance
-    if vault._fernet is not None:
-        encrypted = vault._fernet.encrypt(manifest_data)
+    # Encrypt using the vault's public encryption API
+    if vault.can_encrypt:
+        encrypted = vault.encrypt_blob(manifest_data)
         manifest_path = output_dir / "token_manifest.enc"
         manifest_path.write_bytes(encrypted)
     else:

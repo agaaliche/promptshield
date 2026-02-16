@@ -160,6 +160,32 @@ class TokenVault:
             raise RuntimeError("Vault encryption key not initialized")
         return self._fernet.decrypt(ciphertext).decode()
 
+    # ── Public encryption API (for external callers like anonymizer) ──
+
+    def encrypt_blob(self, data: bytes) -> bytes:
+        """Encrypt arbitrary binary data with the vault key.
+
+        Returns the Fernet-encrypted ciphertext.
+        Raises ``RuntimeError`` if the vault is not unlocked.
+        """
+        if self._fernet is None:
+            raise RuntimeError("Vault is not unlocked — cannot encrypt")
+        return self._fernet.encrypt(data)
+
+    def decrypt_blob(self, ciphertext: bytes) -> bytes:
+        """Decrypt binary data previously encrypted with ``encrypt_blob()``.
+
+        Raises ``RuntimeError`` if the vault is not unlocked.
+        """
+        if self._fernet is None:
+            raise RuntimeError("Vault is not unlocked — cannot decrypt")
+        return self._fernet.decrypt(ciphertext)
+
+    @property
+    def can_encrypt(self) -> bool:
+        """Return True if the vault is unlocked and encryption is available."""
+        return self._fernet is not None
+
     def _store_meta(self, key: str, value: str) -> None:
         """Store metadata (must be called under self._lock)."""
         if self._conn is None:

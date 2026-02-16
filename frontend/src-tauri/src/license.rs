@@ -17,6 +17,10 @@ use std::path::PathBuf;
 // Must match the private key in the licensing server's .env.
 const ED25519_PUBLIC_KEY_B64: &str = "B4EIWiBILG2lIl4tq4KeQsm/Vh2Z3q5YUpsl2yxH1q4=";
 
+/// Licensing server URL — hardcoded for release builds to prevent env-var hijacking.
+/// In debug builds, the `LICENSING_URL` environment variable can override this.
+pub const LICENSING_SERVER_URL: &str = "https://licensing-server-455859748614.us-east4.run.app";
+
 // C3: Compile-time check — fail release builds if the placeholder key is still present
 #[cfg(not(debug_assertions))]
 const _: () = {
@@ -237,33 +241,14 @@ pub async fn check_clock_drift() -> Result<(), String> {
         .build()
         .map_err(|e| format!("HTTP client error: {e}"))?;
 
-    // Try worldtimeapi.org (returns RFC3339 datetime in .utc_datetime)
-    let resp = match client
-        .get("https://worldtimeapi.org/api/timezone/Etc/UTC")
-        .send()
-        .await
-    {
-        Ok(r) if r.status().is_success() => r,
-        _ => return Ok(()), // network unreachable — fail open
+    // Try primary source: worldtimeapi.org
+    let server_time = fetch_time_worldtimeapi(&client).await
+        .or_else(|_| async { fetch_time_timeapi_io(&client).await }.await);
+
+    let server_time = match server_time {
+        Ok(t) => t,
+        Err(_) => return Ok(()), // both sources unreachable — fail open
     };
-
-    #[derive(serde::Deserialize)]
-    struct TimeResp {
-        utc_datetime: String,
-    }
-
-    let body: TimeResp = match resp.json().await {
-        Ok(b) => b,
-        Err(_) => return Ok(()), // malformed response — fail open
-    };
-
-    let server_time = DateTime::parse_from_rfc3339(&body.utc_datetime)
-        .or_else(|_| {
-            // worldtimeapi sometimes returns "2025-01-01T00:00:00.123456+00:00" style
-            DateTime::parse_from_str(&body.utc_datetime, "%Y-%m-%dT%H:%M:%S%.f%:z")
-        })
-        .map_err(|e| format!("Cannot parse server time: {e}"))?
-        .with_timezone(&Utc);
 
     let local_time = Utc::now();
     let drift = (server_time - local_time).num_seconds().abs();
@@ -278,6 +263,64 @@ pub async fn check_clock_drift() -> Result<(), String> {
     Ok(())
 }
 
+/// Fetch UTC time from worldtimeapi.org (primary).
+async fn fetch_time_worldtimeapi(client: &reqwest::Client) -> Result<DateTime<Utc>, String> {
+    let resp = client
+        .get("https://worldtimeapi.org/api/timezone/Etc/UTC")
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    if !resp.status().is_success() {
+        return Err("non-200 status".into());
+    }
+
+    #[derive(serde::Deserialize)]
+    struct TimeResp {
+        utc_datetime: String,
+    }
+
+    let body: TimeResp = resp.json().await.map_err(|e| format!("{e}"))?;
+
+    DateTime::parse_from_rfc3339(&body.utc_datetime)
+        .or_else(|_| {
+            DateTime::parse_from_str(&body.utc_datetime, "%Y-%m-%dT%H:%M:%S%.f%:z")
+        })
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| format!("{e}"))
+}
+
+/// Fetch UTC time from timeapi.io (fallback).
+async fn fetch_time_timeapi_io(client: &reqwest::Client) -> Result<DateTime<Utc>, String> {
+    let resp = client
+        .get("https://timeapi.io/api/time/current/zone?timeZone=UTC")
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    if !resp.status().is_success() {
+        return Err("non-200 status".into());
+    }
+
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct TimeResp {
+        #[serde(rename = "dateTime")]
+        date_time: String,
+    }
+
+    let body: TimeResp = resp.json().await.map_err(|e| format!("{e}"))?;
+
+    // timeapi.io returns "2025-01-01T00:00:00.1234567" (no timezone suffix)
+    chrono::NaiveDateTime::parse_from_str(&body.date_time, "%Y-%m-%dT%H:%M:%S%.f")
+        .map(|ndt| ndt.and_utc())
+        .or_else(|_| {
+            DateTime::parse_from_rfc3339(&body.date_time)
+                .map(|dt| dt.with_timezone(&Utc))
+        })
+        .map_err(|e| format!("{e}"))
+}
+
 // ── S1: Server-side revocation check ───────────────────────────────────
 
 /// Check with the licensing server whether this machine's license has been
@@ -285,18 +328,41 @@ pub async fn check_clock_drift() -> Result<(), String> {
 ///
 /// Fails *open* — if the network is unreachable the app continues with the
 /// local blob. Only blocks when the server explicitly says `revoked: true`.
+///
+/// The request is HMAC-authenticated: it sends a timestamp and a signature
+/// of `machine_fingerprint|timestamp` using the first 32 bytes of the
+/// license blob as the HMAC key.
 pub async fn check_revocation(
     licensing_url: &str,
     machine_fingerprint: &str,
 ) -> Result<(), String> {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|e| format!("HTTP client error: {e}"))?;
 
+    // Read the local license blob for HMAC key material
+    let blob = match read_license_file() {
+        Some(b) => b,
+        None => return Ok(()), // no license file yet — nothing to check
+    };
+
+    let ts = chrono::Utc::now().timestamp().to_string();
+    let hmac_key = &blob.as_bytes()[..std::cmp::min(32, blob.len())];
+    let message = format!("{}|{}", machine_fingerprint, ts);
+
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = HmacSha256::new_from_slice(hmac_key)
+        .map_err(|e| format!("HMAC key error: {e}"))?;
+    mac.update(message.as_bytes());
+    let sig = hex::encode(mac.finalize().into_bytes());
+
     let url = format!(
-        "{}/license/check-revocation?machine_fingerprint={}",
-        licensing_url, machine_fingerprint,
+        "{}/license/check-revocation?machine_fingerprint={}&ts={}&sig={}",
+        licensing_url, machine_fingerprint, ts, sig,
     );
 
     let resp = match client.get(&url).send().await {

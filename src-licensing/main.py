@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from config import settings, validate_settings
 from database import engine, async_session
@@ -113,7 +113,12 @@ app.include_router(admin_router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0"}
+    try:
+        async with async_session() as session:
+            await session.execute(select(1))
+    except Exception:
+        return {"status": "degraded", "db": "unreachable", "version": "1.0.0"}
+    return {"status": "ok", "db": "connected", "version": "1.0.0"}
 
 
 # ── Logging ─────────────────────────────────────────────────────

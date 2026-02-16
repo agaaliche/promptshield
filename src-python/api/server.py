@@ -19,6 +19,7 @@ from core.persistence import DocumentStore
 from models.schemas import DocumentStatus
 from api import deps
 from api.rate_limit import RateLimitMiddleware
+from api.csrf import CSRFMiddleware
 from api.routers import (
     documents,
     detection,
@@ -190,6 +191,9 @@ app.add_middleware(
 
 # Rate limiting — 600 requests per 60s per client IP (generous for frontend bursts)
 app.add_middleware(RateLimitMiddleware)
+
+# CSRF protection — require X-Requested-With header on state-mutating requests
+app.add_middleware(CSRFMiddleware)
 
 # ---------------------------------------------------------------------------
 # Register routers

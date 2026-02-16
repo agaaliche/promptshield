@@ -22,6 +22,12 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 
 stripe.api_key = settings.stripe_secret_key
 
+# In-memory set of processed Stripe event IDs to deduplicate webhook retries.
+# Bounded to prevent unbounded memory growth; eviction of old IDs is acceptable
+# because Stripe's retry window (72h) is shorter than typical process lifetime.
+_processed_events: set[str] = set()
+_MAX_PROCESSED_EVENTS = 10_000
+
 
 @router.post("/checkout", response_model=CheckoutResponse)
 async def create_checkout_session(
@@ -99,7 +105,13 @@ async def stripe_webhook(
         raise HTTPException(status_code=400, detail="Webhook error")
 
     event_type = event["type"]
+    event_id = event["id"]
     data = event["data"]["object"]
+
+    # Idempotency: skip events already processed (Stripe may redeliver)
+    if event_id in _processed_events:
+        logger.info("Skipping already-processed event %s", event_id)
+        return {"ok": True}
 
     if event_type == "checkout.session.completed":
         await _handle_checkout_completed(data, db)
@@ -111,6 +123,11 @@ async def stripe_webhook(
         await _handle_payment_failed(data, db)
     else:
         logger.info("Unhandled event type: %s", event_type)
+
+    # Mark as processed for idempotency
+    if len(_processed_events) >= _MAX_PROCESSED_EVENTS:
+        _processed_events.clear()
+    _processed_events.add(event_id)
 
     return {"ok": True}
 

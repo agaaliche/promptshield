@@ -111,6 +111,25 @@ def save_doc(doc: DocumentInfo) -> None:
         logger.exception(f"Failed to auto-save document {doc.doc_id}")
 
 
+@contextmanager
+def mutate_doc(doc: DocumentInfo) -> Generator[DocumentInfo, None, None]:
+    """Context manager for document mutations — auto-saves on exit.
+
+    Usage::
+
+        with mutate_doc(doc) as d:
+            d.regions.append(new_region)
+        # doc is auto-persisted here
+
+    If the block raises, the document is still saved to avoid data loss
+    from partial mutations.
+    """
+    try:
+        yield doc
+    finally:
+        save_doc(doc)
+
+
 def now_ts() -> float:
     """Monotonic-ish wall-clock timestamp (``time.time()``)."""
     return _time.time()

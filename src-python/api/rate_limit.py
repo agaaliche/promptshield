@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -64,8 +64,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.max_requests = max_requests
         self.window_seconds = window_seconds
-        # IP → list of request timestamps
-        self._hits: dict[str, list[float]] = defaultdict(list)
+        # IP → deque of request timestamps (O(1) popleft vs O(n) list.pop(0))
+        self._hits: dict[str, deque[float]] = defaultdict(deque)
 
     # ------------------------------------------------------------------
 
@@ -84,7 +84,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         hits = self._hits[client_ip]
         # Remove timestamps outside the window
         while hits and hits[0] < window_start:
-            hits.pop(0)
+            hits.popleft()
 
         if len(hits) >= self.max_requests:
             retry_after = int(hits[0] - window_start) + 1

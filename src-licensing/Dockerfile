@@ -22,10 +22,17 @@ COPY routers/ ./routers/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 
+# Non-root user for security
+RUN addgroup --system app && adduser --system --ingroup app app
+USER app
+
 # Cloud Run injects PORT (default 8080)
 ENV PORT=8080
 
 EXPOSE ${PORT}
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health')" || exit 1
 
 # Run with uvicorn; use shell form so $PORT is expanded at runtime
 CMD uvicorn main:app --host 0.0.0.0 --port $PORT --log-level info

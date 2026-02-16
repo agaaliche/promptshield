@@ -32,6 +32,7 @@ from core.detection.noise_filters import (
     has_legal_suffix,
     _STRUCTURED_MIN_DIGITS,
 )
+from core.text_utils import strip_accents as _strip_accents, ws_collapse as _ws_collapse
 from models.schemas import (
     PIIRegion,
     PIIType,
@@ -42,47 +43,16 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Accent-agnostic helpers — strip diacritics while preserving string length
+# Accent-agnostic helpers & whitespace collapse — imported from core.text_utils
+# (_strip_accents, _ws_collapse)
 # ---------------------------------------------------------------------------
 
-def _strip_accents(text: str) -> str:
-    """Strip diacritics/accents while preserving string length.
-
-    Each original character maps to exactly one output character (the base
-    letter without combining marks), so ``len(result) == len(text)`` and
-    character-offset indices remain valid.
-
-    Explicit mappings for characters whose NFD decomposition doesn't
-    produce a clean base letter (ß→s, ligatures, etc.).
-
-    Examples: é→e, ü→u, ñ→n, ö→o, ç→c, ß→s, æ→a, œ→o.
-    """
-    # Explicit single-char replacements for ligatures & special chars
-    _SPECIAL = {
-        'ß': 's', 'ẞ': 'S',             # German Eszett
-        'æ': 'a', 'Æ': 'A',             # Latin ligature AE
-        'œ': 'o', 'Œ': 'O',             # Latin ligature OE
-        'ð': 'd', 'Ð': 'D',             # Eth
-        'þ': 't', 'Þ': 'T',             # Thorn
-        'ø': 'o', 'Ø': 'O',             # Scandinavian O-slash
-        'đ': 'd', 'Đ': 'D',             # Croatian D-stroke
-        'ł': 'l', 'Ł': 'L',             # Polish L-slash
-        'ı': 'i',                         # Turkish dotless I
-    }
-    out: list[str] = []
-    for ch in text:
-        if ch in _SPECIAL:
-            out.append(_SPECIAL[ch])
-        else:
-            nfd = unicodedata.normalize("NFD", ch)
-            base = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
-            out.append(base if base else ch)
-    return "".join(out)
-
-
-def _ws_collapse(text: str) -> str:
-    """Collapse whitespace runs into single spaces and strip."""
-    return _re.sub(r'\s+', ' ', text).strip()
+# ---------------------------------------------------------------------------
+# Tuning constants
+# ---------------------------------------------------------------------------
+_PROPAGATION_OVERLAP_RATIO = 0.5  # min overlap to consider intervals duplicate
+_PROPAGATION_CONF_FACTOR = 0.85  # confidence penalty for propagated regions
+_MIN_BBOX_DIMENSION = 1.0  # minimum bbox width/height in PDF points
 
 
 # Characters treated as transparent for entity matching —
@@ -158,7 +128,7 @@ class _PageIntervals:
         self._starts: list[int] = []
         self._ends: list[int] = []
 
-    def has_overlap(self, cs: int, ce: int, min_ratio: float = 0.5) -> bool:
+    def has_overlap(self, cs: int, ce: int, min_ratio: float = _PROPAGATION_OVERLAP_RATIO) -> bool:
         """Return True if an existing interval overlaps [cs, ce) by >= min_ratio.
 
         Uses binary search on sorted start positions — O(log n).
@@ -295,7 +265,7 @@ def propagate_regions_across_pages(
 
                 for bbox in line_bboxes:
                     clamped = _clamp_bbox(bbox, page_data.width, page_data.height)
-                    if clamped.x1 - clamped.x0 < 1.0 or clamped.y1 - clamped.y0 < 1.0:
+                    if clamped.x1 - clamped.x0 < _MIN_BBOX_DIMENSION or clamped.y1 - clamped.y0 < _MIN_BBOX_DIMENSION:
                         continue
                     new_region = PIIRegion(
                         id=uuid.uuid4().hex[:12],
@@ -335,7 +305,7 @@ def propagate_regions_across_pages(
             clamped_result.append(r)
             continue
         cb = _clamp_bbox(r.bbox, pd.width, pd.height)
-        if cb.x1 - cb.x0 < 1.0 or cb.y1 - cb.y0 < 1.0:
+        if cb.x1 - cb.x0 < _MIN_BBOX_DIMENSION or cb.y1 - cb.y0 < _MIN_BBOX_DIMENSION:
             continue
         if cb != r.bbox:
             r = r.model_copy(update={"bbox": cb})
@@ -470,7 +440,7 @@ def propagate_partial_org_names(
         if tpl is not None:
             regions[i] = r.model_copy(update={
                 "pii_type": PIIType.ORG,
-                "confidence": max(r.confidence, round(tpl.confidence * 0.85, 4)),
+                "confidence": max(r.confidence, round(tpl.confidence * _PROPAGATION_CONF_FACTOR, 4)),
             })
             _retyped += 1
     if _retyped:
@@ -491,14 +461,13 @@ def propagate_partial_org_names(
     norm_full_cache: dict[int, str] = {}
 
     propagated: list[PIIRegion] = []
-    _CONF_FACTOR = 0.85  # sub-phrase confidence reduction
 
     # Process longer sub-phrases first so they claim intervals before
     # shorter overlapping ones.
     sorted_subs = sorted(sub_to_template.items(), key=lambda kv: -len(kv[0]))
 
     for sub_text, template in sorted_subs:
-        conf = round(template.confidence * _CONF_FACTOR, 4)
+        conf = round(template.confidence * _PROPAGATION_CONF_FACTOR, 4)
         # Whitespace-flexible, case-insensitive regex with word boundaries
         _sub_pat = _build_flex_pattern(sub_text)
 
@@ -525,7 +494,7 @@ def propagate_partial_org_names(
                 if char_end < len(full_text) and full_text[char_end].isalnum():
                     continue
 
-                if intervals.has_overlap(char_start, char_end, 0.5):
+                if intervals.has_overlap(char_start, char_end, _PROPAGATION_OVERLAP_RATIO):
                     continue
 
                 # Compute bbox
@@ -546,7 +515,7 @@ def propagate_partial_org_names(
 
                 for bbox in line_bboxes:
                     clamped = _clamp_bbox(bbox, page_data.width, page_data.height)
-                    if clamped.x1 - clamped.x0 < 1.0 or clamped.y1 - clamped.y0 < 1.0:
+                    if clamped.x1 - clamped.x0 < _MIN_BBOX_DIMENSION or clamped.y1 - clamped.y0 < _MIN_BBOX_DIMENSION:
                         continue
                     new_region = PIIRegion(
                         id=uuid.uuid4().hex[:12],
@@ -589,7 +558,7 @@ def propagate_partial_org_names(
             clamped_result.append(r)
             continue
         cb = _clamp_bbox(r.bbox, pd.width, pd.height)
-        if cb.x1 - cb.x0 < 1.0 or cb.y1 - cb.y0 < 1.0:
+        if cb.x1 - cb.x0 < _MIN_BBOX_DIMENSION or cb.y1 - cb.y0 < _MIN_BBOX_DIMENSION:
             continue
         if cb != r.bbox:
             r = r.model_copy(update={"bbox": cb})

@@ -331,20 +331,77 @@ async def deactivate_machine(
     return {"ok": True, "message": "Machine deactivated and license keys revoked"}
 
 
-# ── S1: Revocation check (no auth required) ────────────────────
+# ── S1: Revocation check (HMAC-authenticated) ─────────────────
 
 @router.get("/check-revocation")
 async def check_revocation(
     machine_fingerprint: str,
+    ts: str = "",
+    sig: str = "",
     db: AsyncSession = Depends(get_db),
 ):
     """Check whether a machine's license has been revoked.
 
-    Called by the desktop app on startup (before sign-in) to
-    detect server-side deactivation without requiring credentials.
-    Returns {revoked: false} when no records are found (fail open).
+    Called by the desktop app on startup to detect server-side
+    deactivation.  The request must include a timestamp (``ts``) and
+    an HMAC-SHA256 signature (``sig``) of ``machine_fingerprint|ts``
+    using the first 32 bytes of the license blob as the key.
+
+    This prevents unauthenticated fingerprint enumeration while
+    allowing the check to happen before full Firebase sign-in.
+    Returns ``{revoked: false}`` when no records are found (fail open).
     """
-    # Look for the most recent non-revoked key for this machine
+    import hashlib, hmac as _hmac, time as _time
+
+    # Validate timestamp is present and within 5 minutes
+    if not ts or not sig:
+        # Backward compat: if no sig provided, only allow if machine is unknown
+        any_key = await db.scalar(
+            select(LicenseKey.id).where(
+                LicenseKey.machine_fingerprint == machine_fingerprint,
+            ).limit(1)
+        )
+        if any_key is None:
+            return {"revoked": False}
+        # Known machine but no auth — reject
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required for revocation check",
+        )
+
+    # Verify timestamp freshness (5-minute window)
+    try:
+        req_time = int(ts)
+        now = int(_time.time())
+        if abs(now - req_time) > 300:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Request timestamp expired",
+            )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid timestamp")
+
+    # Find the most recent license blob for this machine to verify HMAC
+    latest_blob = await db.scalar(
+        select(LicenseKey.key_blob).where(
+            LicenseKey.machine_fingerprint == machine_fingerprint,
+        ).order_by(LicenseKey.issued_at.desc()).limit(1)
+    )
+    if latest_blob is None:
+        return {"revoked": False}
+
+    # HMAC verification: key = first 32 chars of blob, message = "fingerprint|ts"
+    hmac_key = latest_blob[:32].encode()
+    message = f"{machine_fingerprint}|{ts}".encode()
+    expected = _hmac.new(hmac_key, message, hashlib.sha256).hexdigest()
+
+    if not _hmac.compare_digest(sig, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid signature",
+        )
+
+    # Authenticated — check revocation
     latest_key = await db.scalar(
         select(LicenseKey.id).where(
             LicenseKey.machine_fingerprint == machine_fingerprint,
@@ -354,15 +411,4 @@ async def check_revocation(
     if latest_key is not None:
         return {"revoked": False}
 
-    # Check if there are *any* keys (revoked or not) for this machine
-    any_key = await db.scalar(
-        select(LicenseKey.id).where(
-            LicenseKey.machine_fingerprint == machine_fingerprint,
-        ).limit(1)
-    )
-    if any_key is None:
-        # Machine has never been activated — not revoked, just unknown
-        return {"revoked": False}
-
-    # All keys for this machine were revoked
     return {"revoked": True}

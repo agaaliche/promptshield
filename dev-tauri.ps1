@@ -5,4 +5,4 @@
     Starts the backend and launches the app as a native desktop window
 #>
 
-& "$PSScriptRoot\restart.ps1" -Tauri
+& "$PSScriptRoot\start.ps1" -Tauri

@@ -84,8 +84,14 @@ async fn start_backend(app: tauri::AppHandle) -> Result<String, String> {
     }
 
     // S1: Check if the license has been revoked server-side
-    let licensing_url = std::env::var("LICENSING_URL")
-        .unwrap_or_else(|_| "https://licensing-server-455859748614.us-east4.run.app".to_string());
+    // SECURITY: In release builds, the licensing URL is a compile-time constant
+    // to prevent env-var hijacking. Only dev builds allow override.
+    let licensing_url = if cfg!(debug_assertions) {
+        std::env::var("LICENSING_URL")
+            .unwrap_or_else(|_| license::LICENSING_SERVER_URL.to_string())
+    } else {
+        license::LICENSING_SERVER_URL.to_string()
+    };
     if let Err(revoke_err) = license::check_revocation(&licensing_url, &fingerprint).await {
         return Err(revoke_err);
     }
@@ -104,18 +110,27 @@ async fn start_backend(app: tauri::AppHandle) -> Result<String, String> {
         .sidecar("doc-anonymizer-sidecar")
         .map_err(|e| format!("Failed to create sidecar command: {}", e))?;
 
-    // H12: Verify sidecar binary integrity before spawning (if hash is available)
-    // In production, set SIDECAR_HASH at build time.
-    if let Ok(expected_hash) = std::env::var("SIDECAR_EXPECTED_HASH") {
-        let sidecar_path = app
-            .path()
-            .resource_dir()
-            .map(|d| d.join("binaries").join("doc-anonymizer-sidecar"))
-            .unwrap_or_default();
-        let path_str = sidecar_path.to_string_lossy();
-        if !path_str.is_empty() && !integrity::verify_binary_integrity(&path_str, &expected_hash) {
-            return Err("Sidecar binary integrity check failed — possible tampering".to_string());
+    // H12: Verify sidecar binary integrity before spawning
+    // Supports both compile-time (option_env!) and runtime (env var) hash.
+    let compile_hash = option_env!("SIDECAR_EXPECTED_HASH");
+    let runtime_hash = std::env::var("SIDECAR_EXPECTED_HASH").ok();
+    let expected_hash: Option<&str> = compile_hash.or(runtime_hash.as_deref());
+    match expected_hash {
+        Some(hash) => {
+            let sidecar_path = app
+                .path()
+                .resource_dir()
+                .map(|d| d.join("binaries").join("doc-anonymizer-sidecar"))
+                .unwrap_or_default();
+            let path_str = sidecar_path.to_string_lossy();
+            if !path_str.is_empty() && !integrity::verify_binary_integrity(&path_str, hash) {
+                return Err("Sidecar binary integrity check failed — possible tampering".to_string());
+            }
         }
+        None if !cfg!(debug_assertions) => {
+            eprintln!("[integrity] WARNING: SIDECAR_EXPECTED_HASH not set — skipping sidecar verification in release build");
+        }
+        _ => {} // debug build without hash — OK
     }
 
     let (mut rx, child) = sidecar_command

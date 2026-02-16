@@ -274,7 +274,7 @@ async def apply_blacklist(doc_id: str, req: BlacklistRequest) -> dict[str, Any]:
         raise
     except Exception as e:
         logger.error("blacklist error: %s\n%s", e, traceback.format_exc())
-        raise HTTPException(500, detail=str(e))
+        raise HTTPException(500, detail="Internal server error")
 
 
 def _blacklist_impl(doc_id: str, req: BlacklistRequest) -> dict[str, Any]:
@@ -402,7 +402,7 @@ def _blacklist_impl(doc_id: str, req: BlacklistRequest) -> dict[str, Any]:
                     if ix0 < ix1 and iy0 < iy1:
                         inter_area = (ix1 - ix0) * (iy1 - iy0)
                         new_area = max((bx1 - bx0) * (by1 - by0), 1e-6)
-                        if inter_area / new_area > 0.4:
+                        if inter_area / new_area > _OVERLAP_COVERAGE_THRESHOLD:
                             covered_region_id = eid
                             break
 
@@ -465,7 +465,7 @@ async def highlight_all(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
         raise
     except Exception as e:
         logger.error(f"highlight-all error: {e}\n{traceback.format_exc()}")
-        raise HTTPException(500, detail=str(e))
+        raise HTTPException(500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -474,12 +474,8 @@ async def highlight_all(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
 
 def _normalize(text: str) -> str:
     """Normalize for fuzzy matching: lowercase, collapse whitespace, strip accents."""
-    import unicodedata, re
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(c for c in text if not unicodedata.combining(c))
-    text = text.lower()
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    from core.text_utils import normalize_for_matching
+    return normalize_for_matching(text)
 
 
 def _fuzzy_ratio(a: str, b: str) -> float:
@@ -488,7 +484,9 @@ def _fuzzy_ratio(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
-_FUZZY_THRESHOLD = 0.75  # 75% similarity
+_FUZZY_THRESHOLD = 0.75  # 75% similarity for highlight-all matching
+_OVERLAP_COVERAGE_THRESHOLD = 0.4  # 40% bbox intersection to consider "already covered"
+_CHAR_OVERLAP_MIN_RATIO = 0.6  # 60% char-frequency overlap for fuzzy pre-filter
 
 
 def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]:
@@ -601,7 +599,7 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
                     # Fast char-frequency pre-filter: skip if character overlap is too low
                     chunk_freq = Counter(chunk)
                     shared = sum((needle_freq & chunk_freq).values())
-                    if shared < needle_len * 0.6:
+                    if shared < needle_len * _CHAR_OVERLAP_MIN_RATIO:
                         continue
                     if _fuzzy_ratio(needle_norm, chunk) >= _FUZZY_THRESHOLD:
                         orig_start = norm_idx_to_orig(si)
@@ -615,7 +613,7 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
                         chunk = full_norm[si : si + wlen]
                         chunk_freq = Counter(chunk)
                         shared = sum((needle_freq & chunk_freq).values())
-                        if shared < needle_len * 0.6:
+                        if shared < needle_len * _CHAR_OVERLAP_MIN_RATIO:
                             continue
                         if _fuzzy_ratio(needle_norm, chunk) >= _FUZZY_THRESHOLD:
                             orig_start = norm_idx_to_orig(si)
@@ -657,7 +655,7 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
                 if ix0 < ix1 and iy0 < iy1:
                     inter_area = (ix1 - ix0) * (iy1 - iy0)
                     new_area = max((bx1 - bx0) * (by1 - by0), 1e-6)
-                    if inter_area / new_area > 0.4:
+                    if inter_area / new_area > _OVERLAP_COVERAGE_THRESHOLD:
                         already_covered = True
                         break
             if already_covered:

@@ -116,7 +116,11 @@ async def client():
     deps.store = mock_store
     try:
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        ) as ac:
             yield ac
     finally:
         deps.store = old_store

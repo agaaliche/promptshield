@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import get_current_user
@@ -34,7 +35,16 @@ async def sync(
     If this is the first time we see this user, ``get_current_user``
     will have already created the User row. Here we only need to
     provision the free-trial subscription when appropriate.
+
+    Uses SELECT ... FOR UPDATE to prevent race conditions where concurrent
+    calls create duplicate trial subscriptions.
     """
+    # Re-fetch user with row-level lock to prevent concurrent trial creation
+    locked_result = await db.execute(
+        select(User).where(User.id == user.id).with_for_update()
+    )
+    user = locked_result.scalar_one()
+
     # Auto-create free trial subscription for new users
     if settings.free_trial_allowed and not user.trial_used:
         now = datetime.now(timezone.utc)

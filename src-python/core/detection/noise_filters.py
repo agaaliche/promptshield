@@ -21,17 +21,8 @@ import unicodedata as _unicodedata
 from pathlib import Path
 from typing import Set
 
+from core.text_utils import remove_accents as _remove_accents
 from models.schemas import PIIType
-
-
-def _remove_accents(text: str) -> str:
-    """Remove diacritical marks (accents) from text.
-    
-    E.g., 'exhaustivité' -> 'exhaustivite', 'café' -> 'cafe'
-    """
-    # Normalize to NFD (decompose accented chars), then filter out combining marks
-    nfkd = _unicodedata.normalize('NFD', text)
-    return ''.join(c for c in nfkd if not _unicodedata.combining(c))
 
 # ---------------------------------------------------------------------------
 # Legal-suffix regex — shared across all noise filters
@@ -95,11 +86,14 @@ def has_legal_suffix(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Language dictionaries — loaded once at import time
+# Language dictionaries — lazy-loaded on first use to avoid startup cost
 # ---------------------------------------------------------------------------
 
 _DICT_DIR = Path(__file__).parent / "dictionaries"
 _SUPPORTED_LANGS = ("en", "fr", "de", "es", "it", "nl", "pt")
+
+# Sentinel used to detect uninitialized state
+_UNLOADED: frozenset[str] = frozenset({"__UNLOADED__"})
 
 
 def _load_dictionaries() -> frozenset[str]:
@@ -122,8 +116,25 @@ def _load_single_dict(lang: str) -> frozenset[str]:
         return frozenset(line.strip() for line in f if line.strip())
 
 
-_common_words: frozenset[str] = _load_dictionaries()
-_german_words: frozenset[str] = _load_single_dict("de")
+# Lazy-loaded: initialised to sentinel, populated on first access
+_common_words: frozenset[str] = _UNLOADED
+_german_words: frozenset[str] = _UNLOADED
+
+
+def _get_common_words() -> frozenset[str]:
+    """Return the combined dictionary word set, loading on first call."""
+    global _common_words
+    if _common_words is _UNLOADED:
+        _common_words = _load_dictionaries()
+    return _common_words
+
+
+def _get_german_words() -> frozenset[str]:
+    """Return the German dictionary word set, loading on first call."""
+    global _german_words
+    if _german_words is _UNLOADED:
+        _german_words = _load_single_dict("de")
+    return _german_words
 
 
 # ── ORG noise (dictionary-based) ─────────────────────────────────────────
@@ -150,6 +161,7 @@ def _is_org_pipeline_noise(text: str) -> bool:
     Uses language dictionaries for vocabulary checks rather than a
     hand-curated word list.
     """
+    _get_common_words()  # ensure dictionary is loaded into module global
     clean = text.strip()
     # Fix double-encoded UTF-8 (mojibake) for dictionary lookup
     clean_fixed = _fix_double_utf8(clean)
@@ -1066,6 +1078,7 @@ def _is_german_compound_noun(word: str) -> bool:
     Uses the German-only dictionary to avoid cross-language false positives
     (e.g. "Martin" → "mar" (ES) + "tin" (EN)).
     """
+    _get_german_words()  # ensure dictionary is loaded into module global
     low = word.lower()
     # Try original + forms after stripping common inflectional suffixes
     forms: list[str] = [low]

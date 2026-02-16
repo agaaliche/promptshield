@@ -18,6 +18,7 @@ if (-not (Test-Path $venvPython)) {
 }
 
 Push-Location $licensingDir
+$env:PS_ALLOW_DEFAULT_SECRET = "1"
 Write-Host "Licensing server running on http://localhost:8443" -ForegroundColor Green
 Write-Host "API docs: http://localhost:8443/docs" -ForegroundColor DarkGray
 & $venvPython main.py

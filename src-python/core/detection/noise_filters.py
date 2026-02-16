@@ -36,6 +36,28 @@ LEGAL_SUFFIX_RE: _re.Pattern[str] = _re.compile(
 )
 
 
+def _fix_double_utf8(text: str) -> str:
+    """Fix double-encoded UTF-8 (mojibake) in text.
+    
+    When UTF-8 bytes are mistakenly decoded as Latin-1 and then re-encoded
+    as UTF-8, common French/German characters become unreadable:
+    - é → Ã© (C3 A9 → C3 83 C2 A9)
+    - È → Ãˆ (C3 88 → C3 83 C2 88)
+    
+    This function detects and reverses that double-encoding.
+    """
+    try:
+        # Try to fix by encoding to Latin-1 and decoding as UTF-8
+        # This reverses the double-encoding
+        fixed = text.encode('latin-1').decode('utf-8')
+        # Only use the fixed version if it's actually different and valid
+        if fixed != text:
+            return fixed
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        pass
+    return text
+
+
 def has_legal_suffix(text: str) -> bool:
     """Return True if *text* contains a legal company suffix anywhere."""
     return bool(LEGAL_SUFFIX_RE.search(text.strip()))
@@ -98,11 +120,25 @@ def _is_org_pipeline_noise(text: str) -> bool:
     hand-curated word list.
     """
     clean = text.strip()
+    # Fix double-encoded UTF-8 (mojibake) for dictionary lookup
+    clean_fixed = _fix_double_utf8(clean)
     low = clean.lower()
-    if low in _common_words:
+    low_fixed = clean_fixed.lower()
+    
+    def _in_dict(word: str) -> bool:
+        """Check if word is in dictionary, trying both original and fixed encoding."""
+        w = word.lower()
+        if w in _common_words:
+            return True
+        # Also try fixed version for mojibake
+        w_fixed = _fix_double_utf8(word).lower()
+        return w_fixed != w and w_fixed in _common_words
+    
+    if low in _common_words or low_fixed in _common_words:
         return True
     _stripped = _ARTICLE_PREFIX_RE.sub("", clean)
-    if _stripped and _stripped.lower() in _common_words:
+    _stripped_fixed = _ARTICLE_PREFIX_RE.sub("", clean_fixed)
+    if _stripped and (_stripped.lower() in _common_words or _stripped_fixed.lower() in _common_words):
         return True
     if len(clean) <= 2:
         return True
@@ -122,7 +158,7 @@ def _is_org_pipeline_noise(text: str) -> bool:
     if len(words) == 1 and len(words[0]) <= 3:
         return True
     if len(words) >= 2 and not has_legal_suffix(clean) and all(
-        w.lower() in _common_words
+        _in_dict(w)
         or all(c in "-\u2013\u2014/." for c in w)
         for w in words
     ):
@@ -136,7 +172,7 @@ def _is_org_pipeline_noise(text: str) -> bool:
         _code_stripped = _re.sub(r'\s+', ' ', _code_stripped).strip()
         stripped_words = [w for w in _code_stripped.split() if w]
         if len(stripped_words) >= 2 and all(
-            w.lower() in _common_words
+            _in_dict(w)
             or all(c in "-\u2013\u2014/.," for c in w)
             for w in stripped_words
         ):

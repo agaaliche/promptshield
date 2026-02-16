@@ -503,6 +503,74 @@ def _render_page_bitmap(pdf_page: pdfium.PdfPage, page_index: int, doc_id: str) 
     return out_path
 
 
+def _has_embedded_images(pdf_page: pdfium.PdfPage, min_area_fraction: float = 0.005) -> bool:
+    """Check if page has embedded images that may contain text.
+    
+    Returns True if the page contains image objects covering at least
+    min_area_fraction of the page area. This indicates potential text-in-image
+    content that requires OCR for proper extraction.
+    
+    Args:
+        pdf_page: The PDF page to check
+        min_area_fraction: Minimum fraction of page area for an image to count (default 0.5%)
+    """
+    page_width = pdf_page.get_width()
+    page_height = pdf_page.get_height()
+    page_area = page_width * page_height
+    min_area = page_area * min_area_fraction
+    
+    try:
+        for obj in pdf_page.get_objects():
+            if type(obj).__name__ == 'PdfImage':
+                bounds = obj.get_bounds()
+                left, bottom, right, top = bounds
+                img_area = (right - left) * (top - bottom)
+                if img_area >= min_area:
+                    return True
+    except Exception as e:
+        logger.debug(f"Error checking for images: {e}")
+    
+    return False
+
+
+def _merge_ocr_blocks(existing: list[TextBlock], ocr_blocks: list[TextBlock]) -> list[TextBlock]:
+    """Merge OCR blocks with existing text blocks, avoiding duplicates.
+    
+    Only adds OCR blocks that don't significantly overlap with existing text.
+    """
+    if not ocr_blocks:
+        return existing
+    if not existing:
+        return ocr_blocks
+    
+    def overlaps(b1: BBox, b2: BBox) -> bool:
+        """Check if two bboxes overlap significantly."""
+        # Compute intersection
+        ix0 = max(b1.x0, b2.x0)
+        iy0 = max(b1.y0, b2.y0)
+        ix1 = min(b1.x1, b2.x1)
+        iy1 = min(b1.y1, b2.y1)
+        
+        if ix1 <= ix0 or iy1 <= iy0:
+            return False
+        
+        # Check if intersection is >50% of the smaller box
+        inter_area = (ix1 - ix0) * (iy1 - iy0)
+        b1_area = max((b1.x1 - b1.x0) * (b1.y1 - b1.y0), 1)
+        b2_area = max((b2.x1 - b2.x0) * (b2.y1 - b2.y0), 1)
+        min_area = min(b1_area, b2_area)
+        
+        return inter_area > 0.5 * min_area
+    
+    merged = list(existing)
+    for ocr_b in ocr_blocks:
+        # Only add if no significant overlap with existing blocks
+        if not any(overlaps(ocr_b.bbox, e.bbox) for e in existing):
+            merged.append(ocr_b)
+    
+    return merged
+
+
 def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
     """Process a PDF file into page data.
 
@@ -544,7 +612,11 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
                 full_text=full_text,
             ))
 
+            # OCR needed if: (a) sparse text, or (b) page has embedded images
             if len(full_text.strip()) < 20:
+                ocr_needed.append(page_index)
+            elif _has_embedded_images(pdf_page):
+                logger.info(f"Page {page_index + 1}: embedded images detected, will run hybrid OCR")
                 ocr_needed.append(page_index)
 
     finally:
@@ -554,20 +626,42 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
     if not ocr_needed:
         return pages
 
-    def _ocr_one(idx: int) -> tuple[int, list[TextBlock]]:
+    def _ocr_one(idx: int) -> tuple[int, list[TextBlock], bool]:
+        """Returns (index, ocr_blocks, should_merge).
+        
+        should_merge=True when page already has content (hybrid mode).
+        """
         p = pages[idx]
-        logger.info(f"Page {p.page_number}: sparse text ({len(p.full_text)} chars), running OCR")
+        has_existing_content = len(p.text_blocks) >= 10
+        if has_existing_content:
+            logger.info(f"Page {p.page_number}: hybrid OCR (has {len(p.text_blocks)} text blocks + images)")
+        else:
+            logger.info(f"Page {p.page_number}: sparse text ({len(p.full_text)} chars), running OCR")
         blocks = ocr_page_image(Path(p.bitmap_path), p.width, p.height)
-        return idx, blocks
+        return idx, blocks, has_existing_content
 
-    if len(ocr_needed) == 1:
-        # Single page — skip thread overhead
-        idx, ocr_blocks = _ocr_one(ocr_needed[0])
-        if ocr_blocks:
+    def _apply_ocr_result(idx: int, ocr_blocks: list[TextBlock], should_merge: bool):
+        if not ocr_blocks:
+            return
+        if should_merge:
+            # Merge OCR blocks with existing text (hybrid mode)
+            merged = _merge_ocr_blocks(pages[idx].text_blocks, ocr_blocks)
+            pages[idx] = pages[idx].model_copy(update={
+                "text_blocks": merged,
+                "full_text": _build_full_text(merged),
+            })
+            logger.info(f"Page {pages[idx].page_number}: merged {len(ocr_blocks)} OCR blocks, now {len(merged)} total")
+        else:
+            # Replace entirely (sparse text case)
             pages[idx] = pages[idx].model_copy(update={
                 "text_blocks": ocr_blocks,
                 "full_text": _build_full_text(ocr_blocks),
             })
+
+    if len(ocr_needed) == 1:
+        # Single page — skip thread overhead
+        idx, ocr_blocks, should_merge = _ocr_one(ocr_needed[0])
+        _apply_ocr_result(idx, ocr_blocks, should_merge)
     else:
         import os
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -576,12 +670,8 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_ocr_one, i): i for i in ocr_needed}
             for fut in as_completed(futures):
-                idx, ocr_blocks = fut.result()
-                if ocr_blocks:
-                    pages[idx] = pages[idx].model_copy(update={
-                        "text_blocks": ocr_blocks,
-                        "full_text": _build_full_text(ocr_blocks),
-                    })
+                idx, ocr_blocks, should_merge = fut.result()
+                _apply_ocr_result(idx, ocr_blocks, should_merge)
 
     return pages
 

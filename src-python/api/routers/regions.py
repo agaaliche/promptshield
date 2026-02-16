@@ -50,6 +50,24 @@ async def debug_detections(doc_id: str, page_number: Optional[int] = None) -> di
     return {"total": len(summary), "regions": summary}
 
 
+@router.get("/documents/{doc_id}/debug-page-text/{page_number}")
+async def debug_page_text(doc_id: str, page_number: int) -> dict[str, Any]:
+    """Debug endpoint — shows the extracted full_text for a page."""
+    doc = get_doc(doc_id)
+    if page_number < 1 or page_number > doc.page_count:
+        raise HTTPException(400, f"Invalid page {page_number}")
+    page = doc.pages[page_number - 1]
+    return {
+        "page_number": page_number,
+        "full_text": page.full_text,
+        "text_blocks_count": len(page.text_blocks),
+        "text_block_samples": [
+            {"text": b.text, "bbox": [b.bbox.x0, b.bbox.y0, b.bbox.x1, b.bbox.y1]}
+            for b in page.text_blocks[-20:]  # last 20 blocks (likely footer)
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Single-region mutations
 # ---------------------------------------------------------------------------

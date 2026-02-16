@@ -38,12 +38,31 @@ export default function BlacklistGrid({
   matchStatus,
 }: BlacklistGridProps) {
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
+  const [selectionEnd, setSelectionEnd] = useState<{ row: number; col: number } | null>(null);
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const numCols = cells[0]?.length ?? DEFAULT_COLS;
   const numRows = cells.length;
+
+  // Compute selection range bounds
+  const getSelectionBounds = useCallback(() => {
+    if (!selectedCell) return null;
+    const end = selectionEnd ?? selectedCell;
+    return {
+      minRow: Math.min(selectedCell.row, end.row),
+      maxRow: Math.max(selectedCell.row, end.row),
+      minCol: Math.min(selectedCell.col, end.col),
+      maxCol: Math.max(selectedCell.col, end.col),
+    };
+  }, [selectedCell, selectionEnd]);
+
+  const isInSelection = useCallback((row: number, col: number) => {
+    const bounds = getSelectionBounds();
+    if (!bounds) return false;
+    return row >= bounds.minRow && row <= bounds.maxRow && col >= bounds.minCol && col <= bounds.maxCol;
+  }, [getSelectionBounds]);
 
   // Focus input when editing starts
   useEffect(() => {
@@ -88,16 +107,37 @@ export default function BlacklistGrid({
     }
     onCellsChange(next);
     setEditingCell(null);
+    setSelectionEnd(null);
   }, [cells, selectedCell, numCols, onCellsChange]);
+
+  // Handle copy — copies selected range as tab-separated text
+  const handleCopy = useCallback((e: React.ClipboardEvent) => {
+    if (editingCell) return; // Let the input handle copy
+    const bounds = getSelectionBounds();
+    if (!bounds) return;
+    e.preventDefault();
+
+    const lines: string[] = [];
+    for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+      const rowCells: string[] = [];
+      for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+        rowCells.push(cells[r]?.[c] ?? "");
+      }
+      lines.push(rowCells.join("\t"));
+    }
+    e.clipboardData.setData("text/plain", lines.join("\n"));
+  }, [cells, editingCell, getSelectionBounds]);
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!selectedCell) return;
     const { row, col } = selectedCell;
+    const anchor = selectionEnd ?? selectedCell;
 
     if (e.key === "Enter") {
       if (editingCell) {
         setEditingCell(null);
+        setSelectionEnd(null);
         // Move down
         if (row + 1 < numRows) setSelectedCell({ row: row + 1, col });
       } else {
@@ -107,6 +147,7 @@ export default function BlacklistGrid({
     } else if (e.key === "Tab") {
       e.preventDefault();
       setEditingCell(null);
+      setSelectionEnd(null);
       if (e.shiftKey) {
         if (col > 0) setSelectedCell({ row, col: col - 1 });
         else if (row > 0) setSelectedCell({ row: row - 1, col: numCols - 1 });
@@ -116,21 +157,50 @@ export default function BlacklistGrid({
       }
     } else if (e.key === "Escape") {
       setEditingCell(null);
+      setSelectionEnd(null);
     } else if (!editingCell) {
-      if (e.key === "ArrowUp" && row > 0) setSelectedCell({ row: row - 1, col });
-      if (e.key === "ArrowDown" && row < numRows - 1) setSelectedCell({ row: row + 1, col });
-      if (e.key === "ArrowLeft" && col > 0) setSelectedCell({ row, col: col - 1 });
-      if (e.key === "ArrowRight" && col < numCols - 1) setSelectedCell({ row, col: col + 1 });
-      if (e.key === "Delete" || e.key === "Backspace") {
-        updateCell(row, col, "");
-      }
-      // Start editing on any printable character
-      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+      // Arrow keys with/without Shift for range selection
+      if (e.key === "ArrowUp") {
+        const newRow = Math.max(0, (e.shiftKey ? anchor.row : row) - 1);
+        if (e.shiftKey) setSelectionEnd({ row: newRow, col: anchor.col });
+        else { setSelectedCell({ row: newRow, col }); setSelectionEnd(null); }
+        e.preventDefault();
+      } else if (e.key === "ArrowDown") {
+        const newRow = Math.min(numRows - 1, (e.shiftKey ? anchor.row : row) + 1);
+        if (e.shiftKey) setSelectionEnd({ row: newRow, col: anchor.col });
+        else { setSelectedCell({ row: newRow, col }); setSelectionEnd(null); }
+        e.preventDefault();
+      } else if (e.key === "ArrowLeft") {
+        const newCol = Math.max(0, (e.shiftKey ? anchor.col : col) - 1);
+        if (e.shiftKey) setSelectionEnd({ row: anchor.row, col: newCol });
+        else { setSelectedCell({ row, col: newCol }); setSelectionEnd(null); }
+        e.preventDefault();
+      } else if (e.key === "ArrowRight") {
+        const newCol = Math.min(numCols - 1, (e.shiftKey ? anchor.col : col) + 1);
+        if (e.shiftKey) setSelectionEnd({ row: anchor.row, col: newCol });
+        else { setSelectedCell({ row, col: newCol }); setSelectionEnd(null); }
+        e.preventDefault();
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        // Clear all cells in selection
+        const bounds = getSelectionBounds();
+        if (bounds) {
+          const next = cells.map(r => [...r]);
+          for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+            for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+              if (next[r]) next[r][c] = "";
+            }
+          }
+          onCellsChange(next);
+        }
+        e.preventDefault();
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+        // Start editing on any printable character
         setEditingCell({ row, col });
+        setSelectionEnd(null);
         updateCell(row, col, "");
       }
     }
-  }, [selectedCell, editingCell, numRows, numCols, updateCell]);
+  }, [selectedCell, selectionEnd, editingCell, numRows, numCols, updateCell, getSelectionBounds, cells, onCellsChange]);
 
   const filledCellCount = cells.flat().filter(c => c.trim().length > 0).length;
 
@@ -151,6 +221,7 @@ export default function BlacklistGrid({
           background: "rgba(0,0,0,0.15)",
         }}
         onPaste={handlePaste}
+        onCopy={handleCopy}
         onKeyDown={handleKeyDown}
         tabIndex={0}
       >
@@ -158,19 +229,19 @@ export default function BlacklistGrid({
         <div style={{ display: "flex", position: "sticky", top: 0, zIndex: 1 }}>
           <div style={{
             width: 32, minWidth: 32, height: 24,
-            background: "var(--bg-tertiary, rgba(0,0,0,0.3))",
-            borderBottom: "1px solid var(--border-color)",
-            borderRight: "1px solid var(--border-color)",
+            background: "#d6e6f5",
+            borderBottom: "1px solid #a8c5e0",
+            borderRight: "1px solid #a8c5e0",
           }} />
           {Array.from({ length: numCols }, (_, ci) => (
             <div key={ci} style={{
               width: colWidth, minWidth: colWidth, height: 24,
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 10, fontWeight: 600,
-              color: "var(--text-muted)",
-              background: "var(--bg-tertiary, rgba(0,0,0,0.3))",
-              borderBottom: "1px solid var(--border-color)",
-              borderRight: ci < numCols - 1 ? "1px solid var(--border-color)" : "none",
+              color: "#1a4971",
+              background: "#d6e6f5",
+              borderBottom: "1px solid #a8c5e0",
+              borderRight: ci < numCols - 1 ? "1px solid #a8c5e0" : "none",
             }}>
               {String.fromCharCode(65 + ci)}
             </div>
@@ -184,16 +255,18 @@ export default function BlacklistGrid({
             <div style={{
               width: 32, minWidth: 32, height: CELL_HEIGHT,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 10, color: "var(--text-muted)",
-              background: "rgba(0,0,0,0.1)",
-              borderBottom: "1px solid #d0d0d0",
-              borderRight: "1px solid var(--border-color)",
+              fontSize: 10, fontWeight: 600,
+              color: "#1a4971",
+              background: "#d6e6f5",
+              borderBottom: "1px solid #a8c5e0",
+              borderRight: "1px solid #a8c5e0",
               flexShrink: 0,
             }}>
               {ri + 1}
             </div>
             {row.map((cellVal, ci) => {
-              const isSelected = selectedCell?.row === ri && selectedCell?.col === ci;
+              const isAnchor = selectedCell?.row === ri && selectedCell?.col === ci;
+              const inSelection = isInSelection(ri, ci);
               const isEditing = editingCell?.row === ri && editingCell?.col === ci;
               const key = `${ri},${ci}`;
               const status = matchStatus?.get(key);
@@ -202,12 +275,20 @@ export default function BlacklistGrid({
               if (status === "matched") { cellBg = "#e8f5e9"; cellColor = "#2e7d32"; }
               else if (status === "no-match") { cellBg = "#fff3e0"; cellColor = "#e65100"; }
               else if (status === "exists") { cellBg = "#e3f2fd"; cellColor = "#1565c0"; }
+              // Override bg for selection
+              if (inSelection && !status) cellBg = "#cce5ff";
 
               return (
                 <div
                   key={ci}
-                  onClick={() => {
-                    setSelectedCell({ row: ri, col: ci });
+                  onClick={(e) => {
+                    if (e.shiftKey && selectedCell) {
+                      // Extend selection from anchor to this cell
+                      setSelectionEnd({ row: ri, col: ci });
+                    } else {
+                      setSelectedCell({ row: ri, col: ci });
+                      setSelectionEnd(null);
+                    }
                     if (!isEditing) setEditingCell(null);
                   }}
                   onDoubleClick={() => setEditingCell({ row: ri, col: ci })}
@@ -215,7 +296,7 @@ export default function BlacklistGrid({
                     width: colWidth, minWidth: colWidth, height: CELL_HEIGHT,
                     borderBottom: "1px solid #d0d0d0",
                     borderRight: ci < numCols - 1 ? "1px solid #d0d0d0" : "none",
-                    outline: isSelected ? "2px solid var(--accent-primary)" : "none",
+                    outline: isAnchor ? "2px solid var(--accent-primary)" : (inSelection ? "1px solid #66b3ff" : "none"),
                     outlineOffset: -2,
                     background: cellBg,
                     padding: 0,

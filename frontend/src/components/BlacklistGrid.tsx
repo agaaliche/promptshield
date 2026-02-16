@@ -40,6 +40,8 @@ export default function BlacklistGrid({
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
   const [selectionEnd, setSelectionEnd] = useState<{ row: number; col: number } | null>(null);
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [copiedBounds, setCopiedBounds] = useState<{ minRow: number; maxRow: number; minCol: number; maxCol: number } | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -63,6 +65,11 @@ export default function BlacklistGrid({
     if (!bounds) return false;
     return row >= bounds.minRow && row <= bounds.maxRow && col >= bounds.minCol && col <= bounds.maxCol;
   }, [getSelectionBounds]);
+
+  const isInCopiedBounds = useCallback((row: number, col: number) => {
+    if (!copiedBounds) return false;
+    return row >= copiedBounds.minRow && row <= copiedBounds.maxRow && col >= copiedBounds.minCol && col <= copiedBounds.maxCol;
+  }, [copiedBounds]);
 
   // Focus input when editing starts
   useEffect(() => {
@@ -108,6 +115,7 @@ export default function BlacklistGrid({
     onCellsChange(next);
     setEditingCell(null);
     setSelectionEnd(null);
+    setCopiedBounds(null);
   }, [cells, selectedCell, numCols, onCellsChange]);
 
   // Handle copy — copies selected range as tab-separated text
@@ -126,6 +134,7 @@ export default function BlacklistGrid({
       lines.push(rowCells.join("\t"));
     }
     e.clipboardData.setData("text/plain", lines.join("\n"));
+    setCopiedBounds(bounds);
   }, [cells, editingCell, getSelectionBounds]);
 
   // Handle keyboard navigation
@@ -158,6 +167,7 @@ export default function BlacklistGrid({
     } else if (e.key === "Escape") {
       setEditingCell(null);
       setSelectionEnd(null);
+      setCopiedBounds(null);
     } else if (!editingCell) {
       // Arrow keys with/without Shift for range selection
       if (e.key === "ArrowUp") {
@@ -202,6 +212,52 @@ export default function BlacklistGrid({
     }
   }, [selectedCell, selectionEnd, editingCell, numRows, numCols, updateCell, getSelectionBounds, cells, onCellsChange]);
 
+  // Select entire column
+  const selectColumn = useCallback((col: number) => {
+    setSelectedCell({ row: 0, col });
+    setSelectionEnd({ row: numRows - 1, col });
+    setEditingCell(null);
+    setCopiedBounds(null);
+  }, [numRows]);
+
+  // Select entire row
+  const selectRow = useCallback((row: number) => {
+    setSelectedCell({ row, col: 0 });
+    setSelectionEnd({ row, col: numCols - 1 });
+    setEditingCell(null);
+    setCopiedBounds(null);
+  }, [numCols]);
+
+  // Mouse drag handlers for range selection
+  const handleCellMouseDown = useCallback((row: number, col: number, e: React.MouseEvent) => {
+    if (e.shiftKey && selectedCell) {
+      setSelectionEnd({ row, col });
+    } else {
+      setSelectedCell({ row, col });
+      setSelectionEnd(null);
+      setIsDragging(true);
+    }
+    setEditingCell(null);
+    setCopiedBounds(null);
+  }, [selectedCell]);
+
+  const handleCellMouseEnter = useCallback((row: number, col: number) => {
+    if (isDragging) {
+      setSelectionEnd({ row, col });
+    }
+  }, [isDragging]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  // Global mouseup listener for drag end
+  useEffect(() => {
+    const handleGlobalMouseUp = () => setIsDragging(false);
+    window.addEventListener("mouseup", handleGlobalMouseUp);
+    return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
+  }, []);
+
   const filledCellCount = cells.flat().filter(c => c.trim().length > 0).length;
 
   // Column width based on available space
@@ -234,15 +290,20 @@ export default function BlacklistGrid({
             borderRight: "1px solid #a8c5e0",
           }} />
           {Array.from({ length: numCols }, (_, ci) => (
-            <div key={ci} style={{
-              width: colWidth, minWidth: colWidth, height: 24,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 10, fontWeight: 600,
-              color: "#1a4971",
-              background: "#d6e6f5",
-              borderBottom: "1px solid #a8c5e0",
-              borderRight: ci < numCols - 1 ? "1px solid #a8c5e0" : "none",
-            }}>
+            <div
+              key={ci}
+              onClick={() => selectColumn(ci)}
+              style={{
+                width: colWidth, minWidth: colWidth, height: 24,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 10, fontWeight: 600,
+                color: "#1a4971",
+                background: "#d6e6f5",
+                borderBottom: "1px solid #a8c5e0",
+                borderRight: ci < numCols - 1 ? "1px solid #a8c5e0" : "none",
+                cursor: "pointer",
+              }}
+            >
               {String.fromCharCode(65 + ci)}
             </div>
           ))}
@@ -252,21 +313,26 @@ export default function BlacklistGrid({
         {cells.map((row, ri) => (
           <div key={ri} style={{ display: "flex" }}>
             {/* Row number */}
-            <div style={{
-              width: 32, minWidth: 32, height: CELL_HEIGHT,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 10, fontWeight: 600,
-              color: "#1a4971",
-              background: "#d6e6f5",
-              borderBottom: "1px solid #a8c5e0",
-              borderRight: "1px solid #a8c5e0",
-              flexShrink: 0,
-            }}>
+            <div
+              onClick={() => selectRow(ri)}
+              style={{
+                width: 32, minWidth: 32, height: CELL_HEIGHT,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 10, fontWeight: 600,
+                color: "#1a4971",
+                background: "#d6e6f5",
+                borderBottom: "1px solid #a8c5e0",
+                borderRight: "1px solid #a8c5e0",
+                flexShrink: 0,
+                cursor: "pointer",
+              }}
+            >
               {ri + 1}
             </div>
             {row.map((cellVal, ci) => {
               const isAnchor = selectedCell?.row === ri && selectedCell?.col === ci;
               const inSelection = isInSelection(ri, ci);
+              const inCopied = isInCopiedBounds(ri, ci);
               const isEditing = editingCell?.row === ri && editingCell?.col === ci;
               const key = `${ri},${ci}`;
               const status = matchStatus?.get(key);
@@ -278,30 +344,32 @@ export default function BlacklistGrid({
               // Override bg for selection
               if (inSelection && !status) cellBg = "#cce5ff";
 
+              // Determine borders - show dashed marching ants border for copied range
+              const isLeftEdge = inCopied && ci === copiedBounds?.minCol;
+              const isTopEdge = inCopied && ri === copiedBounds?.minRow;
+              const isRightEdge = inCopied && ci === copiedBounds?.maxCol;
+              const isBottomEdge = inCopied && ri === copiedBounds?.maxRow;
+
               return (
                 <div
                   key={ci}
-                  onClick={(e) => {
-                    if (e.shiftKey && selectedCell) {
-                      // Extend selection from anchor to this cell
-                      setSelectionEnd({ row: ri, col: ci });
-                    } else {
-                      setSelectedCell({ row: ri, col: ci });
-                      setSelectionEnd(null);
-                    }
-                    if (!isEditing) setEditingCell(null);
-                  }}
+                  onMouseDown={(e) => handleCellMouseDown(ri, ci, e)}
+                  onMouseEnter={() => handleCellMouseEnter(ri, ci)}
+                  onMouseUp={handleMouseUp}
                   onDoubleClick={() => setEditingCell({ row: ri, col: ci })}
                   style={{
                     width: colWidth, minWidth: colWidth, height: CELL_HEIGHT,
-                    borderBottom: "1px solid #d0d0d0",
-                    borderRight: ci < numCols - 1 ? "1px solid #d0d0d0" : "none",
-                    outline: isAnchor ? "2px solid var(--accent-primary)" : (inSelection ? "1px solid #66b3ff" : "none"),
+                    borderBottom: isBottomEdge ? "2px dashed #1976d2" : "1px solid #d0d0d0",
+                    borderRight: isRightEdge ? "2px dashed #1976d2" : (ci < numCols - 1 ? "1px solid #d0d0d0" : "none"),
+                    borderLeft: isLeftEdge ? "2px dashed #1976d2" : "none",
+                    borderTop: isTopEdge ? "2px dashed #1976d2" : "none",
+                    outline: isAnchor ? "2px solid var(--accent-primary)" : (inSelection && !inCopied ? "1px solid #66b3ff" : "none"),
                     outlineOffset: -2,
                     background: cellBg,
                     padding: 0,
                     cursor: "cell",
                     position: "relative",
+                    boxSizing: "border-box",
                   }}
                 >
                   {isEditing ? (

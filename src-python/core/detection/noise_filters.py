@@ -27,7 +27,8 @@ from models.schemas import PIIType
 # ---------------------------------------------------------------------------
 
 LEGAL_SUFFIX_RE: _re.Pattern[str] = _re.compile(
-    r'\b(?:inc|corp|ltd|llc|llp|plc|co|lp|sas|sarl|gmbh|ag|bv|nv|'
+    r'\b(?:inc|incorporated|corp|corporation|ltd|limited|llc|llp|plc|co|company|lp|'
+    r'sas|sarl|gmbh|ag|bv|nv|'
     r'kg|kgaa|ohg|ug|mbh|e\.?k\.?|e\.?v\.?|se|'
     r'lt[ée]e|limit[ée]e|enr|s\.?e\.?n\.?c\.?|'
     r's\.?a\.?r?\.?l?\.?|s\.?p\.?a\.?|s\.?r\.?l\.?)\b\.?',
@@ -126,6 +127,20 @@ def _is_org_pipeline_noise(text: str) -> bool:
         for w in words
     ):
         return True
+    # Strip parenthetical codes (e.g., "(NCSC)", "(ABC)") and standalone numbers
+    # then check if what remains is all dictionary words. Catches regulatory/standard names.
+    if len(words) >= 3 and not has_legal_suffix(clean):
+        # Remove "(XXX)" patterns and standalone numbers
+        _code_stripped = _re.sub(r'\([A-Z0-9]{2,10}\)', '', clean)
+        _code_stripped = _re.sub(r'\b\d{3,}\b', '', _code_stripped)
+        _code_stripped = _re.sub(r'\s+', ' ', _code_stripped).strip()
+        stripped_words = [w for w in _code_stripped.split() if w]
+        if len(stripped_words) >= 2 and all(
+            w.lower() in _common_words
+            or all(c in "-\u2013\u2014/.," for c in w)
+            for w in stripped_words
+        ):
+            return True
     if len(words) == 2 and words[0].lower() == "portion" and words[1].isdigit():
         return True
     if len(words) == 2 and words[0].lower() in (

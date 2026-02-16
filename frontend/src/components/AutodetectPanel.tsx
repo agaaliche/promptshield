@@ -607,11 +607,11 @@ export default function AutodetectPanel({
 
       {/* Detection settings tabs (collapsible via gear) */}
       {showTabs && (<>
-        {/* 4-tab bar: Patterns | Blacklist | AI Recognition | Deep Analysis */}
+        {/* 4-tab bar: Patterns | Expressions | AI Recognition | Deep Analysis */}
         <div style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-color)", flexShrink: 0, marginTop: 6, padding: "0 10px" }}>
           {([
             { key: "patterns" as const, label: "Patterns", active: regexEnabled },
-            { key: "blacklist" as const, label: "Blacklist", active: blCells.flat().some(c => c.trim()) },
+            { key: "blacklist" as const, label: "Expressions", active: blCells.flat().some(c => c.trim()) },
             { key: "ai" as const, label: "AI Recognition", active: nerEnabled },
             { key: "deep" as const, label: "Deep Analysis", active: llmEnabled },
           ] as const).map(({ key, label, active }) => {

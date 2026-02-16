@@ -53,6 +53,8 @@ export default function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) 
         tag === "SELECT" ||
         el.isContentEditable
       ) return;
+      // Skip when inside BlacklistGrid (Excel-like control handles its own shortcuts)
+      if (el.closest("[data-blacklist-grid]")) return;
       switch (e.key) {
         case "f":
           if (e.ctrlKey || e.metaKey) {

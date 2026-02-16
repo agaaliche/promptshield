@@ -91,6 +91,7 @@ export default function BlacklistGrid({
   // Handle paste — supports multi-cell paste from Excel/CSV
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     const text = e.clipboardData.getData("text/plain");
     if (!text) return;
 
@@ -124,6 +125,7 @@ export default function BlacklistGrid({
     const bounds = getSelectionBounds();
     if (!bounds) return;
     e.preventDefault();
+    e.stopPropagation();
 
     const lines: string[] = [];
     for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
@@ -139,6 +141,22 @@ export default function BlacklistGrid({
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Stop propagation for all modifier key combos to prevent global shortcuts
+    if ((e.ctrlKey || e.metaKey) && ["c", "v", "z", "y", "a"].includes(e.key.toLowerCase())) {
+      e.stopPropagation();
+      // Ctrl+A: select all cells in the grid
+      if (e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        setSelectedCell({ row: 0, col: 0 });
+        setSelectionEnd({ row: numRows - 1, col: numCols - 1 });
+        setEditingCell(null);
+        setCopiedBounds(null);
+      }
+      // Ctrl+C and Ctrl+V are handled by onCopy/onPaste events
+      // Ctrl+Z and Ctrl+Y: todo - could implement undo/redo for grid later
+      return;
+    }
+
     if (!selectedCell) return;
     const { row, col } = selectedCell;
     const anchor = selectionEnd ?? selectedCell;
@@ -153,8 +171,10 @@ export default function BlacklistGrid({
         setEditingCell({ row, col });
       }
       e.preventDefault();
+      e.stopPropagation();
     } else if (e.key === "Tab") {
       e.preventDefault();
+      e.stopPropagation();
       setEditingCell(null);
       setSelectionEnd(null);
       if (e.shiftKey) {
@@ -168,6 +188,7 @@ export default function BlacklistGrid({
       setEditingCell(null);
       setSelectionEnd(null);
       setCopiedBounds(null);
+      e.stopPropagation();
     } else if (!editingCell) {
       // Arrow keys with/without Shift for range selection
       if (e.key === "ArrowUp") {
@@ -175,21 +196,25 @@ export default function BlacklistGrid({
         if (e.shiftKey) setSelectionEnd({ row: newRow, col: anchor.col });
         else { setSelectedCell({ row: newRow, col }); setSelectionEnd(null); }
         e.preventDefault();
+        e.stopPropagation();
       } else if (e.key === "ArrowDown") {
         const newRow = Math.min(numRows - 1, (e.shiftKey ? anchor.row : row) + 1);
         if (e.shiftKey) setSelectionEnd({ row: newRow, col: anchor.col });
         else { setSelectedCell({ row: newRow, col }); setSelectionEnd(null); }
         e.preventDefault();
+        e.stopPropagation();
       } else if (e.key === "ArrowLeft") {
         const newCol = Math.max(0, (e.shiftKey ? anchor.col : col) - 1);
         if (e.shiftKey) setSelectionEnd({ row: anchor.row, col: newCol });
         else { setSelectedCell({ row, col: newCol }); setSelectionEnd(null); }
         e.preventDefault();
+        e.stopPropagation();
       } else if (e.key === "ArrowRight") {
         const newCol = Math.min(numCols - 1, (e.shiftKey ? anchor.col : col) + 1);
         if (e.shiftKey) setSelectionEnd({ row: anchor.row, col: newCol });
         else { setSelectedCell({ row, col: newCol }); setSelectionEnd(null); }
         e.preventDefault();
+        e.stopPropagation();
       } else if (e.key === "Delete" || e.key === "Backspace") {
         // Clear all cells in selection
         const bounds = getSelectionBounds();
@@ -203,11 +228,13 @@ export default function BlacklistGrid({
           onCellsChange(next);
         }
         e.preventDefault();
+        e.stopPropagation();
       } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
         // Start editing on any printable character
         setEditingCell({ row, col });
         setSelectionEnd(null);
         updateCell(row, col, "");
+        e.stopPropagation();
       }
     }
   }, [selectedCell, selectionEnd, editingCell, numRows, numCols, updateCell, getSelectionBounds, cells, onCellsChange]);
@@ -268,6 +295,7 @@ export default function BlacklistGrid({
       {/* Grid */}
       <div
         ref={gridRef}
+        data-blacklist-grid
         style={{
           border: "1px solid var(--border-color)",
           borderRadius: 4,

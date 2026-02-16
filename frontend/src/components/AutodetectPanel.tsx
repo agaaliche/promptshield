@@ -129,7 +129,7 @@ export default function AutodetectPanel({
       for (let col = 0; col < blCells[row].length; col++) {
         const cell = blCells[row][col].trim();
         if (!cell) continue;
-        const key = `${row}-${col}`;
+        const key = `${row},${col}`;
         const cellLower = cell.toLowerCase();
         // Check if any detected text contains this expression
         let found = false;

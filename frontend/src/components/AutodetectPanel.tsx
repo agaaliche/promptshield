@@ -832,7 +832,6 @@ export default function AutodetectPanel({
         <button
           className="btn-ghost btn-sm"
           onClick={() => {
-            onClose();
             if (scope === "page") { onResetPage(activePage); } else { onReset(); }
           }}
           disabled={isProcessing}

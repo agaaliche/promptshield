@@ -408,8 +408,8 @@ export default function BlacklistGrid({
               if (status === "matched") { cellBg = "#e8f5e9"; cellColor = "#2e7d32"; }
               else if (status === "no-match") { cellBg = "#fff3e0"; cellColor = "#e65100"; }
               else if (status === "exists") { cellBg = "#e3f2fd"; cellColor = "#1565c0"; }
-              // Override bg for selection
-              if (inSelection && !status) cellBg = "#cce5ff";
+              // Override bg for selection (overrides match status)
+              if (inSelection) { cellBg = "#cce5ff"; cellColor = "#111"; }
 
               // Determine borders - show dashed marching ants border for copied range
               const isLeftEdge = inCopied && ci === copiedBounds?.minCol;
@@ -430,7 +430,7 @@ export default function BlacklistGrid({
                     borderRight: isRightEdge ? "2px dashed #1976d2" : (ci < numCols - 1 ? "1px solid #d0d0d0" : "none"),
                     borderLeft: isLeftEdge ? "2px dashed #1976d2" : "none",
                     borderTop: isTopEdge ? "2px dashed #1976d2" : "none",
-                    outline: isAnchor ? "2px solid var(--accent-primary)" : (inSelection && !inCopied ? "1px solid #66b3ff" : "none"),
+                    outline: isAnchor ? "2px solid var(--accent-primary)" : "none",
                     outlineOffset: -2,
                     background: cellBg,
                     padding: 0,

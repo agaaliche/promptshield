@@ -435,3 +435,57 @@ class TestOutputStructure:
         if ssns:
             assert ssns[0].char_start >= 0
             assert ssns[0].char_end > ssns[0].char_start
+
+
+# ---------------------------------------------------------------------------
+# Quoted-text extension
+# ---------------------------------------------------------------------------
+
+class TestQuotedTextExtension:
+    """Test that PERSON/ORG entities inside quotes extend to cover full quoted text."""
+
+    def test_french_guillemets_person_extension(self):
+        """NER detects 'Dixie' but full quoted text is 'Dixie Lee'."""
+        text = 'sous la bannière « Dixie Lee » sur le territoire'
+        #                    ^18    ^24
+        page = _make_page(text)
+        # NER only detected "Dixie" (indices 19-24 inside the guillemets)
+        nm = NERMatch(start=19, end=24, text="Dixie", pii_type=PIIType.PERSON, confidence=0.70)
+        result = _merge_detections([], [nm], [], page)
+        persons = [r for r in result if r.pii_type == PIIType.PERSON]
+        assert len(persons) == 1
+        # Should extend to cover "Dixie Lee" (the full quoted text)
+        assert persons[0].text == "Dixie Lee"
+
+    def test_double_quotes_org_extension(self):
+        """ORG detection extends to cover full double-quoted text."""
+        text = 'Company called "Acme Corp Industries" is here.'
+        page = _make_page(text)
+        # NER only detected "Acme Corp" (partial match)
+        nm = NERMatch(start=16, end=25, text="Acme Corp", pii_type=PIIType.ORG, confidence=0.65)
+        result = _merge_detections([], [nm], [], page)
+        orgs = [r for r in result if r.pii_type == PIIType.ORG]
+        assert len(orgs) == 1
+        assert orgs[0].text == "Acme Corp Industries"
+
+    def test_single_word_quoted_not_extended(self):
+        """Single-word quotes are not tracked (require 2+ words)."""
+        text = 'The name "Bob" was used.'
+        page = _make_page(text)
+        nm = NERMatch(start=10, end=13, text="Bob", pii_type=PIIType.PERSON, confidence=0.70)
+        result = _merge_detections([], [nm], [], page)
+        persons = [r for r in result if r.pii_type == PIIType.PERSON]
+        # Detection kept but not extended (single word)
+        if persons:  # may be filtered by noise but text shouldn't change
+            assert persons[0].text == "Bob"
+
+    def test_non_overlapping_quote_unchanged(self):
+        """PERSON outside quotes is not affected."""
+        text = 'Today Jean Dupont said « hello world » to everyone.'
+        page = _make_page(text)
+        # Person is at position 6, not at start (avoids page-header filter)
+        nm = NERMatch(start=6, end=17, text="Jean Dupont", pii_type=PIIType.PERSON, confidence=0.80)
+        result = _merge_detections([], [nm], [], page)
+        persons = [r for r in result if r.pii_type == PIIType.PERSON]
+        assert len(persons) == 1
+        assert persons[0].text == "Jean Dupont"

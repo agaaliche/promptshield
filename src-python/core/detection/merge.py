@@ -323,6 +323,38 @@ def _merge_detections(
                         left_margin * 100, right_margin * 100,
                     )
 
+    # ── Extend PERSON / ORG to cover full quoted text ─────────────────
+    # If a PERSON or ORG candidate is partially inside quotation marks,
+    # extend it to cover the entire quoted expression (e.g., « Dixie Lee »
+    # should be detected as one "Dixie Lee" even if NER only found "Dixie").
+    for c in candidates:
+        if c["pii_type"] not in (PIIType.PERSON, PIIType.ORG):
+            continue
+        for qs, qe in _quoted_ranges:
+            # qs is index of opening quote, qe is index after closing quote
+            # Inner text is at [qs+1, qe-1)
+            inner_start = qs + 1
+            inner_end = qe - 1
+            # Check if candidate overlaps with the quoted range
+            if c["start"] < inner_end and c["end"] > inner_start:
+                # Candidate overlaps with quoted text — extend to full inner
+                old_text = c["text"]
+                c["start"] = inner_start
+                c["end"] = inner_end
+                c["text"] = _ft[inner_start:inner_end].strip()
+                # Adjust start/end to match stripped text
+                while c["start"] < inner_end and _ft[c["start"]] in " \t\n":
+                    c["start"] += 1
+                while c["end"] > c["start"] and _ft[c["end"] - 1] in " \t\n":
+                    c["end"] -= 1
+                c["text"] = _ft[c["start"]:c["end"]]
+                if c["text"] != old_text:
+                    logger.debug(
+                        "Page %d: %s extended to quoted text: %r -> %r",
+                        page_data.page_number, c["pii_type"].value, old_text, c["text"],
+                    )
+                break  # Only extend once per candidate
+
     # ── Sort and merge overlapping regions ────────────────────────────
     candidates.sort(key=lambda x: (x["start"], -x["priority"]))
 

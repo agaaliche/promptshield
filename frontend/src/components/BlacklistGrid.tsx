@@ -181,7 +181,6 @@ export default function BlacklistGrid({
         setSelectedCell({ row: 0, col: 0 });
         setSelectionEnd({ row: numRows - 1, col: numCols - 1 });
         setEditingCell(null);
-        setCopiedBounds(null);
       }
       // Ctrl+Z: undo
       if (key === "z") {
@@ -286,7 +285,6 @@ export default function BlacklistGrid({
     setSelectedCell({ row: 0, col });
     setSelectionEnd({ row: numRows - 1, col });
     setEditingCell(null);
-    setCopiedBounds(null);
   }, [numRows]);
 
   // Select entire row
@@ -294,7 +292,6 @@ export default function BlacklistGrid({
     setSelectedCell({ row, col: 0 });
     setSelectionEnd({ row, col: numCols - 1 });
     setEditingCell(null);
-    setCopiedBounds(null);
   }, [numCols]);
 
   // Mouse drag handlers for range selection
@@ -307,7 +304,6 @@ export default function BlacklistGrid({
       setIsDragging(true);
     }
     setEditingCell(null);
-    setCopiedBounds(null);
   }, [selectedCell]);
 
   const handleCellMouseEnter = useCallback((row: number, col: number) => {
@@ -429,10 +425,10 @@ export default function BlacklistGrid({
                   onDoubleClick={() => setEditingCell({ row: ri, col: ci })}
                   style={{
                     width: colWidth, minWidth: colWidth, height: CELL_HEIGHT,
-                    borderBottom: isBottomEdge ? "2px dashed #1976d2" : "1px solid #d0d0d0",
-                    borderRight: isRightEdge ? "2px dashed #1976d2" : (ci < numCols - 1 ? "1px solid #d0d0d0" : "none"),
-                    borderLeft: isLeftEdge ? "2px dashed #1976d2" : "none",
-                    borderTop: isTopEdge ? "2px dashed #1976d2" : "none",
+                    borderBottom: isBottomEdge ? "1px dashed #1976d2" : "1px solid #d0d0d0",
+                    borderRight: isRightEdge ? "1px dashed #1976d2" : (ci < numCols - 1 ? "1px solid #d0d0d0" : "none"),
+                    borderLeft: isLeftEdge ? "1px dashed #1976d2" : "none",
+                    borderTop: isTopEdge ? "1px dashed #1976d2" : "none",
                     outline: isAnchor ? "2px solid var(--accent-primary)" : "none",
                     outlineOffset: -2,
                     background: cellBg,

@@ -15,6 +15,8 @@ interface UseKeyboardShortcutsOptions {
   showTypePicker: boolean;
   canUndo: boolean;
   canRedo: boolean;
+  showAutodetect: boolean;
+  setShowAutodetect: (show: boolean) => void;
   setActivePage: (p: number) => void;
   setZoom: (z: number) => void;
   setSelectedRegionIds: (ids: string[]) => void;
@@ -52,6 +54,12 @@ export default function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) 
         el.isContentEditable
       ) return;
       switch (e.key) {
+        case "f":
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            o.setShowAutodetect(!o.showAutodetect);
+          }
+          break;
         case "z":
           if (e.ctrlKey || e.metaKey) { e.preventDefault(); o.undo(); }
           break;

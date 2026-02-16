@@ -184,10 +184,10 @@ export default function DocumentViewer() {
   useKeyboardShortcuts({
     activePage, pageCount, zoom, regions, pageRegions, selectedRegionIds,
     copiedRegions, activeDocId: activeDocId ?? null, cursorTool, showTypePicker,
-    canUndo, canRedo, setActivePage, setZoom, setSelectedRegionIds, clearSelection,
-    setCursorTool, prevCursorToolRef, cancelTypePicker, handleRegionAction,
-    undo, redo, pushUndo, removeRegion, setCopiedRegions, setStatusMessage,
-    handlePasteRegions, batchDeleteRegions,
+    canUndo, canRedo, showAutodetect, setShowAutodetect, setActivePage, setZoom,
+    setSelectedRegionIds, clearSelection, setCursorTool, prevCursorToolRef,
+    cancelTypePicker, handleRegionAction, undo, redo, pushUndo, removeRegion,
+    setCopiedRegions, setStatusMessage, handlePasteRegions, batchDeleteRegions,
   });
 
   if (!doc) return <div style={styles.empty}>No document loaded</div>;

@@ -141,8 +141,8 @@ export default function BlacklistGrid({
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    // Stop propagation for all modifier key combos to prevent global shortcuts
-    if ((e.ctrlKey || e.metaKey) && ["c", "v", "z", "y", "a"].includes(e.key.toLowerCase())) {
+    // Stop propagation for clipboard/select shortcuts to prevent global shortcuts
+    if ((e.ctrlKey || e.metaKey) && ["c", "v", "a"].includes(e.key.toLowerCase())) {
       e.stopPropagation();
       // Ctrl+A: select all cells in the grid
       if (e.key.toLowerCase() === "a") {
@@ -153,9 +153,9 @@ export default function BlacklistGrid({
         setCopiedBounds(null);
       }
       // Ctrl+C and Ctrl+V are handled by onCopy/onPaste events
-      // Ctrl+Z and Ctrl+Y: todo - could implement undo/redo for grid later
       return;
     }
+    // Let Ctrl+Z and Ctrl+Y bubble up to global undo/redo
 
     if (!selectedCell) return;
     const { row, col } = selectedCell;

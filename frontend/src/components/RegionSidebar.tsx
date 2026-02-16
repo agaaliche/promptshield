@@ -441,6 +441,39 @@ export default function RegionSidebar({
                     maxHeight: 260,
                     overflowY: 'auto',
                   }}>
+                    {/* Select / Deselect all type filters */}
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '4px 12px',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: 'var(--text-primary)',
+                        cursor: 'pointer',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.05)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={allTypesEnabled}
+                        ref={el => { if (el) el.indeterminate = !allTypesEnabled && enabledTypes !== null && enabledTypes.size > 0; }}
+                        onChange={() => {
+                          if (allTypesEnabled) {
+                            // Deselect all — keep only the first type so at least one stays
+                            setEnabledTypes(new Set());
+                          } else {
+                            // Select all
+                            setEnabledTypes(null);
+                          }
+                        }}
+                        style={{ accentColor: 'var(--accent-primary)' }}
+                      />
+                      Select all
+                    </label>
+                    <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 0' }} />
                     {availableTypes.map(type => {
                       const checked = enabledTypes === null || enabledTypes.has(type);
                       return (

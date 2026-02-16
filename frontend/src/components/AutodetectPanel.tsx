@@ -683,6 +683,31 @@ export default function AutodetectPanel({
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
               Select which data patterns to look for
             </div>
+            {/* Select all header checkbox */}
+            {(() => {
+              const allKeys = ["EMAIL","PHONE","SSN","CREDIT_CARD","IBAN","DATE","IP_ADDRESS","PASSPORT","DRIVER_LICENSE","ADDRESS"] as const;
+              const allChecked = allKeys.every(k => regexTypes[k]);
+              const noneChecked = allKeys.every(k => !regexTypes[k]);
+              return (
+                <label style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  fontSize: 12, fontWeight: 600, color: "var(--text-primary)", cursor: "pointer",
+                  padding: "4px 0", borderBottom: "1px solid var(--border-color)", marginBottom: 2,
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    ref={el => { if (el) el.indeterminate = !allChecked && !noneChecked; }}
+                    onChange={() => {
+                      const val = !allChecked;
+                      setRegexTypes(prev => Object.fromEntries(Object.keys(prev).map(k => [k, val])) as typeof prev);
+                    }}
+                    style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
+                  />
+                  Select all
+                </label>
+              );
+            })()}
             {([
               { key: "EMAIL", icon: "✉", label: "Email addresses" },
               { key: "PHONE", icon: "📞", label: "Phone numbers" },
@@ -710,14 +735,6 @@ export default function AutodetectPanel({
                 {label}
               </label>
             ))}
-            <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
-              <button className="btn-ghost btn-sm" style={{ fontSize: 11 }}
-                onClick={() => setRegexTypes(prev => Object.fromEntries(Object.keys(prev).map(k => [k, true])))}
-              >Select all</button>
-              <button className="btn-ghost btn-sm" style={{ fontSize: 11 }}
-                onClick={() => setRegexTypes(prev => Object.fromEntries(Object.keys(prev).map(k => [k, false])))}
-              >Clear all</button>
-            </div>
           </>)}
 
           {/* Blacklist tab */}

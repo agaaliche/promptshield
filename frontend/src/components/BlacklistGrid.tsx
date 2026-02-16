@@ -198,9 +198,10 @@ export default function BlacklistGrid({
               const key = `${ri},${ci}`;
               const status = matchStatus?.get(key);
               let cellBg = "#ffffff";
-              if (status === "matched") cellBg = "#e8f5e9";
-              else if (status === "no-match") cellBg = "#fff3e0";
-              else if (status === "exists") cellBg = "#e3f2fd";
+              let cellColor = cellVal ? "#111" : "#999";
+              if (status === "matched") { cellBg = "#e8f5e9"; cellColor = "#2e7d32"; }
+              else if (status === "no-match") { cellBg = "#fff3e0"; cellColor = "#e65100"; }
+              else if (status === "exists") { cellBg = "#e3f2fd"; cellColor = "#1565c0"; }
 
               return (
                 <div
@@ -243,7 +244,7 @@ export default function BlacklistGrid({
                       display: "flex", alignItems: "center",
                       padding: "0 6px",
                       fontSize: 12,
-                      color: cellVal ? "#111" : "#999",
+                      color: cellColor,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",

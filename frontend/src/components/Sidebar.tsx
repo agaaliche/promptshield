@@ -246,7 +246,7 @@ export default function Sidebar() {
                     transition: item.status === "error" ? "opacity 0.35s ease, transform 0.35s ease, max-height 0.35s ease" : undefined,
                     opacity: item.status === "error" && dismissingErrorUploads ? 0 : 1,
                     transform: item.status === "error" && dismissingErrorUploads ? "translateX(-20px)" : undefined,
-                    maxHeight: item.status === "error" && dismissingErrorUploads ? 0 : 60,
+                    maxHeight: item.status === "error" && dismissingErrorUploads ? 0 : 80,
                     overflow: "hidden",
                   }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
@@ -255,20 +255,33 @@ export default function Sidebar() {
                         {item.name}
                       </span>
                       <span style={{ fontSize: 9, color: "var(--text-muted)", flexShrink: 0 }}>
-                        {item.status === "queued" ? "Queued" : item.status === "uploading" ? "Uploading" : item.status === "detecting" ? "Detecting" : item.status === "done" ? "Done" : "Error"}
+                        {item.status === "queued" ? "Queued"
+                          : item.status === "uploading" && item.ocrPhase === "extracting" ? "Extracting"
+                          : item.status === "uploading" && item.ocrPhase === "ocr" ? "OCR"
+                          : item.status === "uploading" ? "Uploading"
+                          : item.status === "detecting" ? "Detecting"
+                          : item.status === "done" ? "Done" : "Error"}
                       </span>
                     </div>
+                    {/* OCR progress detail line */}
+                    {item.status === "uploading" && item.ocrMessage && (
+                      <div style={{ fontSize: 9, color: "var(--text-muted)", marginBottom: 2, paddingLeft: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                        {item.ocrMessage}
+                      </div>
+                    )}
                     {item.parentPath && (
                       <div style={{ fontSize: 9, color: "var(--text-muted)", marginBottom: 2, paddingLeft: 16 }}>
                         {item.parentPath}
                       </div>
                     )}
-                    <div style={{ height: 2, background: "rgba(255,255,255,0.1)", borderRadius: 1, overflow: "hidden" }}>
+                    <div style={{ height: 3, background: "rgba(255,255,255,0.1)", borderRadius: 2, overflow: "hidden" }}>
                       <div style={{
                         height: "100%",
                         width: `${item.progress}%`,
-                        background: item.status === "error" ? "#f44336" : "rgba(255,255,255,0.7)",
-                        borderRadius: 1,
+                        background: item.status === "error" ? "#f44336"
+                          : item.ocrPhase === "ocr" ? "linear-gradient(90deg, #5b9bd5, #7ec8e3)"
+                          : "rgba(255,255,255,0.7)",
+                        borderRadius: 2,
                         transition: "width 0.3s ease",
                       }} />
                     </div>

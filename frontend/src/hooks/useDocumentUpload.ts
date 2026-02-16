@@ -6,7 +6,7 @@
  */
 
 import { useCallback } from "react";
-import { uploadDocument, getDocument, detectPII } from "../api";
+import { uploadDocument, getDocument, detectPII, getUploadProgress } from "../api";
 import { resolveAllOverlaps } from "../regionUtils";
 import { toErrorMessage } from "../errorUtils";
 import { useAppStore, useDocumentStore, useRegionStore, useUIStore, useUploadStore, useDocLoadingStore } from "../store";
@@ -37,7 +37,7 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
   const { setRegions } = useRegionStore();
   const { setCurrentView, setStatusMessage } = useUIStore();
   const { addToUploadQueue, updateUploadItem, clearCompletedUploads, setShowUploadErrorDialog } = useUploadStore();
-  const { setDocDetecting, setDocLoadingMessage } = useDocLoadingStore();
+  const { setDocDetecting, setDocLoadingMessage, setUploadProgressId, setUploadProgressDocId, setUploadProgressDocName, setUploadProgressPhase } = useDocLoadingStore();
 
   const documents = useAppStore((s) => s.documents);
 
@@ -79,12 +79,59 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
       // Process sequentially
       for (const { file, item } of items) {
         try {
-          updateUploadItem(item.id, { status: "uploading", progress: 30 });
+          updateUploadItem(item.id, { status: "uploading", progress: 5 });
           if (verboseLoadingMessages) setDocLoadingMessage("Uploading document\u2026");
 
-          const uploadRes = await uploadDocument(file);
+          // Generate a unique progress ID and start polling OCR progress
+          const progressId = `progress-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-          updateUploadItem(item.id, { progress: 50 });
+          // Set up the upload progress dialog
+          setUploadProgressId(progressId);
+          setUploadProgressDocName(file.name);
+          setUploadProgressPhase("uploading");
+          setUploadProgressDocId(null);
+
+          let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+          // Start background polling for OCR progress
+          pollTimer = setInterval(async () => {
+            try {
+              const info = await getUploadProgress(progressId);
+              if (info.status === "processing") {
+                let pct: number;
+                if (info.phase === "starting") {
+                  pct = 10;
+                } else if (info.phase === "extracting") {
+                  pct = info.total_pages > 0
+                    ? 10 + Math.round((info.current_page / info.total_pages) * 30)
+                    : 15;
+                } else if (info.phase === "ocr") {
+                  pct = info.ocr_pages_total > 0
+                    ? 40 + Math.round((info.ocr_pages_done / info.ocr_pages_total) * 40)
+                    : 45;
+                } else {
+                  pct = 80;
+                }
+                updateUploadItem(item.id, {
+                  progress: pct,
+                  ocrPhase: info.phase as "starting" | "extracting" | "ocr" | "complete",
+                  ocrMessage: info.message,
+                });
+                if (verboseLoadingMessages) setDocLoadingMessage(info.message || "Processing pages\u2026");
+              }
+            } catch {
+              // polling errors are non-fatal
+            }
+          }, 400);
+
+          let uploadRes;
+          try {
+            uploadRes = await uploadDocument(file, progressId);
+          } finally {
+            if (pollTimer) clearInterval(pollTimer);
+          }
+
+          updateUploadItem(item.id, { progress: 85, ocrPhase: "complete", ocrMessage: "" });
           if (verboseLoadingMessages) setDocLoadingMessage("Processing pages\u2026");
 
           const doc = await getDocument(uploadRes.doc_id);
@@ -94,7 +141,11 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
           setDocLoadingMessage("Analyzing document for PII entities\u2026");
           setActiveDocId(doc.doc_id);
 
-          updateUploadItem(item.id, { status: "detecting", progress: 70 });
+          // Update progress dialog for detection phase
+          setUploadProgressDocId(doc.doc_id);
+          setUploadProgressPhase("detecting");
+
+          updateUploadItem(item.id, { status: "detecting", progress: 90, ocrPhase: undefined, ocrMessage: undefined });
           const detection = await detectPII(doc.doc_id);
           const resolved = resolveAllOverlaps(detection.regions);
           setRegions(resolved);
@@ -102,10 +153,12 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
 
           setDocDetecting(false);
           setDocLoadingMessage("");
+          setUploadProgressPhase("done");
           updateUploadItem(item.id, { status: "done", progress: 100 });
         } catch (e: unknown) {
           setDocDetecting(false);
           setDocLoadingMessage("");
+          setUploadProgressPhase("error");
           updateUploadItem(item.id, {
             status: "error",
             error: toErrorMessage(e) || "Failed",
@@ -142,6 +195,10 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
       setDocLoadingMessage,
       setStatusMessage,
       setShowUploadErrorDialog,
+      setUploadProgressId,
+      setUploadProgressDocId,
+      setUploadProgressDocName,
+      setUploadProgressPhase,
     ],
   );
 

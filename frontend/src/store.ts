@@ -100,6 +100,16 @@ interface AppState {
   docDetecting: boolean;
   setDocDetecting: (v: boolean) => void;
 
+  // ── Upload progress dialog ──
+  uploadProgressId: string | null;
+  setUploadProgressId: (id: string | null) => void;
+  uploadProgressDocId: string | null;
+  setUploadProgressDocId: (id: string | null) => void;
+  uploadProgressDocName: string;
+  setUploadProgressDocName: (name: string) => void;
+  uploadProgressPhase: "uploading" | "detecting" | "done" | "error";
+  setUploadProgressPhase: (phase: "uploading" | "detecting" | "done" | "error") => void;
+
   // ── UI ──
   currentView: "upload" | "viewer" | "detokenize" | "settings";
   setCurrentView: (v: "upload" | "viewer" | "detokenize" | "settings") => void;
@@ -346,6 +356,16 @@ export const useAppStore = create<AppState>()(devtools((set, get) => ({
   docDetecting: false,
   setDocDetecting: (v) => set({ docDetecting: v }),
 
+  // Upload progress dialog
+  uploadProgressId: null,
+  setUploadProgressId: (id) => set({ uploadProgressId: id }),
+  uploadProgressDocId: null,
+  setUploadProgressDocId: (id) => set({ uploadProgressDocId: id }),
+  uploadProgressDocName: "",
+  setUploadProgressDocName: (name) => set({ uploadProgressDocName: name }),
+  uploadProgressPhase: "done" as const,
+  setUploadProgressPhase: (phase) => set({ uploadProgressPhase: phase }),
+
   // UI
   currentView: (localStorage.getItem("currentView") as "upload" | "viewer" | "detokenize" | "settings") || "upload",
   setCurrentView: (v) => {
@@ -506,6 +526,14 @@ export const useDocLoadingStore = () =>
     setDocLoadingMessage: s.setDocLoadingMessage,
     docDetecting: s.docDetecting,
     setDocDetecting: s.setDocDetecting,
+    uploadProgressId: s.uploadProgressId,
+    setUploadProgressId: s.setUploadProgressId,
+    uploadProgressDocId: s.uploadProgressDocId,
+    setUploadProgressDocId: s.setUploadProgressDocId,
+    uploadProgressDocName: s.uploadProgressDocName,
+    setUploadProgressDocName: s.setUploadProgressDocName,
+    uploadProgressPhase: s.uploadProgressPhase,
+    setUploadProgressPhase: s.setUploadProgressPhase,
   })));
 
 /** Detection + LLM settings selectors. */

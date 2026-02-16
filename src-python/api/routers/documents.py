@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+import time as _time
 import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
 from core.config import config
@@ -15,15 +16,21 @@ from models.schemas import (
     RegionAction,
     UploadResponse,
 )
-from api.deps import documents, get_doc, get_store, prune_doc_locks, save_doc
+from api.deps import documents, get_doc, get_store, prune_doc_locks, save_doc, upload_progress, cleanup_stale_upload_progress
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["documents"])
 
 
 @router.post("/documents/upload", response_model=UploadResponse)
-async def upload_document(file: UploadFile = File(...)) -> UploadResponse:
-    """Upload a document for anonymization."""
+async def upload_document(
+    file: UploadFile = File(...),
+    progress_id: Optional[str] = Query(None, description="Optional ID for tracking upload progress")
+) -> UploadResponse:
+    """Upload a document for anonymization.
+    
+    If progress_id is provided, progress can be tracked via GET /documents/{progress_id}/upload-progress
+    """
     from core.ingestion.loader import SUPPORTED_EXTENSIONS, guess_mime
 
     if not file.filename:
@@ -47,6 +54,9 @@ async def upload_document(file: UploadFile = File(...)) -> UploadResponse:
     upload_dir.mkdir(parents=True, exist_ok=True)
     safe_name = Path(file.filename).name  # strip directory components (path-traversal)
     upload_path = upload_dir / f"{upload_id}_{safe_name}"
+    
+    # Use progress_id for tracking, or generate one
+    tracking_id = progress_id or upload_id
 
     MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200 MB
     with open(upload_path, "wb") as f:
@@ -61,17 +71,54 @@ async def upload_document(file: UploadFile = File(...)) -> UploadResponse:
 
     logger.info(f"Saved upload: {upload_path} ({total} bytes)")
 
+    # Initialize progress tracking
+    upload_progress[tracking_id] = {
+        "doc_id": tracking_id,
+        "status": "processing",
+        "phase": "starting",
+        "current_page": 0,
+        "total_pages": 0,
+        "ocr_pages_done": 0,
+        "ocr_pages_total": 0,
+        "message": "Starting document processing...",
+        "elapsed_seconds": 0.0,
+        "_started_at": _time.time(),
+    }
+    
+    def _progress_callback(phase: str, current: int, total: int, ocr_done: int, ocr_total: int, message: str):
+        """Update upload progress tracking."""
+        if tracking_id in upload_progress:
+            upload_progress[tracking_id].update({
+                "phase": phase,
+                "current_page": current,
+                "total_pages": total,
+                "ocr_pages_done": ocr_done,
+                "ocr_pages_total": ocr_total,
+                "message": message,
+                "status": "complete" if phase == "complete" else "processing",
+            })
+
     # Ingest the document
     from core.ingestion.loader import ingest_document
 
     try:
-        doc = await ingest_document(upload_path, file.filename)
+        doc = await ingest_document(upload_path, file.filename, progress_callback=_progress_callback)
+        # Update tracking to include actual doc_id
+        if tracking_id in upload_progress:
+            upload_progress[tracking_id]["doc_id"] = doc.doc_id
+            upload_progress[tracking_id]["status"] = "complete"
     except RuntimeError as e:
         # RuntimeError is raised for missing dependencies like LibreOffice
         logger.error(f"Failed to process document: {e}")
+        if tracking_id in upload_progress:
+            upload_progress[tracking_id]["status"] = "error"
+            upload_progress[tracking_id]["error"] = str(e)
         raise HTTPException(400, str(e))
     except Exception as e:
         logger.error(f"Failed to process document: {e}")
+        if tracking_id in upload_progress:
+            upload_progress[tracking_id]["status"] = "error"
+            upload_progress[tracking_id]["error"] = str(e)
         raise HTTPException(500, f"Failed to process document: {e}")
 
     # Store file in persistent storage
@@ -107,6 +154,33 @@ async def upload_document(file: UploadFile = File(...)) -> UploadResponse:
         page_count=doc.page_count,
         status=doc.status,
     )
+
+
+@router.get("/documents/{doc_id}/upload-progress")
+async def get_upload_progress(doc_id: str) -> dict[str, Any]:
+    """Return real-time upload/ingestion progress for a document.
+    
+    Tracks file loading, page extraction, and OCR progress.
+    """
+    cleanup_stale_upload_progress()
+    progress = upload_progress.get(doc_id)
+    if progress is None:
+        return {
+            "doc_id": doc_id,
+            "status": "idle",
+            "phase": "idle",
+            "current_page": 0,
+            "total_pages": 0,
+            "ocr_pages_done": 0,
+            "ocr_pages_total": 0,
+            "message": "",
+            "elapsed_seconds": 0.0,
+        }
+    # Update elapsed time
+    import time
+    progress["elapsed_seconds"] = time.time() - progress.get("_started_at", time.time())
+    # Return a clean copy (exclude internal keys)
+    return {k: v for k, v in progress.items() if not k.startswith("_")}
 
 
 @router.get("/documents/{doc_id}")

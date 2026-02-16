@@ -36,6 +36,7 @@ import threading
 
 _model = None
 _model_lock = threading.Lock()
+_model_failed = False  # Cache load failures to avoid retrying every page
 _MODEL_NAME = "urchade/gliner_multi_pii-v1"
 
 # Labels we ask GLiNER to detect and their mapping to our PIIType enum.
@@ -81,11 +82,16 @@ def _load_model() -> object:
     """Lazy-load the GLiNER model (downloads on first use, ~500 MB).
 
     Thread-safe via double-checked locking.
+    Caches load failures to avoid retrying on every page.
     """
-    global _model
+    global _model, _model_failed
+    if _model_failed:
+        raise RuntimeError("GLiNER model previously failed to load (corrupted or unavailable)")
     if _model is not None:
         return _model
     with _model_lock:
+        if _model_failed:
+            raise RuntimeError("GLiNER model previously failed to load (corrupted or unavailable)")
         if _model is not None:
             return _model
         try:
@@ -95,7 +101,8 @@ def _load_model() -> object:
             logger.info("GLiNER model loaded successfully")
             return _model
         except Exception as e:
-            logger.error("Failed to load GLiNER model: %s", e)
+            _model_failed = True
+            logger.error("Failed to load GLiNER model: %s — will not retry until restart", e)
             raise
 
 

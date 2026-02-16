@@ -1,6 +1,6 @@
 /** Document viewer — renders page bitmap with PII highlight overlays. */
 
-import { useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -22,7 +22,7 @@ import { CURSOR_CROSSHAIR } from "../cursors";
 import type { PIIType } from "../types";
 import RegionOverlay from "./RegionOverlay";
 import ExportDialog from "./ExportDialog";
-import DetectionProgressDialog from "./DetectionProgressDialog";
+import UploadProgressDialog from "./UploadProgressDialog";
 import PIITypePicker from "./PIITypePicker";
 import RegionSidebar from "./RegionSidebar";
 import PageNavigator from "./PageNavigator";
@@ -38,14 +38,17 @@ import useViewerToolbars from "../hooks/useViewerToolbars";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useLabelConfig from "../hooks/useLabelConfig";
 
+
 export default function DocumentViewer() {
   const { activeDocId, documents, activePage, setActivePage } = useDocumentStore();
   const { regions, updateRegionAction, removeRegion, setRegions, updateRegionBBox, updateRegion, selectedRegionIds, setSelectedRegionIds, toggleSelectedRegionId, clearSelection, pushUndo, undo, redo, canUndo, canRedo } = useRegionStore();
   const { zoom, setZoom, isProcessing, setIsProcessing, setStatusMessage, setDrawMode } = useUIStore();
   const { vaultUnlocked, setVaultUnlocked } = useVaultStore();
-  const { docLoading, docLoadingMessage, docDetecting } = useDocLoadingStore();
+  const { docLoading, docLoadingMessage, docDetecting, uploadProgressId, uploadProgressDocId, uploadProgressDocName, uploadProgressPhase } = useDocLoadingStore();
   const { rightSidebarWidth, setRightSidebarWidth, isSidebarDragging, leftSidebarWidth } = useSidebarStore();
   const { llmStatus } = useDetectionStore();
+
+
 
   // ── UI chrome (toolbars, sidebar, cursor tool) ──
   const {
@@ -190,46 +193,68 @@ export default function DocumentViewer() {
     setCopiedRegions, setStatusMessage, handlePasteRegions, batchDeleteRegions,
   });
 
-  if (!doc) return <div style={styles.empty}>No document loaded</div>;
-
-  // Block the viewer while loading OR detecting
-  const isDocLoading = docLoading || docDetecting || !doc.pages;
-
-  if (isDocLoading) {
-    if (docDetecting) {
+  if (!doc) {
+    // When uploading the very first file, show the progress dialog even though
+    // no document object exists yet.
+    const showUploadProgress = uploadProgressPhase === "uploading" || uploadProgressPhase === "detecting";
+    if (showUploadProgress) {
       return (
         <div style={styles.wrapper}>
-          <DetectionProgressDialog
-            docId={doc.doc_id}
-            docName={doc.original_filename}
+          <UploadProgressDialog
+            uploadProgressId={uploadProgressId}
+            docId={uploadProgressDocId}
+            docName={uploadProgressDocName || "Document"}
+            phase={uploadProgressPhase}
             visible
           />
         </div>
       );
     }
+    return <div style={styles.empty}>No document loaded</div>;
+  }
 
-    return (
-      <div style={styles.wrapper}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", width: "100%" }}>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-            <Loader2 size={36} color="var(--accent-primary)" style={{ animation: "spin 1s linear infinite" }} />
-            <div style={{ fontSize: 14, color: "var(--text-secondary)" }}>
-              {docLoadingMessage || "Loading document\u2026"}
+  // Block the viewer while loading OR detecting
+  const isDocLoading = docLoading || docDetecting || !doc.pages;
+  const showUploadProgressDialog = uploadProgressPhase === "uploading" || uploadProgressPhase === "detecting";
+
+  if (isDocLoading) {
+    if (!showUploadProgressDialog) {
+      return (
+        <div style={styles.wrapper}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", width: "100%" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+              <Loader2 size={36} color="var(--accent-primary)" style={{ animation: "spin 1s linear infinite" }} />
+              <div style={{ fontSize: 14, color: "var(--text-secondary)" }}>
+                {docLoadingMessage || "Loading document\u2026"}
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    );
+      );
+    }
   }
 
   return (
     <div style={styles.wrapper}>
 
+      {/* Upload progress overlay – shown immediately on file upload */}
+      {showUploadProgressDialog && (
+        <UploadProgressDialog
+          uploadProgressId={uploadProgressId}
+          docId={uploadProgressDocId}
+          docName={uploadProgressDocName || doc.original_filename}
+          phase={uploadProgressPhase}
+          visible
+        />
+      )}
+
       {/* Re-detection progress overlay */}
       {redetecting && activeDocId && (
-        <DetectionProgressDialog
+        <UploadProgressDialog
+          uploadProgressId={null}
           docId={activeDocId}
           docName={doc.original_filename}
+          phase="detecting"
           visible
         />
       )}
@@ -423,7 +448,10 @@ export default function DocumentViewer() {
       )}
 
       {/* Export dialog */}
-      <ExportDialog open={showExportDialog} onClose={() => setShowExportDialog(false)} />
+      <ExportDialog
+        open={showExportDialog}
+        onClose={() => setShowExportDialog(false)}
+      />
 
       {/* Vault unlock prompt overlay */}
       {showVaultPrompt && (

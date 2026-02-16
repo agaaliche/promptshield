@@ -90,12 +90,29 @@ async function request<T>(
 // Documents
 // ──────────────────────────────────────────────
 
-export async function uploadDocument(file: File): Promise<UploadResponse> {
+export interface UploadProgressInfo {
+  doc_id: string;
+  status: "idle" | "processing" | "complete" | "error";
+  phase: "idle" | "starting" | "extracting" | "ocr" | "complete";
+  current_page: number;
+  total_pages: number;
+  ocr_pages_done: number;
+  ocr_pages_total: number;
+  message: string;
+  elapsed_seconds: number;
+  error?: string;
+}
+
+export async function uploadDocument(file: File, progressId?: string): Promise<UploadResponse> {
   if (!_globalAbort) _globalAbort = new AbortController();
   const formData = new FormData();
   formData.append("file", file);
 
-  const res = await fetch(`${BASE_URL}/api/documents/upload`, {
+  const url = progressId 
+    ? `${BASE_URL}/api/documents/upload?progress_id=${encodeURIComponent(progressId)}`
+    : `${BASE_URL}/api/documents/upload`;
+
+  const res = await fetch(url, {
     method: "POST",
     headers: { "X-Requested-With": "XMLHttpRequest" },
     body: formData,
@@ -108,6 +125,10 @@ export async function uploadDocument(file: File): Promise<UploadResponse> {
   }
 
   return res.json();
+}
+
+export async function getUploadProgress(progressId: string): Promise<UploadProgressInfo> {
+  return request<UploadProgressInfo>(`/api/documents/${progressId}/upload-progress`);
 }
 
 export async function getDocument(docId: string): Promise<DocumentInfo> {
@@ -373,6 +394,114 @@ export async function batchAnonymize(docIds: string[]): Promise<string> {
   }
   const blob = await resp.blob();
   return URL.createObjectURL(blob);
+}
+
+// ──────────────────────────────────────────────
+// Export to Downloads folder
+// ──────────────────────────────────────────────
+
+export interface ExportSaveResult {
+  saved_path: string;
+  filename: string;
+  file_count: number;
+  total_size: number;
+}
+
+/**
+ * Anonymize selected documents and save the result directly to the
+ * user's Downloads folder. Returns metadata including the saved path.
+ */
+export async function exportToDownloads(docIds: string[], exportId?: string): Promise<ExportSaveResult> {
+  return request<ExportSaveResult>("/api/documents/export-to-downloads", {
+    method: "POST",
+    body: JSON.stringify({ doc_ids: docIds, export_id: exportId }),
+  });
+}
+
+// ──────────────────────────────────────────────
+// Shell helpers (open file / reveal in explorer)
+// ──────────────────────────────────────────────
+
+export async function shellOpenFile(path: string): Promise<void> {
+  await request("/api/shell/open-file", {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
+}
+
+export async function shellRevealFile(path: string): Promise<void> {
+  await request("/api/shell/reveal-file", {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
+}
+
+// ──────────────────────────────────────────────
+// File splitting
+// ──────────────────────────────────────────────
+
+export interface SplitFileResult {
+  ok: boolean;
+  split: boolean;
+  saved_path: string;
+  filename: string;
+  part_count: number;
+  parts?: string[];
+  total_size: number;
+  message: string;
+}
+
+/**
+ * Split a PDF file into multiple smaller PDFs (each below maxSizeMb)
+ * and bundle them as a zip. File names indicate processing order for AI.
+ */
+export async function splitExportFile(path: string, maxSizeMb: number, splitId?: string): Promise<SplitFileResult> {
+  return request<SplitFileResult>("/api/shell/split-file", {
+    method: "POST",
+    body: JSON.stringify({ path, max_size_mb: maxSizeMb, split_id: splitId }),
+  });
+}
+
+// Split progress polling
+export interface SplitProgressInfo {
+  phase: "idle" | "sampling" | "writing" | "done";
+  total_pages?: number;
+  pages_sampled?: number;
+  total_parts?: number;
+  parts_done?: number;
+  message?: string;
+}
+
+export async function getSplitProgress(splitId: string): Promise<SplitProgressInfo> {
+  return request<SplitProgressInfo>(`/api/shell/split-progress/${splitId}`);
+}
+
+// ──────────────────────────────────────────────
+// Export progress
+// ──────────────────────────────────────────────
+
+export interface ExportDocStatus {
+  doc_id: string;
+  name: string;
+  status: "pending" | "running" | "done" | "error";
+  error?: string;
+}
+
+export interface ExportProgressInfo {
+  export_id: string;
+  status: "idle" | "processing" | "complete" | "error";
+  phase: "idle" | "anonymizing" | "saving" | "complete";
+  docs_done: number;
+  docs_total: number;
+  docs_failed: number;
+  current_doc_name: string;
+  message: string;
+  elapsed_seconds: number;
+  doc_statuses: ExportDocStatus[];
+}
+
+export async function getExportProgress(exportId: string): Promise<ExportProgressInfo> {
+  return request<ExportProgressInfo>(`/api/documents/export-progress/${encodeURIComponent(exportId)}`);
 }
 
 // ──────────────────────────────────────────────

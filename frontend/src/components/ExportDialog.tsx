@@ -7,9 +7,11 @@ import { useState, useMemo, useCallback } from "react";
 import { Shield, X, Search, FileText, Download, Package, Lock } from "lucide-react";
 import { useAppStore } from "../store";
 import { toErrorMessage } from "../errorUtils";
-import { batchAnonymize, syncRegions, unlockVault } from "../api";
+import { exportToDownloads, syncRegions, unlockVault } from "../api";
+import type { ExportSaveResult } from "../api";
 import type { DocumentInfo } from "../types";
 import { Z_TOP_DIALOG } from "../zIndex";
+import ExportProgressDialog from "./ExportProgressDialog";
 
 interface Props {
   open: boolean;
@@ -33,6 +35,9 @@ export default function ExportDialog({ open, onClose }: Props) {
   const [needsVault, setNeedsVault] = useState(false);
   const [vaultPass, setVaultPass] = useState("");
   const [vaultError, setVaultError] = useState("");
+  const [exportId, setExportId] = useState<string | null>(null);
+  const [exportResult, setExportResult] = useState<ExportSaveResult | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Filter & sort docs
   const filteredDocs = useMemo(() => {
@@ -83,7 +88,14 @@ export default function ExportDialog({ open, onClose }: Props) {
 
   const doExport = useCallback(async () => {
     if (selectedIds.size === 0) return;
+
+    // Generate a unique export tracking ID
+    const eid = `export-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setExportId(eid);
+    setExportResult(null);
+    setExportError(null);
     setIsExporting(true);
+
     try {
       // Sync current document's regions before export
       if (activeDocId && selectedIds.has(activeDocId) && regions.length > 0) {
@@ -94,25 +106,24 @@ export default function ExportDialog({ open, onClose }: Props) {
       }
 
       const docIds = Array.from(selectedIds);
-      const blobUrl = await batchAnonymize(docIds);
+      const result = await exportToDownloads(docIds, eid);
 
-      // Trigger download
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = docIds.length > 1 ? "promptshield_export.zip" : "export.pdf";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-
+      setExportResult(result);
       setStatusMessage(`Exported ${docIds.length} file${docIds.length > 1 ? "s" : ""} successfully`);
-      onClose();
     } catch (e: unknown) {
+      setExportError(toErrorMessage(e));
       setStatusMessage(`Export failed: ${toErrorMessage(e)}`);
     } finally {
       setIsExporting(false);
     }
-  }, [selectedIds, activeDocId, regions, setStatusMessage, onClose]);
+  }, [selectedIds, activeDocId, regions, setStatusMessage]);
+
+  const handleCloseAll = useCallback(() => {
+    setExportId(null);
+    setExportResult(null);
+    setExportError(null);
+    onClose();
+  }, [onClose]);
 
   const handleExport = useCallback(async () => {
     if (selectedNeedsVault && !vaultUnlocked) {
@@ -140,6 +151,18 @@ export default function ExportDialog({ open, onClose }: Props) {
   }, [vaultPass, setVaultUnlocked, doExport]);
 
   if (!open) return null;
+
+  // When exporting or showing results, render the unified progress dialog
+  if (isExporting || exportResult || exportError) {
+    return (
+      <ExportProgressDialog
+        exportId={exportId}
+        visible
+        exportResult={exportResult}
+        onClose={handleCloseAll}
+      />
+    );
+  }
 
   return (
     <div

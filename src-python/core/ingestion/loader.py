@@ -571,7 +571,15 @@ def _merge_ocr_blocks(existing: list[TextBlock], ocr_blocks: list[TextBlock]) ->
     return merged
 
 
-def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
+# Type alias for progress callbacks
+ProgressCallback = Optional[callable]
+
+
+def _process_pdf(
+    pdf_path: Path, 
+    doc_id: str, 
+    progress_callback: ProgressCallback = None
+) -> list[PageData]:
     """Process a PDF file into page data.
 
     **Phase 1 — sequential (PDFium):** render bitmaps and extract text
@@ -583,13 +591,28 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
     too sparse are sent to OCR in parallel threads.  Tesseract is a
     separate process per invocation and fully thread-safe, so this
     recovers most of the I1 parallelism for scanned/image-based PDFs.
+    
+    Args:
+        pdf_path: Path to the PDF file.
+        doc_id: Unique document identifier.
+        progress_callback: Optional callback for progress updates.
+            Called with (phase, current_page, total_pages, ocr_done, ocr_total, message).
     """
+    def _report(phase: str, current: int, total: int, ocr_done: int = 0, ocr_total: int = 0, message: str = ""):
+        if progress_callback:
+            try:
+                progress_callback(phase, current, total, ocr_done, ocr_total, message)
+            except Exception:
+                pass  # Don't let callback errors break processing
+    
     # ── Phase 1: sequential PDFium extraction ──────────────────────
     doc = pdfium.PdfDocument(str(pdf_path))
     try:
         n_pages = len(doc)
         if n_pages == 0:
             return []
+        
+        _report("extracting", 0, n_pages, 0, 0, f"Loading {n_pages} pages...")
 
         pages: list[PageData] = []
         ocr_needed: list[int] = []  # indices into *pages* that need OCR
@@ -611,6 +634,9 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
                 text_blocks=text_blocks,
                 full_text=full_text,
             ))
+            
+            # Report extraction progress
+            _report("extracting", page_index + 1, n_pages, 0, 0, f"Extracting page {page_index + 1} of {n_pages}...")
 
             # OCR needed if: (a) sparse text, or (b) page has embedded images
             if len(full_text.strip()) < 20:
@@ -624,7 +650,13 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
 
     # ── Phase 2: parallel OCR for sparse-text pages ────────────────
     if not ocr_needed:
+        _report("complete", n_pages, n_pages, 0, 0, "Processing complete")
         return pages
+    
+    ocr_total = len(ocr_needed)
+    ocr_done = [0]  # Use list to allow mutation in nested function
+    
+    _report("ocr", n_pages, n_pages, 0, ocr_total, f"Running OCR on {ocr_total} pages...")
 
     def _ocr_one(idx: int) -> tuple[int, list[TextBlock], bool]:
         """Returns (index, ocr_blocks, should_merge).
@@ -662,6 +694,8 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
         # Single page — skip thread overhead
         idx, ocr_blocks, should_merge = _ocr_one(ocr_needed[0])
         _apply_ocr_result(idx, ocr_blocks, should_merge)
+        ocr_done[0] = 1
+        _report("ocr", n_pages, n_pages, 1, ocr_total, f"OCR complete (1/{ocr_total} pages)")
     else:
         import os
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -672,12 +706,29 @@ def _process_pdf(pdf_path: Path, doc_id: str) -> list[PageData]:
             for fut in as_completed(futures):
                 idx, ocr_blocks, should_merge = fut.result()
                 _apply_ocr_result(idx, ocr_blocks, should_merge)
-
+                ocr_done[0] += 1
+                _report("ocr", n_pages, n_pages, ocr_done[0], ocr_total, 
+                       f"OCR progress: {ocr_done[0]}/{ocr_total} pages")
+    
+    _report("complete", n_pages, n_pages, ocr_total, ocr_total, "Processing complete")
     return pages
 
 
-def _process_image(image_path: Path, doc_id: str) -> list[PageData]:
+def _process_image(
+    image_path: Path, 
+    doc_id: str,
+    progress_callback: ProgressCallback = None
+) -> list[PageData]:
     """Process a standalone image file (always OCR)."""
+    def _report(phase: str, current: int, total: int, ocr_done: int = 0, ocr_total: int = 0, message: str = ""):
+        if progress_callback:
+            try:
+                progress_callback(phase, current, total, ocr_done, ocr_total, message)
+            except Exception:
+                pass
+    
+    _report("extracting", 0, 1, 0, 1, "Loading image...")
+    
     img = Image.open(image_path)
     try:
         width, height = img.size
@@ -697,9 +748,13 @@ def _process_image(image_path: Path, doc_id: str) -> list[PageData]:
         else:
             img.save(str(out_path), "PNG")
 
+        _report("ocr", 1, 1, 0, 1, "Running OCR on image...")
+        
         # OCR is required for images
         text_blocks = ocr_page_image(out_path, float(width), float(height))
         full_text = _build_full_text(text_blocks)
+        
+        _report("complete", 1, 1, 1, 1, "Processing complete")
 
         return [PageData(
             page_number=1,
@@ -717,11 +772,19 @@ async def ingest_document(
     file_path: Path,
     original_filename: str,
     mime_type: Optional[str] = None,
+    progress_callback: ProgressCallback = None,
 ) -> DocumentInfo:
     """
     Main entry point: ingest a document file, convert to bitmaps, extract text.
 
     Returns a DocumentInfo with pages populated.
+    
+    Args:
+        file_path: Path to the file to ingest.
+        original_filename: Original name of the uploaded file.
+        mime_type: Optional MIME type (auto-detected if not provided).
+        progress_callback: Optional callback for progress updates.
+            Called with (phase, current_page, total_pages, ocr_done, ocr_total, message).
     """
     import asyncio
 
@@ -741,9 +804,9 @@ async def ingest_document(
 
     def _do_ingest() -> list:
         if mime_type in PDF_TYPES:
-            return _process_pdf(file_path, doc_id)
+            return _process_pdf(file_path, doc_id, progress_callback)
         elif mime_type in IMAGE_TYPES:
-            return _process_image(file_path, doc_id)
+            return _process_image(file_path, doc_id, progress_callback)
         elif mime_type in OFFICE_TYPES:
             # Use native converter for xlsx files (no LibreOffice needed)
             xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -754,7 +817,7 @@ async def ingest_document(
                     file_path,
                     config.temp_dir / doc_id,
                 )
-            return _process_pdf(pdf_path, doc_id)
+            return _process_pdf(pdf_path, doc_id, progress_callback)
         else:
             raise ValueError(f"Unsupported file type: {mime_type}")
 

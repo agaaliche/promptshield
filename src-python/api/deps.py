@@ -29,6 +29,13 @@ _documents_lock = asyncio.Lock()
 # In-memory detection progress tracker  (doc_id → progress dict)
 detection_progress: dict[str, dict] = {}
 
+# In-memory upload/ingestion progress tracker (doc_id → progress dict)
+# Tracks file loading, page extraction, and OCR progress
+upload_progress: dict[str, dict] = {}
+
+# In-memory export progress tracker (export_id → progress dict)
+export_progress: dict[str, dict] = {}
+
 # Maximum age (seconds) for completed/errored detection progress entries
 _PROGRESS_TTL = 300  # 5 minutes
 
@@ -43,6 +50,30 @@ def cleanup_stale_progress() -> None:
     ]
     for k in stale:
         detection_progress.pop(k, None)
+
+
+def cleanup_stale_upload_progress() -> None:
+    """Remove completed/errored upload_progress entries older than TTL."""
+    now = _time.time()
+    stale = [
+        k for k, v in upload_progress.items()
+        if v.get("status") in ("complete", "error")
+        and now - v.get("_started_at", now) > _PROGRESS_TTL
+    ]
+    for k in stale:
+        upload_progress.pop(k, None)
+
+
+def cleanup_stale_export_progress() -> None:
+    """Remove completed/errored export_progress entries older than TTL."""
+    now = _time.time()
+    stale = [
+        k for k, v in export_progress.items()
+        if v.get("status") in ("complete", "error")
+        and now - v.get("_started_at", now) > _PROGRESS_TTL
+    ]
+    for k in stale:
+        export_progress.pop(k, None)
 
 # Detection lock — per-document to allow parallel detection of different docs.
 # A separate config lock prevents concurrent config mutations (redetect, settings).

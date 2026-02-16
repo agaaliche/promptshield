@@ -138,8 +138,78 @@ async def anonymize_document(doc: DocumentInfo) -> AnonymizeResponse:
         raise ValueError(f"Unsupported file type for anonymization: {doc.mime_type}")
 
 
+def _redact_scanned_page(page: fitz.Page, replacements: list[tuple["PIIRegion", str]]) -> None:
+    """Redact a scanned PDF page by manipulating the page image directly.
+    
+    For scanned PDFs, text exists only in embedded images, so standard PDF
+    redactions don't work. Instead, we:
+    1. Render the page to a pixmap
+    2. Draw white rectangles + replacement text via PIL
+    3. Replace the page content with the modified image
+    """
+    import io
+    
+    # Render page at 2x for quality
+    mat = fitz.Matrix(2, 2)
+    pix = page.get_pixmap(matrix=mat, alpha=False)
+    
+    # Convert to PIL for drawing
+    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+    draw = ImageDraw.Draw(img)
+    
+    scale = 2.0
+    
+    for region, replacement_text in replacements:
+        bbox = region.bbox
+        x0, y0 = bbox.x0 * scale, bbox.y0 * scale
+        x1, y1 = bbox.x1 * scale, bbox.y1 * scale
+        
+        # Draw white rectangle over PII
+        draw.rectangle([x0, y0, x1, y1], fill=(255, 255, 255))
+        
+        # Draw replacement text
+        region_h = y1 - y0
+        target_size = max(10, int(region_h * 0.7))
+        font = None
+        try:
+            font = ImageFont.truetype("arial.ttf", target_size)
+        except (OSError, IOError):
+            try:
+                font = ImageFont.truetype("DejaVuSans.ttf", target_size)
+            except (OSError, IOError):
+                font = ImageFont.load_default()
+        
+        draw.text(
+            (x0 + 2, y0 + (region_h - target_size) / 2),
+            replacement_text,
+            fill=(0, 0, 0),
+            font=font,
+        )
+    
+    # Save to PNG in memory, then insert into page
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    img.close()
+    png_bytes = buf.getvalue()
+    buf.close()
+    
+    # Clear existing page content and insert the modified image
+    page.clean_contents()
+    # Remove all existing images/drawings from the page
+    xref_list = page.get_images(full=True)
+    for img_info in xref_list:
+        xref = img_info[0]
+        try:
+            page.delete_image(xref)
+        except Exception:
+            pass
+    
+    page_rect = page.rect
+    page.insert_image(page_rect, stream=png_bytes)
+
+
 def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResponse:
-    """Anonymize a PDF file using text-based redactions."""
+    """Anonymize a PDF file using text-based redactions or image manipulation for scanned pages."""
     tokens_created = 0
     regions_removed = 0
     token_manifest: list[dict] = []
@@ -148,35 +218,43 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
     pdf_doc = fitz.open(str(original_path))
 
     try:
-        # Erase-then-insert approach:
+        # Check if pages are OCR-based (scanned) by looking at text blocks
+        def _page_is_ocr(page_num: int) -> bool:
+            """Return True if this page's text came from OCR (scanned page)."""
+            if page_num >= len(doc.pages):
+                return False
+            page_data = doc.pages[page_num]
+            if not page_data.text_blocks:
+                return False
+            # If ALL text blocks are OCR, treat as scanned page
+            return all(tb.is_ocr for tb in page_data.text_blocks)
+
+        # Erase-then-insert approach for text-based PDFs:
         #   1. Extract original style (font, size, color, baseline origin)
         #   2. Add erase-only redaction over the ORIGINAL rect only
-        #      (never widen — widening destroys neighbouring text)
         #   3. apply_redactions() paints white over original text
-        #   4. page.insert_text() at original baseline — unconstrained
-        #      by any rect, the font size is always honoured exactly.
-        #      The token extends rightward over the (white) page background.
+        #   4. page.insert_text() at original baseline
 
         for page_num in range(len(pdf_doc)):
             page = pdf_doc[page_num]
             page_regions = [
                 r for r in doc.regions if r.page_number == page_num + 1
             ]
-
-            # Collect deferred text insertions for after redactions apply
-            deferred: list[tuple[str, dict]] = []  # (text, style)
+            
+            if not page_regions:
+                continue
 
             # Cache: linked_group → token_string (siblings share one token)
             _group_tokens: dict[str, str] = {}
-
+            
+            # Build replacement data for all regions on this page
+            replacements: list[tuple[PIIRegion, str]] = []  # (region, replacement_text)
+            
             for region in page_regions:
-                bbox = region.bbox
-                rect = fitz.Rect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
-
                 if region.action == RegionAction.REMOVE:
                     replacement_text = "---"
+                    regions_removed += 1
                 elif region.action == RegionAction.TOKENIZE:
-                    # Linked siblings share the same token
                     grp = region.linked_group
                     if grp and grp in _group_tokens:
                         token_string = _group_tokens[grp]
@@ -184,7 +262,6 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
                         token_string = vault.generate_token_string(region.pii_type)
                         if grp:
                             _group_tokens[grp] = token_string
-
                         mapping = TokenMapping(
                             token_string=token_string,
                             original_text=region.text,
@@ -197,44 +274,49 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
                             ),
                         )
                         vault.store_token(mapping)
-
                         token_manifest.append({
                             "token_string": token_string,
                             "original_text": region.text,
                             "page_number": page_num + 1,
                         })
                     replacement_text = token_string
+                    tokens_created += 1
                 else:
                     continue
-
-                # Extract the original visual style (incl. baseline origin)
-                style = _extract_span_style(page, rect)
-
-                # Erase-only redaction over the original rect — do NOT
-                # widen; widening destroys adjacent non-PII text.
-                page.add_redact_annot(rect, fill=(1, 1, 1))
-
-                deferred.append((replacement_text, style))
-
-                if region.action == RegionAction.REMOVE:
-                    regions_removed += 1
-                elif region.action == RegionAction.TOKENIZE:
-                    tokens_created += 1
-
-            # Wipe all original text under the white rects
-            page.apply_redactions()
-
-            # Now insert each replacement at the original baseline point
-            # using the original font properties — unconstrained by rect.
-            for text, style in deferred:
-                origin = style["origin"]
-                page.insert_text(
-                    fitz.Point(origin[0], origin[1]),
-                    text,
-                    fontname=style["fontname"],
-                    fontsize=style["fontsize"],
-                    color=style["text_color"],
-                )
+                    
+                replacements.append((region, replacement_text))
+            
+            if not replacements:
+                continue
+            
+            # Check if this is a scanned (OCR) page
+            is_ocr_page = _page_is_ocr(page_num)
+            
+            if is_ocr_page:
+                # For scanned pages: render to image, draw redactions, replace page
+                _redact_scanned_page(page, replacements)
+            else:
+                # For text-based pages: use standard PDF redaction
+                deferred: list[tuple[str, dict]] = []
+                
+                for region, replacement_text in replacements:
+                    bbox = region.bbox
+                    rect = fitz.Rect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
+                    style = _extract_span_style(page, rect)
+                    page.add_redact_annot(rect, fill=(1, 1, 1))
+                    deferred.append((replacement_text, style))
+                
+                page.apply_redactions()
+                
+                for text, style in deferred:
+                    origin = style["origin"]
+                    page.insert_text(
+                        fitz.Point(origin[0], origin[1]),
+                        text,
+                        fontname=style["fontname"],
+                        fontsize=style["fontsize"],
+                        color=style["text_color"],
+                    )
 
         # ── Metadata scrubbing ─────────────────────────────────────────
         # 1. Clear standard document metadata (Author, Title, Subject, …)
@@ -274,7 +356,9 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
         output_dir.mkdir(parents=True, exist_ok=True)
 
         pdf_path = output_dir / f"{stem}_anonymized_{timestamp}.pdf"
-        pdf_doc.save(str(pdf_path), deflate=True, clean=True)
+        # Don't use deflate=True or clean=True - they recompress all image 
+        # streams which is extremely slow for scanned (image-heavy) PDFs
+        pdf_doc.save(str(pdf_path), garbage=4)
         logger.info(f"Saved anonymized PDF: {pdf_path}")
 
         return _finalize_anonymization(

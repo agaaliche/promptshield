@@ -29,6 +29,7 @@ from api.routers import (
     vault,
     llm,
     settings,
+    shell,
 )
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,7 @@ app.include_router(detokenize.router)
 app.include_router(vault.router)
 app.include_router(llm.router)
 app.include_router(settings.router)
+app.include_router(shell.router)
 
 
 @app.get("/health")

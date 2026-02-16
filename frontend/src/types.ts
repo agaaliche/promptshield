@@ -241,6 +241,10 @@ export interface UploadItem {
   status: "queued" | "uploading" | "detecting" | "done" | "error";
   progress: number;
   error?: string;
+  /** Current OCR phase label (e.g. "extracting", "ocr"). */
+  ocrPhase?: "starting" | "extracting" | "ocr" | "complete";
+  /** Human-readable OCR progress message from the backend. */
+  ocrMessage?: string;
 }
 
 export interface SnackbarItem {

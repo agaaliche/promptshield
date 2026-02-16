@@ -111,13 +111,38 @@ def _build_flex_pattern(norm_key: str) -> _re.Pattern:
 
     Spaces in *norm_key* become ``\\s+`` so that the pattern matches
     regardless of whether the page text uses spaces, newlines, or other
-    whitespace between words.  Anchored with ``\\b`` word boundaries to
-    prevent matching inside longer words.
+    whitespace between words.
+
+    Boundary assertions are chosen based on the first/last character of
+    the key:
+
+    * **Word character** (letter, digit, ``_``): use ``\\b`` — the
+      standard word boundary that requires a transition between word and
+      non-word characters.
+    * **Non-word character** (period, parenthesis, …): use
+      ``(?<!\\w)`` / ``(?!\\w)`` — zero-width assertions that simply
+      require the adjacent character not to be a word character.  This
+      avoids the classic ``\\b`` pitfall where a trailing period (e.g.
+      ``inc.``, ``S.A.``) is followed by whitespace or end-of-string
+      (both non-word), causing ``\\b`` to silently fail.
     """
     escaped = _re.escape(norm_key)
     # re.escape also escapes spaces (\ + space) — replace with \s+
     pat_str = escaped.replace('\\ ', r'\s+')
-    return _re.compile(r'\b' + pat_str + r'\b', _re.IGNORECASE)
+
+    # Leading boundary
+    if norm_key and norm_key[0].isalnum():
+        pat_str = r'\b' + pat_str
+    else:
+        pat_str = r'(?<!\w)' + pat_str
+
+    # Trailing boundary
+    if norm_key and norm_key[-1].isalnum():
+        pat_str = pat_str + r'\b'
+    else:
+        pat_str = pat_str + r'(?!\w)'
+
+    return _re.compile(pat_str, _re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------

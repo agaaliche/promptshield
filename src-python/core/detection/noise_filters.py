@@ -17,10 +17,21 @@ filtered.
 from __future__ import annotations
 
 import re as _re
+import unicodedata as _unicodedata
 from pathlib import Path
 from typing import Set
 
 from models.schemas import PIIType
+
+
+def _remove_accents(text: str) -> str:
+    """Remove diacritical marks (accents) from text.
+    
+    E.g., 'exhaustivité' -> 'exhaustivite', 'café' -> 'cafe'
+    """
+    # Normalize to NFD (decompose accented chars), then filter out combining marks
+    nfkd = _unicodedata.normalize('NFD', text)
+    return ''.join(c for c in nfkd if not _unicodedata.combining(c))
 
 # ---------------------------------------------------------------------------
 # Legal-suffix regex — shared across all noise filters
@@ -30,7 +41,9 @@ LEGAL_SUFFIX_RE: _re.Pattern[str] = _re.compile(
     r'\b(?:inc|incorporated|corp|corporation|ltd|limited|llc|llp|plc|co|company|lp|'
     r'sas|sarl|gmbh|ag|bv|nv|'
     r'kg|kgaa|ohg|ug|mbh|e\.?k\.?|e\.?v\.?|se|'
+    r'aktiengesellschaft|kommanditgesellschaft|'  # DE long forms
     r'lt[ée]e|limit[ée]e|enr|s\.?e\.?n\.?c\.?|'
+    r'n\.\s*v\.?|b\.\s*v\.?|'  # NL: N.V., B.V.
     r's\.?a\.?r?\.?l?\.?|s\.?p\.?a\.?|s\.?r\.?l\.?)\b\.?',
     _re.IGNORECASE,
 )
@@ -56,6 +69,24 @@ def _fix_double_utf8(text: str) -> str:
     except (UnicodeDecodeError, UnicodeEncodeError):
         pass
     return text
+
+
+# Character mapping for PDF encoding issues (wrong chars used in place of accents)
+# Include both upper and lowercase versions since .lower() may have been called
+_PDF_CHAR_MAP = str.maketrans({
+    '\u00da': '\u00e9',  # Ú (218) → é (233)
+    '\u00fa': '\u00e9',  # ú (250) → é (233) - lowercase version
+    '\u00de': '\u00e8',  # Þ (222) → è (232)
+    '\u00fe': '\u00e8',  # þ (254) → è (232) - lowercase version
+    '\u00d4': '\u00f4',  # Ô (212) → ô (244)
+    '\u00f4': '\u00f4',  # ô stays ô
+    '\u0152': '\u0153',  # Œ → œ
+})
+
+
+def _fix_pdf_encoding(text: str) -> str:
+    """Fix common PDF character encoding issues."""
+    return text.translate(_PDF_CHAR_MAP)
 
 
 def has_legal_suffix(text: str) -> bool:
@@ -125,14 +156,245 @@ def _is_org_pipeline_noise(text: str) -> bool:
     low = clean.lower()
     low_fixed = clean_fixed.lower()
     
-    def _in_dict(word: str) -> bool:
-        """Check if word is in dictionary, trying both original and fixed encoding."""
-        w = word.lower()
+    def _in_dict_simple(w: str) -> bool:
+        """Check if single word is in dictionary, with accent normalization and stemming."""
+        # Strip trailing/leading punctuation (e.g., "pertinentes." -> "pertinentes")
+        w = w.strip('.,;:!?()[]{}"\'\u2018\u2019\u201c\u201d')
+        if not w:
+            return True  # Empty after stripping = just punctuation, not a real word
+        
         if w in _common_words:
             return True
-        # Also try fixed version for mojibake
-        w_fixed = _fix_double_utf8(word).lower()
-        return w_fixed != w and w_fixed in _common_words
+        # Try mojibake fix
+        w_fixed = _fix_double_utf8(w).lower()
+        if w_fixed != w and w_fixed in _common_words:
+            return True
+        # Try PDF encoding fix (Ú→é, Þ→è)
+        w_pdf_fixed = _fix_pdf_encoding(w).lower()
+        if w_pdf_fixed != w and w_pdf_fixed in _common_words:
+            return True
+        # Try with accents removed (e.g., 'exhaustivite' matches 'exhaustivité')
+        w_noaccent = _remove_accents(w)
+        if w_noaccent != w and w_noaccent in _common_words:
+            return True
+        # Try adding accents — covers FR, ES, IT, PT, DE diacritics
+        _ACCENT_SWAPS = [
+            # French
+            ('é', 'e'), ('è', 'e'), ('ê', 'e'), ('ë', 'e'),
+            ('à', 'a'), ('â', 'a'),
+            ('ô', 'o'), ('î', 'i'), ('û', 'u'), ('ù', 'u'),
+            ('ç', 'c'),
+            # Spanish
+            ('á', 'a'), ('í', 'i'), ('ó', 'o'), ('ú', 'u'), ('ñ', 'n'),
+            # Portuguese
+            ('ã', 'a'), ('õ', 'o'),
+            # German
+            ('ä', 'a'), ('ö', 'o'), ('ü', 'u'), ('ß', 'ss'),
+        ]
+        for accented, plain in _ACCENT_SWAPS:
+            if plain == 'ss':
+                # ß→ss: try replacing 'ss' with 'ß'
+                if 'ss' in w:
+                    w_accented = w.replace('ss', 'ß', 1)
+                    if w_accented in _common_words:
+                        return True
+            elif w.endswith(plain):
+                w_accented = w[:-len(plain)] + accented
+                if w_accented in _common_words:
+                    return True
+
+        # Try basic suffix stripping for inflections (plurals, feminine, etc.)
+        # Sorted longest-first so we try more specific suffixes before generic ones.
+        _INFLECTION_SUFFIXES = [
+            # ── Feminine/plural (FR/ES/IT/PT) ──
+            'ées', 'és', 'tes', 'ais',
+            # ── General plural/gender ──
+            'es', 'en',  # EN/ES/DE/NL
+            's',          # FR/EN/ES/PT/NL
+            'e',          # FR/DE/IT
+            # ── German adjective/noun endings ──
+            'em', 'er', 'ern', 'ens',
+            # ── Dutch plural ──
+            'eren',
+            # ── Portuguese plural ──
+            'ões', 'ãos', 'ães',
+            # ── Italian plural ──
+            'chi', 'ghi',  # -co/-go plurals
+        ]
+        for suffix in _INFLECTION_SUFFIXES:
+            if len(w) > len(suffix) + 2 and w.endswith(suffix):
+                stem = w[:-len(suffix)]
+                if stem in _common_words:
+                    return True
+                # Also try stem with accent variants
+                for accented, plain in _ACCENT_SWAPS:
+                    if plain != 'ss' and stem.endswith(plain):
+                        stem_accented = stem[:-len(plain)] + accented
+                        if stem_accented in _common_words:
+                            return True
+
+        # ── Verb conjugation → infinitive resolution ──────────────
+        # Tries to map conjugated forms back to their infinitive.
+        # Multiple target infinitive endings are tried per suffix.
+        _VERB_SUFFIXES = [
+            # ── French ──
+            # Imperfect / subjunctive present
+            ('ions', ('er', 'ir', 're')),
+            ('iez', ('er', 'ir', 're')),
+            ('aient', ('er', 'ir', 're')),
+            ('ait', ('er', 'ir', 're')),
+            ('ais', ('er', 'ir', 're')),
+            # -ir group (present)
+            ('issons', ('ir',)), ('issez', ('ir',)), ('issent', ('ir',)),
+            ('issaient', ('ir',)), ('issait', ('ir',)),
+            # Present participle → infinitive
+            ('ant', ('er', 'ir', 're')),
+            # Past participle (FR)
+            ('é', ('er',)),
+            # Present indicative -ons/-ez (FR)
+            ('ons', ('er', 'ir', 're')),
+
+            # ── Spanish ──
+            # Gerund
+            ('ando', ('ar',)), ('iendo', ('ir', 'er')),
+            # Imperfect -ar
+            ('aba', ('ar',)), ('abas', ('ar',)), ('aban', ('ar',)),
+            ('ábamos', ('ar',)), ('abamos', ('ar',)),
+            # Imperfect -er/-ir
+            ('ía', ('er', 'ir')), ('ían', ('er', 'ir')),
+            ('íamos', ('er', 'ir')), ('iamos', ('er', 'ir')),
+            # Present -ar
+            ('amos', ('ar',)), ('áis', ('ar',)),
+            # Past participle
+            ('ado', ('ar',)), ('ido', ('er', 'ir')),
+
+            # ── Italian ──
+            # Gerund
+            ('ando', ('are',)), ('endo', ('ere', 'ire')),
+            # Imperfect
+            ('ava', ('are',)), ('avano', ('are',)), ('avamo', ('are',)),
+            ('eva', ('ere',)), ('evano', ('ere',)),
+            ('iva', ('ire',)), ('ivano', ('ire',)),
+            # Present
+            ('iamo', ('are', 'ere', 'ire')),
+            # Past participle
+            ('ato', ('are',)), ('uto', ('ere',)), ('ito', ('ire',)),
+
+            # ── Portuguese ──
+            # Gerund
+            ('ando', ('ar',)), ('endo', ('er',)), ('indo', ('ir',)),
+            # Imperfect
+            ('ava', ('ar',)), ('avam', ('ar',)),
+            ('ávamos', ('ar',)), ('avamos', ('ar',)),
+            # Past participle
+            ('ado', ('ar',)), ('ido', ('er', 'ir')),
+
+            # ── German ──
+            # Present participle (-end → -en)
+            ('end', ('en',)),
+            # Past participle (ge-X-t → X-en) handled separately below
+            # Conjugation -st/-t/-en
+            ('st', ('en',)), ('te', ('en',)), ('ten', ('en',)),
+            ('tet', ('en',)), ('tet', ('en',)),
+
+            # ── Dutch ──
+            # Present participle (-end → -en)
+            ('end', ('en',)),
+            # Past tense (-de/-den/-te/-ten → -en)
+            ('de', ('en',)), ('den', ('en',)),
+            ('tte', ('en',)), ('tten', ('en',)),
+
+            # ── English ──
+            ('ing', ('', 'e')),  # running→run, making→make
+            ('ed', ('', 'e')),   # helped→help, liked→like
+            ('tion', ('te',)),   # completion→complete
+            ('ment', ('',)),     # establishment→establish (rare but useful)
+        ]
+        for suffix, inf_endings in _VERB_SUFFIXES:
+            if len(w) > len(suffix) + 2 and w.endswith(suffix):
+                stem = w[:-len(suffix)]
+                for inf_suffix in inf_endings:
+                    infinitive = stem + inf_suffix
+                    if infinitive in _common_words:
+                        return True
+
+        # German past participle: ge-X-t → X-en (e.g. gemacht → machen)
+        if w.startswith('ge') and w.endswith('t') and len(w) > 5:
+            inner = w[2:-1]  # strip ge- and -t
+            if inner + 'en' in _common_words:
+                return True
+            # ge-X-et → X-en (e.g. gearbeitet → arbeiten)
+            if w.endswith('et') and len(w) > 6:
+                inner2 = w[2:-2]
+                if inner2 + 'en' in _common_words:
+                    return True
+
+        # German compound word decompounding (inline, up to 3 parts)
+        if len(w) >= 7:
+            for i in range(3, len(w) - 2):
+                left = w[:i]
+                if left not in _common_words:
+                    continue
+                right = w[i:]
+                if right in _common_words:
+                    return True
+                # Try Fugen-element then direct match or recursive 2nd split
+                _fuge_candidates = [('', right)]  # no Fuge
+                for fg in ('s', 'es', 'n', 'en', 'e', 'er'):
+                    if right.startswith(fg) and len(right) > len(fg) + 2:
+                        _fuge_candidates.append((fg, right[len(fg):]))
+                for _fg, remainder in _fuge_candidates:
+                    if remainder in _common_words:
+                        return True
+                    # Try one more split (3-part compounds)
+                    if len(remainder) >= 6:
+                        for j in range(3, len(remainder) - 2):
+                            left2 = remainder[:j]
+                            if left2 not in _common_words:
+                                continue
+                            right2 = remainder[j:]
+                            if right2 in _common_words:
+                                return True
+                            for fg2 in ('s', 'es', 'n', 'en', 'e', 'er'):
+                                if right2.startswith(fg2) and len(right2) > len(fg2) + 2:
+                                    rest2 = right2[len(fg2):]
+                                    if rest2 in _common_words:
+                                        return True
+
+        return False
+    
+    def _in_dict(word: str) -> bool:
+        """Check if word is in dictionary, trying both original and fixed encoding.
+        
+        Also handles:
+        - Hyphenated compounds: 'sous-jacentes' -> 'sous' AND 'jacentes'
+        - French contractions: "l'exhaustivité" -> just check 'exhaustivité'
+        """
+        w = word.lower()
+        if _in_dict_simple(w):
+            return True
+        # Handle contractions across all supported languages:
+        # FR/IT: l', d', n', s', c', j', m', t', qu', dell', nell', all', sull'
+        # PT: n', d' (less common in modern PT)
+        if "'" in w or "\u2019" in w:  # straight or curly apostrophe
+            # Split on apostrophe and check the main part
+            parts = _re.split(r"['\u2019]", w)
+            # Filter out empty and very short prefixes (l, d, n, s, c, j, m, t, qu)
+            main_parts = [p for p in parts if len(p) > 2]
+            if main_parts and all(_in_dict_simple(p) for p in main_parts):
+                return True
+            # Also try: if everything after apostrophe is in dict
+            # Covers FR l', d', n', s', c', j', m', t'
+            # and IT l', d', un', quest'
+            if len(parts) == 2 and len(parts[0]) <= 5 and _in_dict_simple(parts[1]):
+                return True
+        # Handle hyphenated compounds (all languages) and German-style prefixed words
+        if any(c in w for c in '-\u2013\u2014'):
+            parts = _re.split(r'[-\u2013\u2014]', w)
+            parts = [p for p in parts if p]  # Remove empty
+            if len(parts) >= 2 and all(_in_dict_simple(p) for p in parts):
+                return True
+        return False
     
     if low in _common_words or low_fixed in _common_words:
         return True
@@ -163,14 +425,15 @@ def _is_org_pipeline_noise(text: str) -> bool:
         for w in words
     ):
         return True
-    # Strip parenthetical codes (e.g., "(NCSC)", "(ABC)") and standalone numbers
+    # Strip parenthetical codes (e.g., "(NCSC)", "(ABC)") and standalone numbers/single letters
     # then check if what remains is all dictionary words. Catches regulatory/standard names.
     if len(words) >= 3 and not has_legal_suffix(clean):
-        # Remove "(XXX)" patterns and standalone numbers
+        # Remove "(XXX)" patterns, standalone numbers, and single-letter words
         _code_stripped = _re.sub(r'\([A-Z0-9]{2,10}\)', '', clean)
-        _code_stripped = _re.sub(r'\b\d{3,}\b', '', _code_stripped)
+        _code_stripped = _re.sub(r'\b\d+\b', '', _code_stripped)  # All digits
+        _code_stripped = _re.sub(r"\b[a-zA-Z]['\u2019]?\s", ' ', _code_stripped)  # Single letter (possibly with apostrophe)
         _code_stripped = _re.sub(r'\s+', ' ', _code_stripped).strip()
-        stripped_words = [w for w in _code_stripped.split() if w]
+        stripped_words = [w for w in _code_stripped.split() if w and len(w) > 1]
         if len(stripped_words) >= 2 and all(
             _in_dict(w)
             or all(c in "-\u2013\u2014/.," for c in w)
@@ -257,6 +520,13 @@ def _is_org_pipeline_noise(text: str) -> bool:
         return True
     if any(w.lower() in ("pour", "para", "für", "fuer", "per", "voor") for w in words):
         if not has_legal_suffix(clean):
+            return True
+    # For 3+ word phrases without legal suffix: if ALL words are dictionary
+    # words, it's descriptive text, not a real organization name.
+    # Real company names typically have proper nouns / non-dictionary words.
+    # (With comprehensive dictionaries + stemming, we can require 100% match)
+    if len(words) >= 3 and not has_legal_suffix(clean):
+        if all(_in_dict(w) for w in words):
             return True
     if len(words) >= 3:
         low_words = [w.lower() for w in words]

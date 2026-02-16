@@ -703,7 +703,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     (
         r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}"
         r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}){0,4}"
-        r"\s+(?:(?i:SAS|SARL|EURL|SCI|SNC|SENC|S\.?E\.?N\.?C\.?)|SA|SE)\b",
+        r"\s+(?:(?i:SAS|SARL|EURL|SCI|SNC|SENC|S\.?E\.?N\.?C\.?)|SA|SE)\b\.?",
         PIIType.ORG, 0.90, _NOFLAGS, _ALL,
     ),
     # Numbered companies: "9169270 Canada inc.", "123456 Québec Ltd."
@@ -711,7 +711,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     (
         r"\b\d{4,10}\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}"
         r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-']{1,25}){0,3}"
-        r"\s+(?i:Inc|Corp|LLC|Ltd|LLP|Ltée|Limitée|Enr|S\.?E\.?N\.?C\.?)\.?\b",
+        r"\s+(?i:Inc|Corp|LLC|Ltd|LLP|Ltée|Limitée|Enr|S\.?E\.?N\.?C\.?)\b\.?",
         PIIType.ORG, 0.92, _NOFLAGS, _ALL,
     ),
     # Multi-language legal suffixes:
@@ -754,7 +754,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     (
         r"\b(?:\d{1,2}\.\s*)?[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-]{1,25}"
         r"(?:\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü\-]{1,25}){0,4}"
-        r"\s+(?i:e\.?\s?V\.?)\b",
+        r"\s+(?i:e\.?\s?V\.?)\b\.?",
         PIIType.ORG, 0.90, _NOFLAGS, _ALL,
     ),
     # Quoted company names followed by legal suffix (DE style):

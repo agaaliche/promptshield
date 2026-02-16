@@ -152,7 +152,10 @@ def _do_split(path: Path, max_bytes: int, sid: str) -> dict[str, Any]:
         for si, idx in enumerate(sample_indices):
             probe = fitz.open()
             probe.insert_pdf(src_doc, from_page=idx, to_page=idx)
-            sampled_sizes[idx] = len(probe.tobytes(garbage=0, deflate=False))
+            # Measure with deflate+garbage to match the actual save settings.
+            # This gives an accurate estimate of what each page will
+            # contribute to a multi-page output PDF.
+            sampled_sizes[idx] = len(probe.tobytes(garbage=4, deflate=True))
             probe.close()
             if si % 10 == 0 or si == samples_total - 1:
                 _update_split(sid,
@@ -176,30 +179,24 @@ def _do_split(path: Path, max_bytes: int, sid: str) -> dict[str, Any]:
                     est = int(sampled_sizes[lo] + frac * (sampled_sizes[hi] - sampled_sizes[lo]))
                     page_sizes.append(est)
 
-        # Estimate compression ratio from source file:
-        # page_sizes are uncompressed; src_size is the on-disk (compressed) size.
-        total_uncompressed = sum(page_sizes)
-        if total_uncompressed > 0:
-            compression_ratio = src_size / total_uncompressed
-        else:
-            compression_ratio = 1.0
-        # Apply ratio to page sizes so budget works on estimated compressed sizes.
-        # Use 90% of max_bytes as budget for a small safety margin.
-        budget = int(max_bytes * 0.90)
-        est_page_sizes = [int(ps * compression_ratio) for ps in page_sizes]
+        # Use compressed probe sizes directly as estimates — no ratio scaling.
+        # Each probe measures a single-page PDF (includes per-page overhead),
+        # so sums slightly over-estimate multi-page outputs, providing a
+        # natural safety margin.  Budget = max_bytes directly.
+        budget = max_bytes
 
-        # Greedy grouping by cumulative *estimated compressed* size
+        # Greedy grouping by cumulative estimated size
         parts: list[list[int]] = []
         current_part: list[int] = []
         current_est = 0
 
         for p in range(total_pages):
-            if current_part and current_est + est_page_sizes[p] > budget:
+            if current_part and current_est + page_sizes[p] > budget:
                 parts.append(current_part)
                 current_part = []
                 current_est = 0
             current_part.append(p)
-            current_est += est_page_sizes[p]
+            current_est += page_sizes[p]
         if current_part:
             parts.append(current_part)
 

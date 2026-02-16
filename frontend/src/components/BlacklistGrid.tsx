@@ -174,23 +174,26 @@ export default function BlacklistGrid({
     // Stop propagation for clipboard/select/undo shortcuts to prevent global shortcuts
     if ((e.ctrlKey || e.metaKey) && ["c", "v", "a", "z", "y"].includes(e.key.toLowerCase())) {
       e.stopPropagation();
-      e.preventDefault();
+      const key = e.key.toLowerCase();
       // Ctrl+A: select all cells in the grid
-      if (e.key.toLowerCase() === "a") {
+      if (key === "a") {
+        e.preventDefault();
         setSelectedCell({ row: 0, col: 0 });
         setSelectionEnd({ row: numRows - 1, col: numCols - 1 });
         setEditingCell(null);
         setCopiedBounds(null);
       }
       // Ctrl+Z: undo
-      if (e.key.toLowerCase() === "z") {
+      if (key === "z") {
+        e.preventDefault();
         handleUndo();
       }
       // Ctrl+Y: redo
-      if (e.key.toLowerCase() === "y") {
+      if (key === "y") {
+        e.preventDefault();
         handleRedo();
       }
-      // Ctrl+C and Ctrl+V are handled by onCopy/onPaste events
+      // Ctrl+C and Ctrl+V: let native events fire (handled by onCopy/onPaste)
       return;
     }
 

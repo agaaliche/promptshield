@@ -1025,9 +1025,10 @@ class TestPortugueseNISS:
     """Portuguese NISS label-value patterns."""
 
     def test_niss_label(self):
-        text = "NISS: 12345678901"
+        # Use a NISS number that passes the check-digit validation
+        text = "NISS: 12345678903"
         matches = _of_type(detect_regex(text, detection_language="es"), "SSN")
-        assert any("12345678901" in m.text for m in matches)
+        assert any("12345678903" in m.text for m in matches)
 
 
 class TestBrazilianCPF:

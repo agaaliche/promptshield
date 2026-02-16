@@ -52,13 +52,31 @@ def _strip_accents(text: str) -> str:
     letter without combining marks), so ``len(result) == len(text)`` and
     character-offset indices remain valid.
 
-    Examples: é→e, ü→u, ñ→n, ö→o, ç→c, ß→ß (no decomposition).
+    Explicit mappings for characters whose NFD decomposition doesn't
+    produce a clean base letter (ß→s, ligatures, etc.).
+
+    Examples: é→e, ü→u, ñ→n, ö→o, ç→c, ß→s, æ→a, œ→o.
     """
+    # Explicit single-char replacements for ligatures & special chars
+    _SPECIAL = {
+        'ß': 's', 'ẞ': 'S',             # German Eszett
+        'æ': 'a', 'Æ': 'A',             # Latin ligature AE
+        'œ': 'o', 'Œ': 'O',             # Latin ligature OE
+        'ð': 'd', 'Ð': 'D',             # Eth
+        'þ': 't', 'Þ': 'T',             # Thorn
+        'ø': 'o', 'Ø': 'O',             # Scandinavian O-slash
+        'đ': 'd', 'Đ': 'D',             # Croatian D-stroke
+        'ł': 'l', 'Ł': 'L',             # Polish L-slash
+        'ı': 'i',                         # Turkish dotless I
+    }
     out: list[str] = []
     for ch in text:
-        nfd = unicodedata.normalize("NFD", ch)
-        base = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
-        out.append(base if base else ch)
+        if ch in _SPECIAL:
+            out.append(_SPECIAL[ch])
+        else:
+            nfd = unicodedata.normalize("NFD", ch)
+            base = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
+            out.append(base if base else ch)
     return "".join(out)
 
 
@@ -93,12 +111,13 @@ def _build_flex_pattern(norm_key: str) -> _re.Pattern:
 
     Spaces in *norm_key* become ``\\s+`` so that the pattern matches
     regardless of whether the page text uses spaces, newlines, or other
-    whitespace between words.
+    whitespace between words.  Anchored with ``\\b`` word boundaries to
+    prevent matching inside longer words.
     """
     escaped = _re.escape(norm_key)
     # re.escape also escapes spaces (\ + space) — replace with \s+
     pat_str = escaped.replace('\\ ', r'\s+')
-    return _re.compile(pat_str, _re.IGNORECASE)
+    return _re.compile(r'\b' + pat_str + r'\b', _re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -128,16 +147,10 @@ class _PageIntervals:
         # Walk backwards from idx to find intervals that also satisfy e > cs.
         for i in range(idx - 1, -1, -1):
             if self._ends[i] <= cs:
-                # Intervals are sorted by start; all earlier intervals
-                # have even smaller start values.  If this interval's end
-                # doesn't reach cs, earlier ones won't either UNLESS they
-                # are wider.  We must keep scanning because starts are
-                # sorted but ends are not guaranteed to be monotone.
-                # However, for the typical "no nesting" case we can
-                # optimise: once we've gone past the start by more than
-                # a reasonable margin, stop scanning.
-                if self._starts[i] < cs - (ce - cs) * 2:
-                    break
+                # This interval ends before our query starts.
+                # Since starts are sorted but ends are NOT monotone, we
+                # cannot safely break early — a wider interval with an
+                # earlier start could still overlap.  Continue scanning.
                 continue
             ov_start = max(cs, self._starts[i])
             ov_end = min(ce, self._ends[i])

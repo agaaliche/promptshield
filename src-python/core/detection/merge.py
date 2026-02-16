@@ -346,8 +346,16 @@ def _merge_detections(
             if same_type and prev_start < merged[-1]["start"]:
                 merged[-1]["start"] = prev_start
 
-            if cand["end"] > merged[-1]["end"]:
+            # Only extend end for same-type merges to prevent hybrid regions
+            if same_type and cand["end"] > merged[-1]["end"]:
                 merged[-1]["end"] = cand["end"]
+
+            # L11: Max-span guard — prevent snowball merging from creating
+            # unreasonably long regions.  Cap merged span at 500 chars.
+            _MAX_MERGE_CHARS = 500
+            span_len = merged[-1]["end"] - merged[-1]["start"]
+            if span_len > _MAX_MERGE_CHARS:
+                merged[-1]["end"] = merged[-1]["start"] + _MAX_MERGE_CHARS
 
             # Recompute text from the (possibly extended) span
             merged[-1]["text"] = page_data.full_text[
@@ -466,7 +474,15 @@ def _merge_detections(
             # (street + city/postal) with potentially generous spacing,
             # so we use a looser factor for those.
             _is_addr = item["pii_type"] in {PIIType.ADDRESS, PIIType.LOCATION}
-            _SPATIAL_GAP_FACTOR = _MAX_Y_GAP_FACTOR if _is_addr else 1.5
+            _is_person = item["pii_type"] == PIIType.PERSON
+            # ADDRESS/LOCATION: loose (3.0×), PERSON: moderate (2.0×),
+            # everything else: tight (1.5×)
+            if _is_addr:
+                _SPATIAL_GAP_FACTOR = _MAX_Y_GAP_FACTOR
+            elif _is_person:
+                _SPATIAL_GAP_FACTOR = 2.0
+            else:
+                _SPATIAL_GAP_FACTOR = 1.5
             contiguous_end = len(lines)
             for li in range(1, len(lines)):
                 prev_y1 = max(t[2].bbox.y1 for t in lines[li - 1])

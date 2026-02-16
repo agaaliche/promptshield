@@ -76,7 +76,7 @@ def _detect_cross_line_orgs(full_text: str) -> list[RegexMatch]:
             win_end = len(full_text)
 
         window = full_text[win_start:win_end]
-        if len(window.split()) < 3:
+        if len(window.split()) < 2:
             continue
 
         test_text = window.replace("\n", " ")

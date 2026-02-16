@@ -19,6 +19,7 @@ import re
 from typing import NamedTuple, Optional
 
 from models.schemas import PIIType
+from core.detection.noise_filters import has_legal_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ AVAILABLE_MODELS: dict[str, dict] = {
         "label_map": {
             "PATIENT": PIIType.PERSON,
             "STAFF": PIIType.PERSON,
-            "AGE": PIIType.DATE,
+            "AGE": PIIType.CUSTOM,   # Age is not a date; separate entity type
             "DATE": PIIType.DATE,
             "PHONE": PIIType.PHONE,
             "ID": PIIType.CUSTOM,
@@ -69,7 +70,7 @@ AVAILABLE_MODELS: dict[str, dict] = {
         "label_map": {
             "NAME_STUDENT": PIIType.PERSON,
             "EMAIL": PIIType.EMAIL,
-            "USERNAME": PIIType.PERSON,
+            "USERNAME": PIIType.CUSTOM,  # Usernames are not person names
             "ID_NUM": PIIType.CUSTOM,
             "PHONE_NUM": PIIType.PHONE,
             "URL_PERSONAL": PIIType.CUSTOM,
@@ -97,7 +98,7 @@ AVAILABLE_MODELS: dict[str, dict] = {
             "IDCARDNUM": PIIType.PASSPORT,
             "TAXNUM": PIIType.CUSTOM,
             "PASSWORD": PIIType.CUSTOM,
-            "USERNAME": PIIType.PERSON,
+            "USERNAME": PIIType.CUSTOM,  # Usernames are not person names
         },
     },
     # -- Fast PII (DistilBERT, 66M params) ---------------------------------
@@ -110,7 +111,7 @@ AVAILABLE_MODELS: dict[str, dict] = {
             "Lastname": PIIType.PERSON,
             "Middlename": PIIType.PERSON,
             "Prefix": PIIType.PERSON,
-            "Username": PIIType.PERSON,
+            "Username": PIIType.CUSTOM,  # Usernames are not person names
             # Contact
             "Email": PIIType.EMAIL,
             "Phonenumber": PIIType.PHONE,
@@ -362,7 +363,6 @@ def _is_org_noise(text: str) -> bool:
     # Starts with a digit — not an org name
     # EXCEPT numbered company patterns (e.g., "9169270 Canada inc.")
     if clean and clean[0].isdigit():
-        from core.detection.noise_filters import has_legal_suffix
         if not has_legal_suffix(clean):
             return True
     # All-lowercase — real org names are capitalised

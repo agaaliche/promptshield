@@ -77,7 +77,9 @@ class TestFrenchSSNValidator:
         assert not _is_valid_french_ssn("3 85 05 78 006 084 42")
 
     def test_invalid_month(self):
-        assert not _is_valid_french_ssn("1 85 13 78 006 084 42")
+        # Month 00 is the only invalid month (INSEE allows 01-99 for
+        # Corsica, overseas territories, and special codes).
+        assert not _is_valid_french_ssn("1 85 00 78 006 084 42")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

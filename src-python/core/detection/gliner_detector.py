@@ -301,7 +301,7 @@ def _is_noise(text: str, pii_type: PIIType) -> bool:
     return False
 
 
-def _scale_confidence(raw_score: float, pii_type: PIIType | None = None) -> float:
+def _scale_confidence(raw_score: float) -> float:
     """Map GLiNER's raw score to a normalised confidence.
 
     GLiNER scores are calibrated differently from spaCy / regex.
@@ -352,7 +352,7 @@ def _process_chunk(
             end=global_offset + end,
             text=ent_text,
             pii_type=pii_type,
-            confidence=_scale_confidence(score, pii_type),
+            confidence=_scale_confidence(score),
         ))
 
     return matches

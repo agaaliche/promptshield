@@ -105,14 +105,23 @@ def _iban_mod97(iban_str: str) -> bool:
 
 
 def _is_valid_french_ssn(text: str) -> bool:
-    """Validate structure of a French numéro de sécurité sociale."""
+    """Validate structure of a French numéro de sécurité sociale.
+
+    Month field accepts:
+      01-12  normal months
+      20     Corsica (for historical numbers)
+      30-42  foreign-born or special codes
+      50+    overseas territories adjustments
+      99     unknown month
+    Only 00 is invalid.
+    """
     digits = re.sub(r"\s", "", text)
     if len(digits) not in (13, 15):
         return False
     if digits[0] not in "12":
         return False
     month = int(digits[3:5])
-    if month < 1 or month > 12:
+    if month < 1 or month > 99:
         return False
     dept = int(digits[5:7])
     if dept < 1 or dept > 99:
@@ -212,6 +221,75 @@ def _is_valid_italian_piva(text: str) -> bool:
     return total % 10 == 0
 
 
+def _is_valid_portuguese_niss(text: str) -> bool:
+    """Validate a Portuguese NISS (11 digits, check digit algorithm).
+
+    The NISS uses a weighted modulo-97 check.  Weights cycle through
+    [29, 23, 19, 17, 13, 11, 7, 5, 3, 2] for the first 10 digits;
+    the 11th digit is the check digit such that the weighted sum mod 10
+    gives 0.  Reject obvious non-NISS patterns like all-same digits.
+    """
+    digits = re.sub(r"[\s.\-]", "", text)
+    if len(digits) != 11 or not digits.isdigit():
+        return False
+    # Reject trivially invalid: all same digit (e.g. 11111111111)
+    if len(set(digits)) == 1:
+        return False
+    weights = [29, 23, 19, 17, 13, 11, 7, 5, 3, 2]
+    total = sum(int(d) * w for d, w in zip(digits[:10], weights))
+    remainder = total % 10
+    check = (10 - remainder) % 10
+    return int(digits[10]) == check
+
+
+# BIC/SWIFT false-positive word list — common English words that
+# happen to match the 8-char BIC structure with valid country codes.
+_BIC_FP_WORDS: frozenset[str] = frozenset({
+    "ABSTRACT", "ACHIEVED", "APPROACH", "ATTACHED",
+    "BENEDEIT", "BENEFITS", "BRIGHTLY",
+    "CHAPTERS", "CLOSURES", "COHERENT", "COMBINED",
+    "CONCLUDE", "CONFLICT", "CONNECTS", "CONSIDER",
+    "CONTENTS", "CONTRACT", "CONTROLS", "CREATION",
+    "CREDITED", "CULTURES", "CUSTOMER", "DECEMBER",
+    "DEFEATED", "DEPICTED", "DETAILED", "DISTINCT",
+    "DOCTRINE", "DOCUMENT", "DOMESTIC",
+    "DESCRIPT", "ELECTION", "ENTITLED", "ESTIMATE",
+    "EVALUATE", "EVENTUAL", "EVALUATE", "EXPLORED",
+    "FINISHED", "FORMERLY", "FRACTION",
+    "FUNCTION", "GATHERED", "GENERATE", "GRATEFUL",
+    "GRAPHICS", "GREATEST", "GUIDANCE",
+    "HAPPENED", "HISTORIC", "INCIDENT", "INCLUDES",
+    "INCREASE", "INDUSTRY", "INFINITE", "INFORMED",
+    "INHERITS", "INITIATE", "INSPIRED", "INSTANCE",
+    "INTEGRAL", "INTERACT", "INTEREST", "INTERNAL",
+    "MULTIPLE", "NATIONAL", "NOTIFIED",
+    "OBTAINED", "OCCURRED", "OFFICIAL", "OPERATED",
+    "OPTIONAL", "OUTLINED", "OVERHEAD", "GATHERED",
+    "PARALLEL", "PATIENTS", "PERFORMS", "PERIODIC",
+    "PETITION", "PLATFORM", "PLEASURE", "POLITICS",
+    "POSITIVE", "POSSIBLE", "PRACTICE", "PRECIOUS",
+    "PRESENCE", "PRESERVE", "PREVIOUS", "PRINCESS",
+    "PRIORITY", "PROBABLE", "PRODUCED", "PRODUCTS",
+    "PROMOTED", "PROPERLY", "PROPOSAL", "PROPOSED",
+    "COMBINED", "PROSPECT", "PROTOCOL", "PROVIDED",
+    "PROVIDER", "PROVINCE", "PURCHASE",
+    "REACTION", "RECEIVED", "RECENTLY", "RECORDED",
+    "REFLECTS", "REGIONAL", "REGISTER", "REJECTED",
+    "RELATION", "RELEASED", "REMAINED", "REMEMBER",
+    "REPEATED", "REPLACED", "REPORTED", "REQUIRED",
+    "RESEARCH", "RESERVED", "RESOLVED", "RESOURCE",
+    "RESPONSE", "RESULTED", "RETAINED", "RETURNED",
+    "REVIEWED", "REVISION", "SEARCHED",
+    "SECTIONS", "SELECTED", "SENTENCE", "SEQUENCE",
+    "SETTINGS", "SITUATED", "SOLUTION", "SPECIFIC",
+    "STANDARD", "STRATEGY", "STRENGTH", "STRONGLY",
+    "SUBJECTS", "SUPPLIED", "SUPPORTS", "SUPPOSED",
+    "TOGETHER", "TRANSFER", "TREASURE", "UNLISTED",
+    "UPLOADED", "UTILISED", "UTILIZES", "VERIFIED",
+    "VETERANS", "VIOLATED", "INTENDED",
+})
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Context keyword proximity boost
 # ═══════════════════════════════════════════════════════════════════════════
@@ -227,12 +305,38 @@ _PHONE_LABEL_KEYWORDS: frozenset[str] = frozenset({
     "télécopieur", "telecopieur", "téléc", "telec", "telex",
     "telefax", "facsimile", "facs", "telecópia", "telecopia",
     "téléph", "teleph", "telecóp", "telecop",
+    "telefoon", "telefone",  # Dutch / Portuguese
 })
 
 # Penalty applied to PHONE matches with no nearby label keyword.
 # This pushes bare numbers (base 0.55) below the confidence threshold
 # while numbers already boosted by proximity (+0.25) are unaffected.
 _PHONE_NO_LABEL_PENALTY = 0.15
+
+
+# Pre-compile word-boundary regexes for context keyword matching.
+# Using \b prevents "nom" matching inside "economy" or "port" inside "report".
+def _compile_kw_patterns(
+    kw_dict: dict[PIIType, list[str]],
+) -> dict[PIIType, re.Pattern]:
+    """Build one combined regex per PIIType from keyword lists."""
+    result: dict[PIIType, re.Pattern] = {}
+    for pii_type, kwlist in kw_dict.items():
+        # Sort by length (longest first) so multi-word phrases match before
+        # their shorter sub-strings.
+        sorted_kws = sorted(kwlist, key=len, reverse=True)
+        alternatives = "|".join(re.escape(kw) for kw in sorted_kws)
+        result[pii_type] = re.compile(rf"(?:^|(?<=\W))(?:{alternatives})(?:$|(?=\W))", re.IGNORECASE)
+    return result
+
+
+_COMPILED_CTX_KW: dict[PIIType, re.Pattern] = _compile_kw_patterns(_CONTEXT_KEYWORDS)
+_COMPILED_PHONE_LABEL_RE: re.Pattern = re.compile(
+    r"(?:^|(?<=\W))(?:" + "|".join(
+        re.escape(kw) for kw in sorted(_PHONE_LABEL_KEYWORDS, key=len, reverse=True)
+    ) + r")(?:$|(?=\W))",
+    re.IGNORECASE,
+)
 
 
 def _context_boost(text: str, match_start: int, pii_type: PIIType,
@@ -244,34 +348,34 @@ def _context_boost(text: str, match_start: int, pii_type: PIIType,
     without any "Tel:", "Phone:", etc. nearby are penalised.
 
     For all other types, returns +0.25 if a keyword is nearby, else 0.0.
+
+    Uses word-boundary-aware matching to prevent false boosts from
+    sub-string hits (e.g. "nom" inside "economy").
     """
-    keywords = _CONTEXT_KEYWORDS.get(pii_type)
-    if not keywords:
+    ctx_re = _COMPILED_CTX_KW.get(pii_type)
+    if not ctx_re:
         return 0.0
 
     # Look at the text window BEFORE the match
     window_start = max(0, match_start - _CTX_WINDOW)
-    before = text[window_start:match_start].lower()
+    before = text[window_start:match_start]
 
-    for kw in keywords:
-        if kw in before:
-            return 0.25
+    if ctx_re.search(before):
+        return 0.25
 
     # For PHONE, also check phone-specific labels in the before-window
     # (covers abbreviations like "Port.", "Mob." that may only be in
     # _PHONE_LABEL_KEYWORDS and not in the broader CONTEXT_KEYWORDS).
     if pii_type == PIIType.PHONE:
-        for kw in _PHONE_LABEL_KEYWORDS:
-            if kw in before:
-                return 0.25
+        if _COMPILED_PHONE_LABEL_RE.search(before):
+            return 0.25
 
     # For PHONE, also look AFTER the match (e.g. "418.368.3700 (tel)")
     if pii_type == PIIType.PHONE and match_end is not None:
         window_end = min(len(text), match_end + _CTX_WINDOW)
-        after = text[match_end:window_end].lower()
-        for kw in _PHONE_LABEL_KEYWORDS:
-            if kw in after:
-                return 0.25
+        after = text[match_end:window_end]
+        if _COMPILED_PHONE_LABEL_RE.search(after):
+            return 0.25
         # No label found anywhere near this phone number → penalise
         return -_PHONE_NO_LABEL_PENALTY
 
@@ -357,11 +461,14 @@ def _validate_match(text: str, matched_text: str, pii_type: PIIType,
             if not _is_valid_nhs_number(digits_only):
                 return 0.0
 
-    # BIC/SWIFT: structural validation
+    # BIC/SWIFT: structural validation + English word filter
     if pii_type == PIIType.CUSTOM:
         clean = matched_text.strip().upper()
         if re.match(r"^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$", clean):
             if not _is_valid_bic(clean):
+                return 0.0
+            # Reject common English words that pass BIC structure
+            if clean in _BIC_FP_WORDS:
                 return 0.0
 
     # Italian Partita IVA: 11-digit validation
@@ -369,6 +476,13 @@ def _validate_match(text: str, matched_text: str, pii_type: PIIType,
         clean = matched_text.strip()
         if re.match(r"^\d{11}$", clean):
             if not _is_valid_italian_piva(clean):
+                return 0.0
+
+    # Portuguese NISS: 11-digit SSN validation
+    if pii_type == PIIType.SSN:
+        clean = matched_text.strip()
+        if re.match(r"^\d{11}$", clean):
+            if not _is_valid_portuguese_niss(clean):
                 return 0.0
 
     return -1.0  # no adjustment

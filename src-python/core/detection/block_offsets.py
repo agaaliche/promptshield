@@ -179,9 +179,9 @@ def _compute_block_offsets_legacy(
         if prev_y is not None:
             gap = block.bbox.y0 - prev_y
             if line_height > 0 and gap > line_height * 0.6:
-                pos += 1
+                pos += 1  # newline separator
             else:
-                pos += 1
+                pos += 1  # word separator
         bstart = pos
         pos += len(block.text)
         offsets.append((bstart, pos, block))
@@ -230,7 +230,7 @@ def _compute_block_offsets_clustered(
 def _verify_offsets(
     offsets: list[tuple[int, int, TextBlock]],
     full_text: str,
-    sample_count: int = 5,
+    sample_count: int = 20,
 ) -> bool:
     """Verify that the first *sample_count* block offsets align with
     the given *full_text*.

@@ -278,7 +278,8 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     (r"\b\d{3}\s\d{2}\s\d{4}\b", PIIType.SSN, 0.40, _NOFLAGS, _EN),
 
     # French NIR — 1 85 05 78 006 084 (42)
-    (r"\b[12]\s?\d{2}\s?(?:0[1-9]|1[0-2]|[2-9]\d)\s?\d{2,3}\s?\d{3}\s?\d{3}(?:\s?\d{2})?\b",
+    # Month field: 01-12 (normal), 20 (Corsica), 30-42 (special), 50+ (overseas), 99 (unknown)
+    (r"\b[12]\s?\d{2}\s?(?:0[1-9]|[1-9]\d)\s?\d{2,3}\s?\d{3}\s?\d{3}(?:\s?\d{2})?\b",
      PIIType.SSN, 0.60, _NOFLAGS, _FR),
 
     # UK National Insurance — AB123456C
@@ -345,7 +346,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
      PIIType.PHONE, 0.80, _NOFLAGS, _PT),
 
     # Toll-free US/CA
-    (r"\b1[-.] 8(?:00|44|55|66|77|88)\b[-.\s]?\d{3}[-.\s]\d{4}\b",
+    (r"\b1[-.\s]?8(?:00|44|55|66|77|88)[-.\s]?\d{3}[-.\s]\d{4}\b",
      PIIType.PHONE, 0.90, _NOFLAGS, _ENFR_CA),
 
     # ──────────────────────────────────────────────────────────────────
@@ -1047,15 +1048,67 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     # ──────────────────────────────────────────────────────────────────
     # Insurance Policy Number patterns  (patient / financial)
     # ──────────────────────────────────────────────────────────────────
-    # Letters + digits, 8-15 chars — common group health policy IDs
-    (r"\b[A-Z]{2,4}\d{6,12}\b",
-     PIIType.CUSTOM, 0.25, _NOFLAGS, _ALL),
+    # Letters + digits, 10-16 chars — common group health policy IDs
+    # Require 3+ letter prefix to reduce FPs (COVID19, ISBN10, etc.)
+    (r"\b[A-Z]{3,4}\d{7,12}\b",
+     PIIType.CUSTOM, 0.22, _NOFLAGS, _ALL),
 
     # ──────────────────────────────────────────────────────────────────
     # LOCATION — GPS coordinates
     # ──────────────────────────────────────────────────────────────────
     (r"\b-?\d{1,3}\.\d{4,8},\s*-?\d{1,3}\.\d{4,8}\b",
      PIIType.LOCATION, 0.75, _NOFLAGS, _ALL),
+
+    # ──────────────────────────────────────────────────────────────────
+    # M1: European national ID numbers (Scandinavian, Polish, Czech, etc.)
+    # ──────────────────────────────────────────────────────────────────
+    # Swedish personnummer: YYMMDD-XXXX or YYYYMMDDXXXX
+    (r"\b\d{6}[-+]?\d{4}\b",
+     PIIType.SSN, 0.25, _NOFLAGS, _ALL),
+    # Danish CPR: DDMMYY-XXXX
+    (r"\b\d{6}-\d{4}\b",
+     PIIType.SSN, 0.30, _NOFLAGS, _ALL),
+    # Finnish HETU: DDMMYY[A+-]\d{3}[0-9A-Y]
+    (r"\b\d{6}[A+\-]\d{3}[0-9A-Y]\b",
+     PIIType.SSN, 0.35, _NOFLAGS, _ALL),
+    # Polish PESEL: 11 digits (birth-date encoded)
+    # Already covered by \b\d{11}\b patterns — skip duplicate
+    # Czech/Slovak rodné číslo: YYMMDD/XXXX (with slash)
+    (r"\b\d{6}/\d{3,4}\b",
+     PIIType.SSN, 0.35, _NOFLAGS, _ALL),
+    # Hungarian személyi szám: 8 digits
+    (r"\b\d{8}\b",
+     PIIType.SSN, 0.15, _NOFLAGS, _ALL),
+    # Romanian CNP: 13 digits starting with 1-8
+    (r"\b[1-8]\d{12}\b",
+     PIIType.SSN, 0.30, _NOFLAGS, _ALL),
+
+    # ──────────────────────────────────────────────────────────────────
+    # M2: Passport numbers (US, UK, IT, ES)
+    # ──────────────────────────────────────────────────────────────────
+    # US passport: 9 digits
+    # Already covered by 9-digit SSN + BSN/NIF validation
+    # UK passport: 9 digits — same as above
+    # Italian passport: 2 letters + 7 digits (AA1234567)
+    (r"\b[A-Z]{2}\d{7}\b",
+     PIIType.PASSPORT, 0.25, _NOFLAGS, _IT),
+    # Spanish passport: 3 letters + 6 digits (AAA123456)
+    (r"\b[A-Z]{3}\d{6}\b",
+     PIIType.PASSPORT, 0.25, _NOFLAGS, _ES),
+    # French passport: 2 digits + 2 letters + 5 digits (12AB34567)
+    (r"\b\d{2}[A-Z]{2}\d{5}\b",
+     PIIType.PASSPORT, 0.25, _NOFLAGS, _FR),
+    # German passport: C/F/G/H/J/K + 8 alphanumeric
+    (r"\b[CFGHJK][0-9CFGHJKLMNPRTVWXYZ]{8}\b",
+     PIIType.PASSPORT, 0.25, _NOFLAGS, _DE),
+
+    # ──────────────────────────────────────────────────────────────────
+    # M3: Dates with 2-digit year (DD/MM/YY, MM/DD/YY, YY-MM-DD)
+    # ──────────────────────────────────────────────────────────────────
+    # These are already partially covered by the main date pattern;
+    # add explicit 2-digit-year pattern with lower confidence.
+    (r"\b(?:0[1-9]|[12]\d|3[01])[/\-.](?:0[1-9]|1[0-2])[/\-.]\d{2}\b",
+     PIIType.DATE, 0.35, _NOFLAGS, _ALL),
 ]
 
 

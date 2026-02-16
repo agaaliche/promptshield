@@ -534,7 +534,7 @@ _EN_CONFIG = _LangNERConfig(
     generic_stopwords_filter=True,
     active_model_name=_get_active_en_model,
     base_confidence={
-        PIIType.PERSON: 0.80, PIIType.ORG: 0.30,
+        PIIType.PERSON: 0.80, PIIType.ORG: 0.40,
         PIIType.LOCATION: 0.25, PIIType.ADDRESS: 0.55,
     },
     person_multiword_cap=0.95,
@@ -687,7 +687,7 @@ def detect_ner(text: str) -> list[NERMatch]:
 
     # Short texts — single pass (fast path)
     if len(text) <= _CHUNK_SIZE:
-        return _process_chunk(nlp, text[:1_000_000], global_offset=0)
+        return _process_chunk(nlp, text, global_offset=0)
 
     # Long texts — overlapping sliding-window
     all_matches: list[NERMatch] = []
@@ -809,7 +809,7 @@ _FR_CONFIG = _LangNERConfig(
     generic_stopwords_filter=False,
     active_model_name=_get_active_fr_model,
     base_confidence={
-        PIIType.PERSON: 0.78, PIIType.ORG: 0.35, PIIType.LOCATION: 0.25,
+        PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.25,
     },
     person_multiword_cap=0.92,
     org_3word_cap=0.85,
@@ -845,7 +845,7 @@ def detect_ner_french(text: str) -> list[NERMatch]:
 
     # Short texts — single pass
     if len(text) <= _CHUNK_SIZE:
-        return _process_chunk_fr(nlp, text[:1_000_000], global_offset=0)
+        return _process_chunk_fr(nlp, text, global_offset=0)
 
     # Long texts — overlapping sliding-window
     all_matches: list[NERMatch] = []
@@ -959,7 +959,7 @@ _IT_CONFIG = _LangNERConfig(
     generic_stopwords_filter=False,
     active_model_name=_get_active_it_model,
     base_confidence={
-        PIIType.PERSON: 0.78, PIIType.ORG: 0.35, PIIType.LOCATION: 0.25,
+        PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.25,
     },
     person_multiword_cap=0.92,
     org_3word_cap=0.85,
@@ -995,7 +995,7 @@ def detect_ner_italian(text: str) -> list[NERMatch]:
 
     # Short texts — single pass
     if len(text) <= _CHUNK_SIZE:
-        return _process_chunk_it(nlp, text[:1_000_000], global_offset=0)
+        return _process_chunk_it(nlp, text, global_offset=0)
 
     # Long texts — overlapping sliding-window
     all_matches: list[NERMatch] = []
@@ -1122,7 +1122,7 @@ _DE_CONFIG = _LangNERConfig(
     generic_stopwords_filter=False,
     active_model_name=_get_active_de_model,
     base_confidence={
-        PIIType.PERSON: 0.78, PIIType.ORG: 0.35, PIIType.LOCATION: 0.25,
+        PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.25,
     },
     person_multiword_cap=0.92,
     org_3word_cap=0.85,
@@ -1146,7 +1146,7 @@ def detect_ner_german(text: str) -> list[NERMatch]:
         logger.info("No German spaCy model available — skipping German NER")
         return []
     if len(text) <= _CHUNK_SIZE:
-        return _process_chunk_de(nlp, text[:1_000_000], global_offset=0)
+        return _process_chunk_de(nlp, text, global_offset=0)
     all_matches: list[NERMatch] = []
     offset = 0
     while offset < len(text):
@@ -1265,7 +1265,7 @@ _ES_CONFIG = _LangNERConfig(
     generic_stopwords_filter=False,
     active_model_name=_get_active_es_model,
     base_confidence={
-        PIIType.PERSON: 0.78, PIIType.ORG: 0.35, PIIType.LOCATION: 0.25,
+        PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.25,
     },
     person_multiword_cap=0.92,
     org_3word_cap=0.85,
@@ -1289,7 +1289,7 @@ def detect_ner_spanish(text: str) -> list[NERMatch]:
         logger.info("No Spanish spaCy model available — skipping Spanish NER")
         return []
     if len(text) <= _CHUNK_SIZE:
-        return _process_chunk_es(nlp, text[:1_000_000], global_offset=0)
+        return _process_chunk_es(nlp, text, global_offset=0)
     all_matches: list[NERMatch] = []
     offset = 0
     while offset < len(text):
@@ -1407,7 +1407,7 @@ _NL_CONFIG = _LangNERConfig(
     generic_stopwords_filter=False,
     active_model_name=_get_active_nl_model,
     base_confidence={
-        PIIType.PERSON: 0.78, PIIType.ORG: 0.35, PIIType.LOCATION: 0.25,
+        PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.25,
     },
     person_multiword_cap=0.92,
     org_3word_cap=0.85,
@@ -1431,7 +1431,7 @@ def detect_ner_dutch(text: str) -> list[NERMatch]:
         logger.info("No Dutch spaCy model available — skipping Dutch NER")
         return []
     if len(text) <= _CHUNK_SIZE:
-        return _process_chunk_nl(nlp, text[:1_000_000], global_offset=0)
+        return _process_chunk_nl(nlp, text, global_offset=0)
     all_matches: list[NERMatch] = []
     offset = 0
     while offset < len(text):
@@ -1491,10 +1491,12 @@ def detect_ner_multilingual(text: str) -> list[tuple[str, list[NERMatch]]]:
 # Lightweight heuristic name detector (fallback when spaCy isn't available)
 # ---------------------------------------------------------------------------
 
-# Common first names (top ~150 English first names) for heuristic matching.
+# Common first names (top ~150 English + ~80 multilingual first names)
+# for heuristic matching.
 # EXCLUDES names that are also common English words (Grace, Mark, Frank, etc.)
 # to avoid false positives on document text.
 _COMMON_FIRST_NAMES: set[str] = {
+    # English
     "james", "john", "robert", "michael", "david", "william", "richard",
     "joseph", "thomas", "charles", "christopher", "daniel", "matthew",
     "anthony", "donald", "steven", "paul", "andrew", "joshua",
@@ -1522,12 +1524,46 @@ _COMMON_FIRST_NAMES: set[str] = {
     "alice", "judy", "sophia", "denise", "doris", "marilyn",
     "danielle", "beverly", "isabella", "theresa", "diana", "natalie", "brittany",
     "charlotte", "marie", "kayla", "alexis", "lori",
+    # French
+    "jean", "pierre", "jacques", "philippe", "michel", "alain", "nicolas",
+    "françois", "francois", "henri", "louis", "laurent", "bernard",
+    "marie", "sophie", "isabelle", "nathalie", "céline", "celine",
+    "valérie", "valerie", "christine", "sylvie", "véronique", "veronique",
+    "monique", "brigitte", "pascal", "thierry", "yves", "denis",
+    # German
+    "hans", "klaus", "wolfgang", "dieter", "jürgen", "jurgen",
+    "karsten", "matthias", "stefan", "andreas", "markus", "bernd",
+    "werner", "helmut", "gerhard", "rainer", "heinz", "ernst",
+    "uwe", "manfred", "horst", "gerd", "ulrich", "franz",
+    "sabine", "monika", "petra", "ursula", "karin", "renate",
+    "ingrid", "helga", "christa", "gudrun", "elfriede",
+    # Spanish
+    "carlos", "miguel", "fernando", "rafael", "alejandro", "javier",
+    "sergio", "jorge", "pablo", "ángel", "angel", "jesús", "jesus",
+    "ramón", "ramon", "antonio", "roberto", "pedro", "alberto",
+    "carmen", "marta", "pilar", "mercedes", "consuelo", "rosario",
+    "dolores", "cristina", "elena", "beatriz", "lucía", "lucia",
+    # Italian
+    "giuseppe", "giovanni", "marco", "mario", "francesco", "antonio",
+    "alessandro", "andrea", "stefano", "matteo", "lorenzo",
+    "roberto", "paolo", "giorgio", "luca", "riccardo",
+    "giulia", "francesca", "valentina", "chiara", "alessandra",
+    "federica", "silvia", "eleonora", "claudia", "simona",
+    # Dutch
+    "johannes", "willem", "hendrik", "cornelis", "pieter",
+    "gerrit", "jacobus", "theodorus",
+    "johanna", "geertruida",
+    # Portuguese
+    "joão", "joao", "pedro", "fernando", "paulo", "rui",
+    "ricardo", "tiago", "gonçalo", "goncalo", "nuno",
+    "ana", "isabel", "beatriz", "mariana", "catarina",
 }
 
 # Patterns for the heuristic fallback — use literal space (not \s+) so
 # we don't match across tab-separated columns or wide whitespace.
+# Support accented capitals (À-Ü) for multilingual name matching.
 _CAPITALIZED_NAME = re.compile(
-    r"\b([A-Z][a-z]{1,20}) ([A-Z][a-z]{1,20}(?: [A-Z][a-z]{1,20})?)\b"
+    r"\b([A-ZÀ-Ü][a-zà-ü]{1,20}) ([A-ZÀ-Ü][a-zà-ü]{1,20}(?: [A-ZÀ-Ü][a-zà-ü]{1,20})?)\b"
 )
 
 
@@ -1537,13 +1573,8 @@ def detect_names_heuristic(text: str) -> list[NERMatch]:
     no spaCy or BERT model is available.
 
     Looks for sequences of 2-3 capitalized words where the first word
-    is a known common first name. Confidence is moderate (0.65-0.75).
-
-    Also skipped for non-English text (the first-name list is English).
+    is a known common first name. Works for all supported languages.
     """
-    if not _is_english_text(text):
-        logger.info("Text does not appear to be English — skipping heuristic name detection")
-        return []
 
     matches: list[NERMatch] = []
 

@@ -15,7 +15,7 @@ from models.schemas import (
     RegionAction,
     UploadResponse,
 )
-from api.deps import documents, get_doc, get_store, save_doc
+from api.deps import documents, get_doc, get_store, prune_doc_locks, save_doc
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["documents"])
@@ -170,6 +170,7 @@ async def delete_document(doc_id: str) -> dict[str, str]:
         raise HTTPException(404, f"Document '{doc_id}' not found")
 
     del documents[doc_id]
+    prune_doc_locks()
 
     try:
         store = get_store()

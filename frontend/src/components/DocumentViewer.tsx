@@ -12,7 +12,7 @@ import {
   ScanSearch,
   Loader2,
 } from "lucide-react";
-import { useAppStore } from "../store";
+import { useDocumentStore, useRegionStore, useUIStore, useVaultStore, useDocLoadingStore, useSidebarStore, useDetectionStore } from "../store";
 import {
   getPageBitmapUrl,
   batchRegionAction,
@@ -39,43 +39,13 @@ import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useLabelConfig from "../hooks/useLabelConfig";
 
 export default function DocumentViewer() {
-  const {
-    activeDocId,
-    documents,
-    activePage,
-    setActivePage,
-    regions,
-    updateRegionAction,
-    removeRegion,
-    setRegions,
-    updateRegionBBox,
-    updateRegion,
-    zoom,
-    setZoom,
-    selectedRegionIds,
-    setSelectedRegionIds,
-    toggleSelectedRegionId,
-    clearSelection,
-    setIsProcessing,
-    setStatusMessage,
-    isProcessing,
-    vaultUnlocked,
-    setVaultUnlocked,
-    setDrawMode,
-    pushUndo,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
-    docLoading,
-    docLoadingMessage,
-    docDetecting,
-    rightSidebarWidth,
-    setRightSidebarWidth,
-    isSidebarDragging,
-    llmStatus,
-    leftSidebarWidth,
-  } = useAppStore();
+  const { activeDocId, documents, activePage, setActivePage } = useDocumentStore();
+  const { regions, updateRegionAction, removeRegion, setRegions, updateRegionBBox, updateRegion, selectedRegionIds, setSelectedRegionIds, toggleSelectedRegionId, clearSelection, pushUndo, undo, redo, canUndo, canRedo } = useRegionStore();
+  const { zoom, setZoom, isProcessing, setIsProcessing, setStatusMessage, setDrawMode } = useUIStore();
+  const { vaultUnlocked, setVaultUnlocked } = useVaultStore();
+  const { docLoading, docLoadingMessage, docDetecting } = useDocLoadingStore();
+  const { rightSidebarWidth, setRightSidebarWidth, isSidebarDragging, leftSidebarWidth } = useSidebarStore();
+  const { llmStatus } = useDetectionStore();
 
   // ── UI chrome (toolbars, sidebar, cursor tool) ──
   const {

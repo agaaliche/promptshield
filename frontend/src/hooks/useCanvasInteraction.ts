@@ -11,6 +11,7 @@ import {
   addManualRegion,
   updateRegionBBox as updateRegionBBoxApi,
 } from "../api";
+import { toErrorMessage } from "../errorUtils";
 // regionUtils import removed — resolveAllOverlaps unused after refactor
 import { useAppStore } from "../store";
 import type { BBox, PIIRegion, PIIType } from "../types";
@@ -586,8 +587,8 @@ export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
         autoRefreshTimerRef.current = setTimeout(() => {
           handleRefreshRegion(regionId);
         }, 300);
-      } catch (e: any) {
-        setStatusMessage(`Failed to add region: ${e.message}`);
+      } catch (e: unknown) {
+        setStatusMessage(`Failed to add region: ${toErrorMessage(e)}`);
       }
       setDrawnBBox(null);
     },

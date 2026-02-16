@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import unicodedata
 import uuid
 from typing import Any, Optional
 
@@ -309,23 +310,45 @@ def _blacklist_impl(doc_id: str, req: BlacklistRequest) -> dict[str, Any]:
         if not full_text:
             continue
 
-        full_lower = full_text.lower()
         block_offsets = _compute_block_offsets(page.text_blocks, full_text)
 
+        # Build accent-stripped lowercase text + index map to originals.
+        # NFD decomposes accented chars (é→e+combining-accent), then we
+        # strip combining marks.  _n2o maps each position in the
+        # stripped string back to the corresponding original char index.
+        _nfd = unicodedata.normalize("NFD", full_text.lower())
+        _norm_chars: list[str] = []
+        _n2o: list[int] = []
+        _seen = 0
+        for ci in range(len(full_text)):
+            clen = len(unicodedata.normalize("NFD", full_text[ci]))
+            for _ in range(clen):
+                if _seen < len(_nfd) and unicodedata.category(_nfd[_seen]) != "Mn":
+                    _norm_chars.append(_nfd[_seen])
+                    _n2o.append(ci)
+                _seen += 1
+        _n2o.append(len(full_text))  # sentinel
+        full_norm = "".join(_norm_chars)
+
         for needle in terms:
-            needle_lower = needle.lower()
-            needle_len = len(needle_lower)
+            needle_norm = "".join(
+                ch for ch in unicodedata.normalize("NFD", needle.lower())
+                if unicodedata.category(ch) != "Mn"
+            )
+            needle_len = len(needle_norm)
             if needle_len == 0:
                 continue
 
-            # Find all case-insensitive occurrences
+            # Find all accent-agnostic, case-insensitive occurrences
             search_start = 0
             while True:
-                idx = full_lower.find(needle_lower, search_start)
-                if idx == -1:
+                ni = full_norm.find(needle_norm, search_start)
+                if ni == -1:
                     break
-                search_start = idx + 1
-                match_end = idx + needle_len
+                search_start = ni + 1
+                # Map normalized positions back to original text positions
+                idx = _n2o[ni]
+                match_end = _n2o[min(ni + needle_len, len(_n2o) - 1)]
 
                 # Map char range → bounding box via text blocks
                 hit_blocks = []

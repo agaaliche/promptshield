@@ -4,9 +4,6 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "shell:allow-spawn",
-    "shell:allow-stdin-write",
-    "shell:allow-kill",
     "shell:allow-open",
     {
       "identifier": "shell:allow-execute",
@@ -14,9 +11,31 @@
         {
           "name": "binaries/doc-anonymizer-sidecar",
           "sidecar": true,
-          "args": true
+          "args": [
+            "--port",
+            { "validator": "\\d+" }
+          ]
         }
       ]
-    }
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "binaries/doc-anonymizer-sidecar",
+          "sidecar": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-kill",
+      "allow": [
+        {
+          "name": "binaries/doc-anonymizer-sidecar",
+          "sidecar": true
+        }
+      ]
+    },
+    "shell:allow-stdin-write"
   ]
 }

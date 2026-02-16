@@ -1445,6 +1445,49 @@ def detect_ner_dutch(text: str) -> list[NERMatch]:
 
 
 # ---------------------------------------------------------------------------
+# NER language registry — unified dispatch for multilingual NER
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class NERLanguageEntry:
+    """Registry entry for a language-specific NER backend."""
+    lang_code: str
+    lang_label: str
+    is_text: Callable[[str], bool]       # e.g. _is_french_text
+    is_available: Callable[[], bool]     # e.g. is_french_ner_available
+    detect: Callable[[str], list[NERMatch]]  # e.g. detect_ner_french
+
+
+NER_LANGUAGE_REGISTRY: list[NERLanguageEntry] = [
+    NERLanguageEntry("fr", "French", _is_french_text, is_french_ner_available, detect_ner_french),
+    NERLanguageEntry("it", "Italian", _is_italian_text, is_italian_ner_available, detect_ner_italian),
+    NERLanguageEntry("de", "German", _is_german_text, is_german_ner_available, detect_ner_german),
+    NERLanguageEntry("es", "Spanish", _is_spanish_text, is_spanish_ner_available, detect_ner_spanish),
+    NERLanguageEntry("nl", "Dutch", _is_dutch_text, is_dutch_ner_available, detect_ner_dutch),
+]
+
+
+def detect_ner_multilingual(text: str) -> list[tuple[str, list[NERMatch]]]:
+    """Run all applicable non-English NER models and return (lang_code, matches) pairs.
+
+    Only runs models for languages detected in the text. Skips English text.
+    """
+    if _is_english_text(text):
+        return []
+
+    results: list[tuple[str, list[NERMatch]]] = []
+    for entry in NER_LANGUAGE_REGISTRY:
+        if entry.is_text(text) and entry.is_available():
+            try:
+                matches = entry.detect(text)
+                if matches:
+                    results.append((entry.lang_code, matches))
+            except Exception as e:
+                logger.error("%s NER detection failed: %s", entry.lang_label, e)
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Lightweight heuristic name detector (fallback when spaCy isn't available)
 # ---------------------------------------------------------------------------
 

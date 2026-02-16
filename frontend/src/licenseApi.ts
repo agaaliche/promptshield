@@ -262,8 +262,8 @@ export async function signInOnline(
     const cred = await signInWithEmailAndPassword(auth, email, password);
     const idToken = await cred.user.getIdToken();
     return await activateWithToken(idToken);
-  } catch (e: any) {
-    throw new Error(friendlyFirebaseError(e.code));
+  } catch (e: unknown) {
+    throw new Error(friendlyFirebaseError((e as any).code));
   }
 }
 

@@ -186,6 +186,21 @@ def release_detection_lock(doc_id: str) -> None:
         logger.warning("Detection lock for doc %s was already released", doc_id)
 
 
+def prune_doc_locks() -> None:
+    """Remove lock entries for documents that no longer exist in memory.
+
+    Should be called periodically (e.g. after document deletion) to prevent
+    unbounded growth of ``_doc_locks`` / ``_doc_lock_times``.
+    """
+    with _doc_locks_guard:
+        stale = [k for k in _doc_locks if k not in documents]
+        for k in stale:
+            _doc_locks.pop(k, None)
+            _doc_lock_times.pop(k, None)
+        if stale:
+            logger.debug("Pruned %d stale detection lock(s)", len(stale))
+
+
 def acquire_config_lock(doc_id: str) -> bool:
     """Acquire the global config lock (for redetect / settings that mutate config).
 

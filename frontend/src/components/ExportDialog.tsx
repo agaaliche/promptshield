@@ -6,6 +6,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { Shield, X, Search, FileText, Download, Package, Lock } from "lucide-react";
 import { useAppStore } from "../store";
+import { toErrorMessage } from "../errorUtils";
 import { batchAnonymize, syncRegions, unlockVault } from "../api";
 import type { DocumentInfo } from "../types";
 import { Z_TOP_DIALOG } from "../zIndex";
@@ -106,8 +107,8 @@ export default function ExportDialog({ open, onClose }: Props) {
 
       setStatusMessage(`Exported ${docIds.length} file${docIds.length > 1 ? "s" : ""} successfully`);
       onClose();
-    } catch (e: any) {
-      setStatusMessage(`Export failed: ${e.message}`);
+    } catch (e: unknown) {
+      setStatusMessage(`Export failed: ${toErrorMessage(e)}`);
     } finally {
       setIsExporting(false);
     }
@@ -129,11 +130,11 @@ export default function ExportDialog({ open, onClose }: Props) {
       setNeedsVault(false);
       setVaultPass("");
       await doExport();
-    } catch (e: any) {
-      if (e.message?.includes("403") || e.message?.includes("passphrase")) {
+    } catch (e: unknown) {
+      if (toErrorMessage(e).includes("403") || toErrorMessage(e).includes("passphrase")) {
         setVaultError("Invalid passphrase");
       } else {
-        setVaultError(e.message);
+        setVaultError(toErrorMessage(e));
       }
     }
   }, [vaultPass, setVaultUnlocked, doExport]);

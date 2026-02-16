@@ -8,7 +8,8 @@
 import { useCallback } from "react";
 import { uploadDocument, getDocument, detectPII } from "../api";
 import { resolveAllOverlaps } from "../regionUtils";
-import { useAppStore } from "../store";
+import { toErrorMessage } from "../errorUtils";
+import { useAppStore, useDocumentStore, useRegionStore, useUIStore, useUploadStore, useDocLoadingStore } from "../store";
 import type { UploadItem } from "../types";
 
 /** Accepted file types for the document upload input. */
@@ -32,20 +33,11 @@ export interface UseDocumentUploadOptions {
 const MAX_EXPORT_DOCS = 50;
 
 export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
-  const {
-    setActiveDocId,
-    setRegions,
-    setCurrentView,
-    addDocument,
-    updateDocument,
-    addToUploadQueue,
-    updateUploadItem,
-    clearCompletedUploads,
-    setDocDetecting,
-    setDocLoadingMessage,
-    setStatusMessage,
-    setShowUploadErrorDialog,
-  } = useAppStore();
+  const { setActiveDocId, addDocument, updateDocument } = useDocumentStore();
+  const { setRegions } = useRegionStore();
+  const { setCurrentView, setStatusMessage } = useUIStore();
+  const { addToUploadQueue, updateUploadItem, clearCompletedUploads, setShowUploadErrorDialog } = useUploadStore();
+  const { setDocDetecting, setDocLoadingMessage } = useDocLoadingStore();
 
   const documents = useAppStore((s) => s.documents);
 
@@ -111,14 +103,14 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
           setDocDetecting(false);
           setDocLoadingMessage("");
           updateUploadItem(item.id, { status: "done", progress: 100 });
-        } catch (e: any) {
+        } catch (e: unknown) {
           setDocDetecting(false);
           setDocLoadingMessage("");
           updateUploadItem(item.id, {
             status: "error",
-            error: e.message || "Failed",
+            error: toErrorMessage(e) || "Failed",
           });
-          onFileError?.(e, file.name);
+          onFileError?.(e instanceof Error ? e : new Error(toErrorMessage(e)), file.name);
         }
       }
 

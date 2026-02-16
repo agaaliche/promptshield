@@ -5,11 +5,12 @@
  */
 
 import { useState } from "react";
-import { useAppStore } from "../store";
+import { useLicenseStore, useSnackbarStore } from "../store";
 import { deactivateLicense } from "../licenseApi";
 
 export default function LicenseStatus() {
-  const { licenseStatus, addSnackbar } = useAppStore();
+  const { licenseStatus } = useLicenseStore();
+  const { addSnackbar } = useSnackbarStore();
   const [busy, setBusy] = useState(false);
 
   if (!licenseStatus) return null;

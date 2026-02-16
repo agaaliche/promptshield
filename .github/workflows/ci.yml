@@ -36,7 +36,7 @@ jobs:
         run: ruff check .
 
       - name: Run tests
-        run: pytest --tb=short -q
+        run: pytest --tb=short -q --cov=core --cov=api --cov=models --cov-report=term-missing --cov-fail-under=50
 
   # ── Frontend lint & type-check ──
   frontend:

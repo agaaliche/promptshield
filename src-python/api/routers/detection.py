@@ -350,21 +350,40 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
                 ft = page.full_text
                 if not ft:
                     continue
-                ft_lower = ft.lower()
                 block_offsets = _compute_block_offsets(page.text_blocks, ft)
 
+                # Build accent-stripped lowercase text with index mapping
+                import unicodedata as _ud
+                _nfd = _ud.normalize("NFD", ft.lower())
+                _norm_chars: list[str] = []
+                _n2o: list[int] = []
+                _seen_nfd = 0
+                for _ci in range(len(ft)):
+                    _clen = len(_ud.normalize("NFD", ft[_ci]))
+                    for _ in range(_clen):
+                        if _seen_nfd < len(_nfd) and _ud.category(_nfd[_seen_nfd]) != "Mn":
+                            _norm_chars.append(_nfd[_seen_nfd])
+                            _n2o.append(_ci)
+                        _seen_nfd += 1
+                _n2o.append(len(ft))  # sentinel
+                ft_norm = "".join(_norm_chars)
+
                 for needle in bl_terms:
-                    nl = needle.lower()
+                    nl = "".join(
+                        c for c in _ud.normalize("NFD", needle.lower())
+                        if _ud.category(c) != "Mn"
+                    )
                     nlen = len(nl)
                     if nlen == 0:
                         continue
                     pos = 0
                     while True:
-                        idx = ft_lower.find(nl, pos)
-                        if idx == -1:
+                        ni = ft_norm.find(nl, pos)
+                        if ni == -1:
                             break
-                        pos = idx + 1
-                        m_end = idx + nlen
+                        pos = ni + 1
+                        idx = _n2o[ni]
+                        m_end = _n2o[min(ni + nlen, len(_n2o) - 1)]
 
                         # Map char range → bbox
                         hits = [blk for cs, ce, blk in block_offsets if ce > idx and cs < m_end]

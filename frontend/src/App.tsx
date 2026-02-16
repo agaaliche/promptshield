@@ -9,9 +9,10 @@
 
 import { useEffect, useState, Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
-import { useAppStore } from "./store";
+import { useAppStore, useUIStore, useConnectionStore, useVaultStore, useDetectionStore, useDocumentStore, useRegionStore, useDocLoadingStore, useLicenseStore, useSnackbarStore } from "./store";
 import { validateLocalLicense, startBackend, revalidateLicense } from "./licenseApi";
 import { warmupModels } from "./api";
+import { toErrorMessage } from "./errorUtils";
 import type { LicenseStatus as LicenseStatusType } from "./types";
 
 // ── Error Boundary ──────────────────────────────────────────────
@@ -68,27 +69,15 @@ import RevalidationDialog from "./components/RevalidationDialog";
 import UploadErrorDialog from "./components/UploadErrorDialog";
 
 function App() {
-  const {
-    currentView,
-    setCurrentView,
-    setBackendReady,
-    setVaultUnlocked,
-    setLLMStatus,
-    backendReady,
-    setDocuments,
-    setRegions,
-    updateDocument,
-    activeDocId,
-    setActiveDocId,
-    setDocLoading,
-    setDocLoadingMessage,
-    licenseStatus,
-    setLicenseStatus,
-    licenseChecked,
-    setLicenseChecked,
-    autoValidateOnline,
-    addSnackbar,
-  } = useAppStore();
+  const { currentView, setCurrentView } = useUIStore();
+  const { backendReady, setBackendReady } = useConnectionStore();
+  const { setVaultUnlocked } = useVaultStore();
+  const { setLLMStatus } = useDetectionStore();
+  const { activeDocId, setActiveDocId, updateDocument, setDocuments } = useDocumentStore();
+  const { setRegions } = useRegionStore();
+  const { setDocLoading, setDocLoadingMessage } = useDocLoadingStore();
+  const { licenseStatus, setLicenseStatus, licenseChecked, setLicenseChecked, autoValidateOnline } = useLicenseStore();
+  const { addSnackbar } = useSnackbarStore();
 
   const [showRevalidation, setShowRevalidation] = useState(false);
   const [backendStarting, setBackendStarting] = useState(false);
@@ -151,10 +140,10 @@ function App() {
         // Set the API base URL to the sidecar port
         setBaseUrl(`http://127.0.0.1:${port}`);
         setBackendReady(true);
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (cancelled) return;
         // Fallback: try polling for existing backend
-        console.warn("startBackend failed, falling back to polling:", err.message);
+        console.warn("startBackend failed, falling back to polling:", toErrorMessage(err));
         pollForBackend(cancelled);
       } finally {
         if (!cancelled) setBackendStarting(false);

@@ -5,7 +5,8 @@
  */
 
 import { useState, useCallback } from "react";
-import { useAppStore } from "../store";
+import { useSnackbarStore, useLicenseStore } from "../store";
+import { toErrorMessage } from "../errorUtils";
 import { revalidateLicense } from "../licenseApi";
 
 interface Props {
@@ -14,7 +15,8 @@ interface Props {
 }
 
 export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) {
-  const { addSnackbar, setLicenseStatus } = useAppStore();
+  const { addSnackbar } = useSnackbarStore();
+  const { setLicenseStatus } = useLicenseStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,8 +34,8 @@ export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) 
       } else {
         setError(status.error ?? "Revalidation failed");
       }
-    } catch (e: any) {
-      setError(e.message ?? "Revalidation failed. Check your internet connection.");
+    } catch (e: unknown) {
+      setError(toErrorMessage(e) ?? "Revalidation failed. Check your internet connection.");
     } finally {
       setLoading(false);
     }

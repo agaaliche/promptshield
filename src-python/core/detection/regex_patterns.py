@@ -259,7 +259,7 @@ _EN_FR_DE = frozenset({"en", "fr", "de"})
 _ENFR_CA = frozenset({"en", "fr"})   # North American / Canada
 _BE = frozenset({"fr", "nl", "de"})  # Belgian languages
 _CH = frozenset({"de", "fr", "it"})  # Swiss languages
-_PT = frozenset({"es"})              # Portuguese (closest supported = es)
+_PT = frozenset({"pt", "es"})          # Portuguese (+ Spanish fallback)
 
 PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
 
@@ -379,14 +379,14 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
         r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
         r"Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}\b",
-        PIIType.DATE, 0.60, _IC, _EN,
+        PIIType.DATE, 0.60, _IC, _ALL,
     ),
     # English: "15 January 2024"
     (
         r"\b\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
         r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
         r"Dec(?:ember)?)\s+\d{4}\b",
-        PIIType.DATE, 0.60, _IC, _EN,
+        PIIType.DATE, 0.60, _IC, _ALL,
     ),
 
     # French month: "15 janvier 2024", "1er mars 2024"
@@ -394,14 +394,14 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"\b\d{1,2}(?:er)?\s+(?:janvier|f[ée]vrier|mars|avril|mai|juin|"
         r"juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre)"
         r"\s+\d{4}\b",
-        PIIType.DATE, 0.60, _IC, _FR,
+        PIIType.DATE, 0.60, _IC, _ALL,
     ),
 
     # German month: "15. Januar 2024"
     (
         r"\b\d{1,2}\.\s*(?:Januar|Februar|M[aä]rz|April|Mai|Juni|Juli|"
         r"August|September|Oktober|November|Dezember)\s+\d{4}\b",
-        PIIType.DATE, 0.60, _IC, _DE,
+        PIIType.DATE, 0.60, _IC, _ALL,
     ),
 
     # Spanish month
@@ -409,7 +409,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"\b\d{1,2}\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|"
         r"julio|agosto|septiembre|octubre|noviembre|diciembre)"
         r"(?:\s+(?:de\s+)?\d{4})?\b",
-        PIIType.DATE, 0.50, _IC, _ES,
+        PIIType.DATE, 0.50, _IC, _ALL,
     ),
 
     # Italian month: "15 gennaio 2024"
@@ -417,7 +417,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"\b\d{1,2}\s+(?:gennaio|febbraio|marzo|aprile|maggio|giugno|"
         r"luglio|agosto|settembre|ottobre|novembre|dicembre)"
         r"\s+\d{4}\b",
-        PIIType.DATE, 0.60, _IC, _IT,
+        PIIType.DATE, 0.60, _IC, _ALL,
     ),
 
     # Dutch month: "15 januari 2024"
@@ -425,7 +425,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"\b\d{1,2}\s+(?:januari|februari|maart|april|mei|juni|"
         r"juli|augustus|september|oktober|november|december)"
         r"\s+\d{4}\b",
-        PIIType.DATE, 0.60, _IC, _NL,
+        PIIType.DATE, 0.60, _IC, _ALL,
     ),
 
     # Portuguese month: "15 de janeiro de 2024", "15 janeiro 2024"
@@ -433,7 +433,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"\b\d{1,2}\s+(?:de\s+)?(?:janeiro|fevereiro|mar[çc]o|abril|maio|junho|"
         r"julho|agosto|setembro|outubro|novembro|dezembro)"
         r"(?:\s+(?:de\s+)?\d{4})?\b",
-        PIIType.DATE, 0.55, _IC, _PT,
+        PIIType.DATE, 0.55, _IC, _ALL,
     ),
 
     # ──────────────────────────────────────────────────────────────────
@@ -479,7 +479,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"\s+(?:Street|St|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Road|Rd|"
         r"Lane|Ln|Way|Court|Ct|Circle|Cir|Place|Pl|Terrace|Ter|"
         r"Parkway|Pkwy|Highway|Hwy|Trail|Trl)\b\.?",
-        PIIType.ADDRESS, 0.80, _IC, _EN,
+        PIIType.ADDRESS, 0.80, _IC, _ALL,
     ),
 
     # French: "42 rue de la Paix", "12 avenue des Champs-Élysées",
@@ -489,19 +489,19 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     # consumed, even when there is no prepositional phrase (de/du/des/d').
     (
         r"\b\d{1,5}(?:\s*(?:bis|ter))?,?\s+"
-        r"(?:rue|avenue|av|boulevard|blvd|impasse|all[ée]e|chemin|place|"
+        r"(?:rue|avenue|av\.|boulevard|blvd|impasse|all[ée]e|chemin|place|"
         r"cours|passage|square|quai|route|voie|sentier|"
         r"mont[ée]e|rang|c[ôo]te|ruelle|croissant|promenade)"
         r"(?:\s+(?:de\s+(?:la\s+|l[''])?|du\s+|des\s+|d['']\s*))?\s*[A-ZÀ-Ü]"
         r"[a-zà-ü\-]+(?:[\s,]+[A-ZÀ-Üa-zà-ü0-9\-]+){0,6}\b",
-        PIIType.ADDRESS, 0.82, _IC, _FR,
+        PIIType.ADDRESS, 0.82, _IC, _ALL,
     ),
 
     # German: "Hauptstraße 42", "Berliner Str. 15"
     (
         r"\b[A-ZÀ-Ü][a-zà-ü]+(?:stra[ßs]e|str\.?|weg|gasse|platz|ring|damm|allee|ufer)"
         r"\s+\d{1,5}[a-z]?\b",
-        PIIType.ADDRESS, 0.80, _IC, _DE,
+        PIIType.ADDRESS, 0.80, _IC, _ALL,
     ),
 
     # Italian: "Via Roma 42", "Piazza Garibaldi, 1", "Corso Italia 15/A"
@@ -512,7 +512,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"\s+[A-ZÀ-Ü][a-zà-ü\-']+(?:\s+(?:di|del|della|dei|delle|dello|d[ae]l))?\s*"
         r"(?:[A-ZÀ-Ü][a-zà-ü\-']+\s*){0,2}"
         r"(?:[,]?\s*\d{1,5}[/a-zA-Z]?)?\b",
-        PIIType.ADDRESS, 0.82, _IC, _IT,
+        PIIType.ADDRESS, 0.82, _IC, _ALL,
     ),
 
     # Spanish: "Calle Mayor 5", "Avenida de la Constitución 32", "Paseo del Prado 10"
@@ -522,7 +522,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"(?:\s+(?:de\s+(?:la\s+|las?\s+|los?\s+)?|del\s+))?\s*"
         r"[A-ZÀ-Ü][a-zà-ü\-']+(?:\s+[A-ZÀ-Ü][a-zà-ü\-']+){0,2}"
         r"(?:[,]?\s*(?:n[°º]\.?\s*)?\d{1,5}[/a-zA-Z]?)?\b",
-        PIIType.ADDRESS, 0.82, _IC, _ES,
+        PIIType.ADDRESS, 0.82, _IC, _ALL,
     ),
 
     # Dutch: "Keizersgracht 123", "Grote Markt 15", "Nieuwe Binnenweg 10"
@@ -530,17 +530,17 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"\b[A-ZÀ-Ü][a-zà-ü]+"
         r"(?:straat|laan|weg|gracht|plein|dijk|kade|singel|steeg|pad)"
         r"\s+\d{1,5}[a-z]?\b",
-        PIIType.ADDRESS, 0.80, _IC, _NL,
+        PIIType.ADDRESS, 0.80, _IC, _ALL,
     ),
 
     # Portuguese: "Rua Augusta 123", "Avenida da Liberdade 45", "Praça do Comércio 10"
     (
-        r"\b(?:Rua|Avenida|Av|Praça|Praca|Travessa|Largo|Alameda|Estrada|"
+        r"\b(?:Rua|Avenida|Av\.|Praça|Praca|Travessa|Largo|Alameda|Estrada|"
         r"Calçada|Calcada|Beco)"
         r"(?:\s+(?:da\s+|do\s+|dos\s+|das\s+|de\s+))?\s*"
         r"[A-ZÀ-Ü][a-zà-ü\-']+(?:\s+[A-ZÀ-Ü][a-zà-ü\-']+){0,2}"
         r"(?:[,]?\s*(?:n[°º]\.?\s*)?\d{1,5}[/a-zA-Z]?)?\b",
-        PIIType.ADDRESS, 0.82, _IC, _PT,
+        PIIType.ADDRESS, 0.82, _IC, _ALL,
     ),
 
     # PO Box / BP / Postfach / Casella Postale
@@ -553,44 +553,44 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     # French postal code (5 digits) must be followed by town name
     (r"\b(?<!\d)(?:0[1-9]|[1-9]\d)\d{3}(?!\d)\b"
      r"(?=[ \t]+[A-ZÀ-Ü])",
-     PIIType.ADDRESS, 0.70, _NOFLAGS, _FR),
+     PIIType.ADDRESS, 0.70, _NOFLAGS, _ALL),
     # French: "75008 Paris", "F-75001 Paris"
     # NOTE: trailing name group limited to {0,3} (was {0,4}).
     (r"\b(?:F-?\s*)?(?:0[1-9]|[1-9]\d)\d{3}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
-     PIIType.ADDRESS, 0.82, _NOFLAGS, _FR),
+     PIIType.ADDRESS, 0.82, _NOFLAGS, _ALL),
     # French with CEDEX
     (r"\b(?:0[1-9]|[1-9]\d)\d{3}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,2}\s+[Cc][Ee][Dd][Ee][Xx](?:\s+\d{1,2})?\b",
-     PIIType.ADDRESS, 0.85, _NOFLAGS, _FR),
+     PIIType.ADDRESS, 0.85, _NOFLAGS, _ALL),
     # German postal code: 5 digits + city
     (r"\b(?:D-?\s*)?\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
-     PIIType.ADDRESS, 0.75, _NOFLAGS, _DE),
+     PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
     # UK postcode: "SW1A 1AA"
     (r"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b",
-     PIIType.ADDRESS, 0.80, _IC, _EN),
+     PIIType.ADDRESS, 0.80, _IC, _ALL),
     # US ZIP+4
-    (r"\b\d{5}-\d{4}\b", PIIType.ADDRESS, 0.70, _NOFLAGS, _EN),
+    (r"\b\d{5}-\d{4}\b", PIIType.ADDRESS, 0.70, _NOFLAGS, _ALL),
     # Belgian postal code (4 digits) + city
     (r"\bB-?\s*\d{4}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
-     PIIType.ADDRESS, 0.75, _NOFLAGS, _BE),
+     PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
     # Dutch postal code: "1234 AB" — must be uppercase (case-sensitive)
-    (r"\b\d{4}\s?[A-Z]{2}\b", PIIType.ADDRESS, 0.75, _NOFLAGS, _NL),
+    (r"\b\d{4}\s?[A-Z]{2}\b", PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
     # Swiss postal code + city
     (r"\bCH-?\s*\d{4}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
-     PIIType.ADDRESS, 0.75, _NOFLAGS, _CH),
+     PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
     # Italian CAP + well-known city
     (r"\b(?:I-?\s*)?\d{5}[ \t]+(?:Roma|Milano|Napoli|Torino|Firenze|Venezia|Bologna|Genova|Palermo|Catania|Bari|Verona|Padova|Trieste|Brescia|Parma|Modena|Reggio|Perugia|Livorno|Cagliari|Foggia|Salerno|Ferrara|Rimini|Siracusa|Sassari|Monza|Bergamo|Taranto|Vicenza|Treviso|Novara|Piacenza|Ancona|Andria|Udine|Arezzo|Lecce|Pesaro|Alessandria|Pisa)\b(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,2}",
-     PIIType.ADDRESS, 0.80, _NOFLAGS, _IT),
+     PIIType.ADDRESS, 0.80, _NOFLAGS, _ALL),
     # Italian CAP with I- prefix
     (r"\bI-?\s*\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
-     PIIType.ADDRESS, 0.75, _NOFLAGS, _IT),
+     PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
     # Spanish postal code + city
     (r"\bE-?\s*\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
-     PIIType.ADDRESS, 0.75, _NOFLAGS, _ES),
+     PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
     # Portuguese postal code: 1000-001 Lisboa
     (r"\b\d{4}-\d{3}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
-     PIIType.ADDRESS, 0.80, _NOFLAGS, _PT),
-    # Canadian: "K1A 0B1"
-    (r"\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b", PIIType.ADDRESS, 0.80, _IC, _ENFR_CA),
+     PIIType.ADDRESS, 0.80, _NOFLAGS, _ALL),
+    # Canadian: "K1A 0B1", "G4X-1W7"
+    (r"\b[A-Z]\d[A-Z][\s\-]?\d[A-Z]\d\b", PIIType.ADDRESS, 0.80, _IC, _ALL),
 
     # ──────────────────────────────────────────────────────────────────
     # LOCATION — known city & country names
@@ -1270,7 +1270,7 @@ LABEL_NAME_PATTERNS: list[tuple[re.Pattern, PIIType, float, frozenset[str] | Non
     (re.compile(
         r"(?:Phone|Tel(?:e(?:phone|fon|fax))?|T[ée]l(?:[ée]ph(?:one)?)?|T[ée]l[ée]c(?:opieur)?|Telex|Facs(?:imile)?|Telec[óo]p(?:ia)?|Mob(?:ile?)?|Cell|Fax|Port(?:able)?|Fixe|Rufn(?:ummer|r)?|Handy)"
         r"\.?"
-        r"[ \t]*(?:No\.?|Number|Num[ée]ro|#|N°)?[ \t]*[:]?[ \t]*([\d\s\+\(\)\.\-]{7,20})",
+        r"[ \t]*(?:No\.?|Number|Num[ée]ro|#|N°)?[ \t]*[:]?[ \t]*([\d \t\+\(\)\.\-]{7,20})",
         re.IGNORECASE,
     ), PIIType.PHONE, 0.88, _ALL),
 
@@ -1470,7 +1470,7 @@ LABEL_NAME_PATTERNS: list[tuple[re.Pattern, PIIType, float, frozenset[str] | Non
 
     # ── Emergency contact ──
     (re.compile(
-        r"(?:Emergency\s*Contact|Next\s*of\s*Kin|In\s*Case\s*of\s*Emergency|ICE|"
+        r"(?:Emergency\s*Contact|Next\s*of\s*Kin|In\s*Case\s*of\s*Emergency|\bICE\b|"
         r"Personne\s*[àa]\s*(?:contacter|pr[ée]venir)|Contact\s*d['\u2019]urgence|"
         r"Notfallkontakt|Kontaktperson|"
         r"Contacto\s*de\s*emergencia|"

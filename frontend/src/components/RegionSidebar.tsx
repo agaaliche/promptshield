@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { PII_COLORS, type PIIRegion, type RegionAction } from "../types";
 import { logError } from "../api";
-import { useAppStore } from "../store";
+import { useSidebarStore } from "../store";
 
 type SidebarTab = "page" | "document";
 
@@ -151,7 +151,7 @@ export default function RegionSidebar({
 
   const allTypesEnabled = enabledTypes === null || enabledTypes.size === availableTypes.length;
 
-  const { setIsSidebarDragging, isSidebarDragging: sidebarDragging } = useAppStore();
+  const { setIsSidebarDragging, isSidebarDragging: sidebarDragging } = useSidebarStore();
   const isDragging = React.useRef(false);
   const startX = React.useRef(0);
   const startWidth = React.useRef(width);

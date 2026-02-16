@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { Upload, AlertCircle, FolderUp } from "lucide-react";
-import { useAppStore } from "../store";
+import { useUIStore } from "../store";
 import { useDocumentUpload, ACCEPTED_FILE_TYPES } from "../hooks/useDocumentUpload";
 
 const ACCEPT = ACCEPTED_FILE_TYPES;
@@ -12,7 +12,7 @@ export default function UploadView() {
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
-  const { isProcessing } = useAppStore();
+  const { isProcessing } = useUIStore();
 
   const { handleFiles } = useDocumentUpload({
     onBeforeUpload: () => setError(""),

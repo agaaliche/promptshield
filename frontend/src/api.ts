@@ -44,6 +44,12 @@ export function cancelAllRequests(): void {
     ctrl.abort();
   }
   _activeControllers.clear();
+
+  // Reset the global abort controller so future upload / batch calls work
+  if (_globalAbort) {
+    _globalAbort.abort();
+    _globalAbort = null;
+  }
 }
 
 async function request<T>(
@@ -139,8 +145,9 @@ export async function detectPII(docId: string): Promise<DetectionResult> {
       return await request<DetectionResult>(`/api/documents/${docId}/detect`, {
         method: "POST",
       });
-    } catch (err: any) {
-      const is409 = err?.message?.includes("API error 409");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const is409 = msg.includes("API error 409");
       if (is409 && attempt < maxRetries) {
         const delay = baseDelay * Math.pow(2, attempt); // 2s, 4s, 8s, 16s, 32s
         await new Promise((r) => setTimeout(r, delay));

@@ -20,6 +20,7 @@ import {
   batchDeleteRegions,
 } from "../api";
 import { resolveAllOverlaps } from "../regionUtils";
+import { toErrorMessage } from "../errorUtils";
 import type { PIIRegion, PIIType, RegionAction } from "../types";
 
 interface UseRegionActionsOpts {
@@ -54,7 +55,7 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
         pushUndo();
         await setRegionAction(activeDocId, regionId, action);
         updateRegionAction(regionId, action);
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error("Failed to set region action:", e);
       }
     },
@@ -78,9 +79,9 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
             ? `Refreshed: ${result.pii_type} — "${result.text.slice(0, 40)}"`
             : "No text found under this region",
         );
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error("Failed to refresh region:", e);
-        setStatusMessage(`Refresh failed: ${e.message}`);
+        setStatusMessage(`Refresh failed: ${toErrorMessage(e)}`);
       }
     },
     [activeDocId, pushUndo, updateRegion, setStatusMessage],
@@ -93,10 +94,10 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
         pushUndo();
         removeRegion(regionId);
         await deleteRegion(activeDocId, regionId);
-      } catch (e: any) {
-        if (e.message?.includes("404")) return;
+      } catch (e: unknown) {
+        if (toErrorMessage(e).includes("404")) return;
         console.error("Failed to delete region:", e);
-        setStatusMessage(`Delete failed: ${e.message}`);
+        setStatusMessage(`Delete failed: ${toErrorMessage(e)}`);
       }
     },
     [activeDocId, pushUndo, removeRegion, setStatusMessage],
@@ -121,9 +122,9 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
             : `Highlighted ${resp.all_ids.length} existing region${resp.all_ids.length !== 1 ? "s" : ""} matching "${region.text}"`;
         setStatusMessage(msg);
         addSnackbar(msg, "success");
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error("Highlight all failed:", e);
-        const errMsg = `Highlight all failed: ${e.message}`;
+        const errMsg = `Highlight all failed: ${toErrorMessage(e)}`;
         setStatusMessage(errMsg);
         addSnackbar(errMsg, "error");
       }
@@ -138,9 +139,9 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
         pushUndo();
         updateRegion(regionId, { pii_type: newType });
         await updateRegionLabel(activeDocId, regionId, newType);
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error("Update label failed:", e);
-        setStatusMessage(`Update failed: ${e.message}`);
+        setStatusMessage(`Update failed: ${toErrorMessage(e)}`);
       }
     },
     [activeDocId, pushUndo, updateRegion, setStatusMessage],
@@ -153,9 +154,9 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
         pushUndo();
         updateRegion(regionId, { text: newText });
         await updateRegionText(activeDocId, regionId, newText);
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error("Update text failed:", e);
-        setStatusMessage(`Update failed: ${e.message}`);
+        setStatusMessage(`Update failed: ${toErrorMessage(e)}`);
       }
     },
     [activeDocId, pushUndo, updateRegion, setStatusMessage],
@@ -203,9 +204,9 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
       setRegions(resolveAllOverlaps([...regions, ...newRegions]));
       setSelectedRegionIds(newIds);
       setStatusMessage(`Pasted ${newRegions.length} region(s) on page ${activePage}`);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Failed to paste regions:", e);
-      setStatusMessage(`Paste failed: ${e.message}`);
+      setStatusMessage(`Paste failed: ${toErrorMessage(e)}`);
     }
   }, [activeDocId, activePage, copiedRegions, regions, setRegions, setSelectedRegionIds, setStatusMessage, pushUndo]);
 
@@ -218,7 +219,7 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
         pushUndo();
         await batchRegionAction(activeDocId, ids, action);
         ids.forEach((id) => updateRegionAction(id, action));
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error("Batch action failed:", e);
       }
     },
@@ -233,7 +234,7 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
       pushUndo();
       await batchDeleteRegions(activeDocId, ids);
       ids.forEach((id) => removeRegion(id));
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Reset all failed:", e);
     }
   }, [activeDocId, regions, removeRegion, pushUndo]);
@@ -246,7 +247,7 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
       pushUndo();
       await batchDeleteRegions(activeDocId, ids);
       ids.forEach((id) => removeRegion(id));
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Reset page failed:", e);
     }
   }, [activeDocId, regions, removeRegion, pushUndo]);

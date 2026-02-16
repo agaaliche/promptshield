@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import bisect
 import logging
+import re as _re
 import unicodedata
 import uuid
 from collections import defaultdict
@@ -59,6 +60,45 @@ def _strip_accents(text: str) -> str:
         base = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
         out.append(base if base else ch)
     return "".join(out)
+
+
+def _ws_collapse(text: str) -> str:
+    """Collapse whitespace runs into single spaces and strip."""
+    return _re.sub(r'\s+', ' ', text).strip()
+
+
+# Characters treated as transparent for entity matching —
+# various quotation marks that wrap entity names in running text.
+_QUOTE_CHARS = frozenset(
+    '"\'\'\u2018\u2019\u201A\u201B'   # single quotes / apostrophes
+    '\u201C\u201D\u201E\u201F'         # double quotes
+    '\u00AB\u00BB'                     # «»
+    '\u2039\u203A'                     # ‹›
+    '\u300C\u300D\u300E\u300F'         # CJK brackets
+)
+
+
+def _strip_quotes(text: str) -> str:
+    """Remove quotation mark characters from *text*."""
+    return ''.join(ch for ch in text if ch not in _QUOTE_CHARS)
+
+
+def _neutralise_quotes(text: str) -> str:
+    """Replace quotation mark characters with spaces (preserves string length)."""
+    return ''.join(' ' if ch in _QUOTE_CHARS else ch for ch in text)
+
+
+def _build_flex_pattern(norm_key: str) -> _re.Pattern:
+    """Build a case-insensitive, whitespace-flexible regex for *norm_key*.
+
+    Spaces in *norm_key* become ``\\s+`` so that the pattern matches
+    regardless of whether the page text uses spaces, newlines, or other
+    whitespace between words.
+    """
+    escaped = _re.escape(norm_key)
+    # re.escape also escapes spaces (\ + space) — replace with \s+
+    pat_str = escaped.replace('\\ ', r'\s+')
+    return _re.compile(pat_str, _re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +177,7 @@ def propagate_regions_across_pages(
             continue
         if r.pii_type == PIIType.ORG and (
             key.isdigit()
-            or (key and key[0].isdigit())
+            or (key and key[0].isdigit() and not has_legal_suffix(key))
             or len(key) <= 2
         ):
             continue
@@ -152,8 +192,9 @@ def propagate_regions_across_pages(
                 continue
             if r.pii_type == PIIType.SSN and any(c in key for c in '$€£'):
                 continue
-        # Accent-agnostic keying so "Société" and "Societe" merge
-        norm_key = _strip_accents(key)
+        # Accent-agnostic, case-insensitive, whitespace-normalised keying
+        # Also strip quotation marks so „Foo Bar" keys the same as Foo Bar
+        norm_key = _ws_collapse(_strip_accents(_strip_quotes(key))).lower()
         existing = text_to_template.get(norm_key)
         if existing is None or r.confidence > existing.confidence:
             text_to_template[norm_key] = r
@@ -175,6 +216,9 @@ def propagate_regions_across_pages(
     propagated: list[PIIRegion] = []
 
     for norm_pii_text, template in text_to_template.items():
+        # Whitespace-flexible, case-insensitive regex for this key
+        _pat = _build_flex_pattern(norm_pii_text)
+
         for page_data in pages:
             full_text = page_data.full_text
             if not full_text:
@@ -185,17 +229,12 @@ def propagate_regions_across_pages(
 
             # Accent-agnostic search: compare stripped versions
             if pn not in norm_full_cache:
-                norm_full_cache[pn] = _strip_accents(full_text)
+                norm_full_cache[pn] = _neutralise_quotes(_strip_accents(full_text))
             norm_full = norm_full_cache[pn]
 
-            start = 0
-            while True:
-                idx = norm_full.find(norm_pii_text, start)
-                if idx == -1:
-                    break
-                char_start = idx
-                char_end = idx + len(norm_pii_text)
-                start = char_end
+            for _m in _pat.finditer(norm_full):
+                char_start = _m.start()
+                char_end = _m.end()
 
                 if intervals.has_overlap(char_start, char_end, 0.5):
                     continue
@@ -311,7 +350,7 @@ def propagate_partial_org_names(
         words = key.split()
         if len(words) < 3:
             continue
-        norm_key = _strip_accents(key)
+        norm_key = _ws_collapse(_strip_accents(_strip_quotes(key))).lower()
         existing = org_texts.get(norm_key)
         if existing is None or r.confidence > existing.confidence:
             org_texts[norm_key] = r
@@ -354,7 +393,7 @@ def propagate_partial_org_names(
         words = org_text.split()
         for sub in _generate_contiguous_subphrases(words, min_words=2):
             # Skip sub-phrases made entirely of function words
-            sub_words = sub.lower().split()
+            sub_words = sub.split()   # already lowercased
             if all(w in _NORM_FUNCTION_WORDS for w in sub_words):
                 continue
             existing = sub_to_template.get(sub)
@@ -362,7 +401,10 @@ def propagate_partial_org_names(
                 sub_to_template[sub] = template
 
     # Remove sub-phrases that are already exact-match regions (any type)
-    existing_texts: set[str] = {_strip_accents(r.text.strip()) for r in regions}
+    existing_texts: set[str] = {
+        _ws_collapse(_strip_accents(_strip_quotes(r.text.strip()))).lower()
+        for r in regions
+    }
     for txt in list(sub_to_template):
         if txt in existing_texts:
             del sub_to_template[txt]
@@ -370,7 +412,37 @@ def propagate_partial_org_names(
     if not sub_to_template:
         return regions
 
-    # 3. Build per-page interval index from existing regions
+    # 3a. Retype existing LOCATION/PERSON regions that match an ORG sub-phrase
+    #     or the full ORG name itself.
+    #     NER may independently tag part of a known ORG name as LOCATION
+    #     (e.g. "der Alten Försterei" from "An der Alten Försterei" Stadionbetriebs AG).
+    #     Those should be ORG, not LOCATION.
+    _retype_lookup: dict[str, PIIRegion] = {**sub_to_template}
+    # Also include full ORG names so they get retyped too
+    for k, v in org_texts.items():
+        if k not in _retype_lookup:
+            _retype_lookup[k] = v
+
+    _retyped = 0
+    for i, r in enumerate(regions):
+        if r.pii_type not in (PIIType.LOCATION, PIIType.PERSON):
+            continue
+        r_norm = _ws_collapse(_strip_accents(_strip_quotes(r.text.strip()))).lower()
+        tpl = _retype_lookup.get(r_norm)
+        if tpl is not None:
+            regions[i] = r.model_copy(update={
+                "pii_type": PIIType.ORG,
+                "confidence": max(r.confidence, round(tpl.confidence * 0.85, 4)),
+            })
+            _retyped += 1
+    if _retyped:
+        logger.info(
+            "Partial-ORG propagation: retyped %d LOCATION/PERSON region(s) to ORG "
+            "(sub-phrases of known ORG names)",
+            _retyped,
+        )
+
+    # 3b. Build per-page interval index from existing regions
     page_intervals: dict[int, _PageIntervals] = defaultdict(_PageIntervals)
     for r in regions:
         page_intervals[r.page_number].add(r.char_start, r.char_end)
@@ -389,6 +461,9 @@ def propagate_partial_org_names(
 
     for sub_text, template in sorted_subs:
         conf = round(template.confidence * _CONF_FACTOR, 4)
+        # Whitespace-flexible, case-insensitive regex with word boundaries
+        _sub_pat = _build_flex_pattern(sub_text)
+
         for page_data in pages:
             full_text = page_data.full_text
             if not full_text:
@@ -399,17 +474,12 @@ def propagate_partial_org_names(
 
             # Accent-agnostic search
             if pn not in norm_full_cache:
-                norm_full_cache[pn] = _strip_accents(full_text)
+                norm_full_cache[pn] = _neutralise_quotes(_strip_accents(full_text))
             norm_full = norm_full_cache[pn]
 
-            start = 0
-            while True:
-                idx = norm_full.find(sub_text, start)
-                if idx == -1:
-                    break
-                char_start = idx
-                char_end = idx + len(sub_text)
-                start = char_end
+            for _m in _sub_pat.finditer(norm_full):
+                char_start = _m.start()
+                char_end = _m.end()
 
                 # Require word boundaries to avoid matching inside words
                 if char_start > 0 and full_text[char_start - 1].isalnum():

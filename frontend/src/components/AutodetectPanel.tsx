@@ -19,6 +19,7 @@ interface DetectionTemplate {
 }
 
 const TEMPLATES_KEY = "doc-anon-detection-templates";
+const LAST_TEMPLATE_KEY = "doc-anon-last-template";
 
 function loadTemplates(): DetectionTemplate[] {
   try {
@@ -29,6 +30,15 @@ function loadTemplates(): DetectionTemplate[] {
 
 function saveTemplates(templates: DetectionTemplate[]) {
   localStorage.setItem(TEMPLATES_KEY, JSON.stringify(templates));
+}
+
+function loadLastTemplateName(): string {
+  return localStorage.getItem(LAST_TEMPLATE_KEY) || "";
+}
+
+function saveLastTemplateName(name: string) {
+  if (name) localStorage.setItem(LAST_TEMPLATE_KEY, name);
+  else localStorage.removeItem(LAST_TEMPLATE_KEY);
 }
 
 interface AutodetectPanelProps {
@@ -100,6 +110,27 @@ export default function AutodetectPanel({
   const [blCells, setBlCells] = useState(() => createEmptyGrid());
   const [blAction, setBlAction] = useState<BlacklistAction>("none");
   const [blMatchStatus, setBlMatchStatus] = useState<Map<string, "matched" | "no-match" | "exists">>(new Map());
+
+  // Restore last-used template on mount
+  useEffect(() => {
+    const lastName = loadLastTemplateName();
+    if (!lastName) return;
+    const tpl = templates.find(t => t.name === lastName);
+    if (!tpl) return;
+    setSelectedTemplate(lastName);
+    setFuzziness(tpl.fuzziness);
+    setRegexTypes(tpl.regexTypes);
+    setNerTypes(tpl.nerTypes);
+    setLlmEnabled(tpl.llmEnabled);
+    setBlCells(tpl.blCells);
+    setBlAction(tpl.blAction);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // mount-only
+
+  // Persist last-used template name
+  useEffect(() => {
+    saveLastTemplateName(selectedTemplate);
+  }, [selectedTemplate]);
 
   // Auto-save option changes back to the selected template
   useEffect(() => {

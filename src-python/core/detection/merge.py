@@ -215,6 +215,114 @@ def _merge_detections(
         elif n_layers == 2:
             c["confidence"] = min(1.0, c["confidence"] + _BOOST_2_LAYERS)
 
+    # ── Visual-grouping confidence boost (ORG only) ──────────────────
+    # Three heuristics that increase ORG confidence for multi-word
+    # candidates when the text has strong visual or typographic
+    # indicators of being an entity name:
+    #   1. Enclosed in quotation marks ("...", «...», '...', etc.)
+    #   2. Rendered in bold or italic font
+    #   3. Horizontally centred on the page (blank margins both sides)
+    _BOOST_VISUAL = 0.12
+
+    # Pre-compute block offsets once for bold/italic + centring checks
+    _vg_block_offsets = _compute_block_offsets(
+        page_data.text_blocks, page_data.full_text,
+    )
+
+    # Build a set of character ranges enclosed in quotation marks
+    _QUOTE_PAIRS = [('"', '"'), ("'", "'"), ('\u201c', '\u201d'),
+                    ('\u2018', '\u2019'), ('\u00ab', '\u00bb')]
+    _quoted_ranges: list[tuple[int, int]] = []
+    _ft = page_data.full_text
+    for qopen, qclose in _QUOTE_PAIRS:
+        start_search = 0
+        while True:
+            qi = _ft.find(qopen, start_search)
+            if qi < 0:
+                break
+            qj = _ft.find(qclose, qi + 1)
+            if qj < 0:
+                break
+            # Only keep if the quoted fragment has 2+ words
+            fragment = _ft[qi + 1:qj]
+            if len(fragment.split()) >= 2:
+                _quoted_ranges.append((qi, qj + 1))
+            start_search = qj + 1
+
+    page_width = page_data.width
+
+    for c in candidates:
+        if c["pii_type"] != PIIType.ORG:
+            continue
+        if len(c["text"].split()) < 2:
+            continue
+        already_boosted = False
+
+        # 1. Quoted-text boost
+        for qs, qe in _quoted_ranges:
+            if c["start"] >= qs and c["end"] <= qe:
+                c["confidence"] = min(1.0, c["confidence"] + _BOOST_VISUAL)
+                already_boosted = True
+                logger.debug(
+                    "Page %d: ORG visual boost (quoted): %r +%.2f",
+                    page_data.page_number, c["text"], _BOOST_VISUAL,
+                )
+                break
+
+        # 2. Bold / italic boost — majority of underlying TextBlocks
+        if not already_boosted and _vg_block_offsets:
+            styled_count = 0
+            total_count = 0
+            for blk_start, blk_end, blk in _vg_block_offsets:
+                if blk_end <= c["start"] or blk_start >= c["end"]:
+                    continue
+                total_count += 1
+                if blk.is_bold or blk.is_italic:
+                    styled_count += 1
+            if total_count >= 2 and styled_count > total_count / 2:
+                c["confidence"] = min(1.0, c["confidence"] + _BOOST_VISUAL)
+                already_boosted = True
+                logger.debug(
+                    "Page %d: ORG visual boost (bold/italic): %r +%.2f",
+                    page_data.page_number, c["text"], _BOOST_VISUAL,
+                )
+
+        # 3. Horizontally-centred boost — the *entire line* containing
+        #    the ORG has substantial blank margin on both sides (≥12 %
+        #    of page width each).  We use the full line extent (all
+        #    blocks sharing the same y-range) so that ORGs in the
+        #    middle of a normal-width paragraph are not falsely boosted.
+        if not already_boosted and _vg_block_offsets and page_width > 0:
+            span_blocks = [
+                (bs, be, b) for bs, be, b in _vg_block_offsets
+                if be > c["start"] and bs < c["end"]
+            ]
+            if span_blocks:
+                # Determine the y-range of the ORG's blocks
+                org_y0 = min(b.bbox.y0 for _, _, b in span_blocks)
+                org_y1 = max(b.bbox.y1 for _, _, b in span_blocks)
+                org_h = org_y1 - org_y0 if org_y1 > org_y0 else 1.0
+                # Collect ALL blocks on the same line (overlapping y)
+                line_blocks = [
+                    b for _, _, b in _vg_block_offsets
+                    if b.bbox.y1 > org_y0 and b.bbox.y0 < org_y1
+                    and abs((b.bbox.y0 + b.bbox.y1) / 2
+                            - (org_y0 + org_y1) / 2) < org_h
+                ]
+                left_edge = min(b.bbox.x0 for b in line_blocks)
+                right_edge = max(b.bbox.x1 for b in line_blocks)
+                left_margin = left_edge / page_width
+                right_margin = (page_width - right_edge) / page_width
+                _MIN_MARGIN = 0.12  # at least 12 % blank on each side
+                if left_margin >= _MIN_MARGIN and right_margin >= _MIN_MARGIN:
+                    c["confidence"] = min(1.0, c["confidence"] + _BOOST_VISUAL)
+                    logger.debug(
+                        "Page %d: ORG visual boost (centred): %r +%.2f "
+                        "(L=%.0f%% R=%.0f%%)",
+                        page_data.page_number, c["text"], _BOOST_VISUAL,
+                        left_margin * 100, right_margin * 100,
+                    )
+
     # ── Sort and merge overlapping regions ────────────────────────────
     candidates.sort(key=lambda x: (x["start"], -x["priority"]))
 
@@ -310,6 +418,79 @@ def _merge_detections(
     block_offsets = _compute_block_offsets(
         page_data.text_blocks, page_data.full_text,
     )
+
+    # ── Spatial coherence filter ─────────────────────────────────────
+    # A regex may match text that is *textually* adjacent in full_text
+    # but *spatially* scattered across the page (e.g. text from a
+    # header concatenated with body text).  We verify that each
+    # candidate's underlying TextBlocks form a vertically contiguous
+    # group; if not, the candidate is truncated to the first
+    # contiguous run of lines.
+    if block_offsets:
+        _spatial_trimmed = 0
+        for item in merged:
+            cand_blocks = [
+                (bs, be, blk)
+                for bs, be, blk in block_offsets
+                if be > item["start"] and bs < item["end"]
+            ]
+            if len(cand_blocks) < 2:
+                continue
+            # Sort blocks by visual position (top→bottom, left→right)
+            cand_blocks.sort(key=lambda t: (t[2].bbox.y0, t[2].bbox.x0))
+            # Cluster into visual lines (by y-center proximity)
+            lines: list[list[tuple[int, int, TextBlock]]] = [[cand_blocks[0]]]
+            for cb in cand_blocks[1:]:
+                prev_line = lines[-1]
+                prev_yc = sum(
+                    (t[2].bbox.y0 + t[2].bbox.y1) / 2 for t in prev_line
+                ) / len(prev_line)
+                prev_h = max(t[2].bbox.y1 - t[2].bbox.y0 for t in prev_line)
+                cur_yc = (cb[2].bbox.y0 + cb[2].bbox.y1) / 2
+                cur_h = cb[2].bbox.y1 - cb[2].bbox.y0
+                tol = max(prev_h, cur_h) * 0.5
+                if abs(cur_yc - prev_yc) <= tol:
+                    prev_line.append(cb)
+                else:
+                    lines.append([cb])
+            if len(lines) <= 1:
+                continue
+            # Check vertical gaps between consecutive lines
+            max_line_h = max(
+                max(t[2].bbox.y1 - t[2].bbox.y0 for t in line)
+                for line in lines
+            )
+            # Threshold: if gap between two consecutive lines exceeds
+            # N × max line height, treat them as non-contiguous.
+            # ADDRESS / LOCATION candidates legitimately span 2-3 lines
+            # (street + city/postal) with potentially generous spacing,
+            # so we use a looser factor for those.
+            _is_addr = item["pii_type"] in {PIIType.ADDRESS, PIIType.LOCATION}
+            _SPATIAL_GAP_FACTOR = _MAX_Y_GAP_FACTOR if _is_addr else 1.5
+            contiguous_end = len(lines)
+            for li in range(1, len(lines)):
+                prev_y1 = max(t[2].bbox.y1 for t in lines[li - 1])
+                cur_y0 = min(t[2].bbox.y0 for t in lines[li])
+                gap = cur_y0 - prev_y1
+                if gap > max_line_h * _SPATIAL_GAP_FACTOR:
+                    contiguous_end = li
+                    break
+            if contiguous_end < len(lines):
+                # Truncate: only keep blocks from contiguous lines
+                kept = [t for line in lines[:contiguous_end] for t in line]
+                new_start = min(t[0] for t in kept)
+                new_end = max(t[1] for t in kept)
+                new_text = page_data.full_text[new_start:new_end]
+                if new_text.strip():
+                    item["start"] = new_start
+                    item["end"] = new_end
+                    item["text"] = new_text
+                    _spatial_trimmed += 1
+        if _spatial_trimmed:
+            logger.info(
+                "Page %d: spatial coherence trimmed %d candidate(s)",
+                page_data.page_number, _spatial_trimmed,
+            )
 
     # ── Merge adjacent ADDRESS fragments ──────────────────────────────
     _addr_merged: list[dict] = []

@@ -93,6 +93,8 @@ class TextBlock(BaseModel):
     line_index: int = 0
     word_index: int = 0
     is_ocr: bool = False
+    is_bold: bool = False            # True when font weight ≥ 700
+    is_italic: bool = False           # True when font has italic flag
 
 
 class PageData(BaseModel):

@@ -19,7 +19,7 @@ import {
   ArrowUpDown,
   X,
 } from "lucide-react";
-import { useAppStore } from "../store";
+import { useDocumentStore, useRegionStore, useUIStore, useConnectionStore, useSidebarStore, useUploadStore } from "../store";
 import { deleteDocument } from "../api";
 import { useDocumentUpload, ACCEPTED_FILE_TYPES } from "../hooks/useDocumentUpload";
 import LicenseStatus from "./LicenseStatus";
@@ -34,25 +34,12 @@ type SortField = "name" | "pages" | "date";
 type SortDir = "asc" | "desc";
 
 export default function Sidebar() {
-  const {
-    currentView,
-    setCurrentView,
-    backendReady,
-    documents,
-    activeDocId,
-    setActiveDocId,
-    setDocuments,
-    setRegions,
-    leftSidebarWidth,
-    setLeftSidebarWidth,
-    setIsProcessing,
-    setStatusMessage,
-    isProcessing,
-    updateDocument,
-    regions: storeRegions,
-    uploadQueue,
-    dismissingErrorUploads,
-  } = useAppStore();
+  const { currentView, setCurrentView, isProcessing, setIsProcessing, setStatusMessage } = useUIStore();
+  const { backendReady } = useConnectionStore();
+  const { documents, activeDocId, setActiveDocId, setDocuments, updateDocument } = useDocumentStore();
+  const { setRegions, regions: storeRegions } = useRegionStore();
+  const { leftSidebarWidth, setLeftSidebarWidth } = useSidebarStore();
+  const { uploadQueue, dismissingErrorUploads } = useUploadStore();
 
   const isDragging = useRef(false);
   const startX = useRef(0);

@@ -12,7 +12,8 @@ import {
   X,
 } from "lucide-react";
 import { detokenize, detokenizeFile, type DetokenizeFileResult } from "../api";
-import { useAppStore } from "../store";
+import { toErrorMessage } from "../errorUtils";
+import { useVaultStore, useUIStore } from "../store";
 
 type Mode = "text" | "file";
 
@@ -36,7 +37,8 @@ export default function DetokenizeView() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { vaultUnlocked, isProcessing, setIsProcessing } = useAppStore();
+  const { vaultUnlocked } = useVaultStore();
+  const { isProcessing, setIsProcessing } = useUIStore();
 
   // ── Text de-tokenization ──────────────────────────────────────────
   const handleDetokenizeText = useCallback(async () => {
@@ -48,8 +50,8 @@ export default function DetokenizeView() {
       setOutput(result.original_text);
       setTokensReplaced(result.tokens_replaced);
       setUnresolved(result.unresolved_tokens);
-    } catch (e: any) {
-      setError(e.message || "De-tokenization failed");
+    } catch (e: unknown) {
+      setError(toErrorMessage(e) || "De-tokenization failed");
     } finally {
       setIsProcessing(false);
     }
@@ -79,8 +81,8 @@ export default function DetokenizeView() {
       setFileResult(result);
       setTokensReplaced(result.tokensReplaced);
       setUnresolved(result.unresolvedTokens);
-    } catch (e: any) {
-      setError(e.message || "File de-tokenization failed");
+    } catch (e: unknown) {
+      setError(toErrorMessage(e) || "File de-tokenization failed");
     } finally {
       setIsProcessing(false);
     }

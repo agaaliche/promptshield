@@ -1,8 +1,8 @@
 """Lightweight stop-word-based language detection for PII pipeline.
 
 Detects: English (en), Spanish (es), French (fr), German (de),
-Italian (it), Dutch (nl).  Falls back to ``"en"`` for very short
-texts or languages outside the supported set.
+Italian (it), Dutch (nl), Portuguese (pt).  Falls back to ``"en"``
+for very short texts or languages outside the supported set.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Languages supported by the auto-switching NER backend.
-SUPPORTED_LANGUAGES = ("en", "es", "fr", "de", "it", "nl")
+SUPPORTED_LANGUAGES = ("en", "es", "fr", "de", "it", "nl", "pt")
 
 # Model routing for auto mode
 AUTO_MODEL_ENGLISH = "Isotonic/distilbert_finetuned_ai4privacy_v2"
@@ -83,6 +83,16 @@ _STOP: dict[str, frozenset[str]] = {
         "kan", "dit", "was", "worden", "al", "wel", "over", "door", "tot",
         "veel", "meer", "had", "haar", "wat", "zou", "hun", "geen", "werd",
         "wij", "heb", "moet", "ons", "dag", "twee", "zo", "alle", "hij",
+    }),
+    "pt": frozenset({
+        "de", "a", "o", "que", "e", "do", "da", "em", "um", "para",
+        "com", "uma", "os", "no", "se", "na", "por", "mais", "as",
+        "dos", "como", "mas", "foi", "ao", "ele", "das", "tem", "seu",
+        "sua", "ou", "ser", "quando", "muito", "nos", "já", "eu",
+        "também", "só", "pelo", "pela", "até", "isso", "ela", "entre",
+        "era", "depois", "sem", "mesmo", "aos", "ter", "seus", "quem",
+        "nas", "me", "esse", "eles", "está", "você", "tinha", "foram",
+        "essa", "num", "nem", "suas", "meu", "minha", "numa", "pelos",
     }),
 }
 

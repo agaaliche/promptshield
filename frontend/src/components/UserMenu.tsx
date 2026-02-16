@@ -9,12 +9,13 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { User, LogOut, Crown, Clock } from "lucide-react";
-import { useAppStore } from "../store";
+import { useLicenseStore, useSnackbarStore } from "../store";
 import { deactivateLicense } from "../licenseApi";
 import { auth } from "../firebaseConfig";
 
 export default function UserMenu() {
-  const { licenseStatus, addSnackbar } = useAppStore();
+  const { licenseStatus } = useLicenseStore();
+  const { addSnackbar } = useSnackbarStore();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);

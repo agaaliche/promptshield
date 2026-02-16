@@ -4,7 +4,7 @@ import React from "react";
 import { ChevronLeft, ChevronRight, ShieldCheck } from "lucide-react";
 import { getPageBitmapUrl } from "../api";
 import type { PIIRegion } from "../types";
-import { useAppStore } from "../store";
+import { useSidebarStore } from "../store";
 
 interface PageNavigatorProps {
   docId: string | null;
@@ -37,7 +37,7 @@ export default function PageNavigator({
   sidebarWidth,
   onSidebarWidthChange,
 }: PageNavigatorProps) {
-  const { setIsSidebarDragging, isSidebarDragging: sidebarDragging } = useAppStore();
+  const { setIsSidebarDragging, isSidebarDragging: sidebarDragging } = useSidebarStore();
   const listRef = React.useRef<HTMLDivElement>(null);
   const isDragging = React.useRef(false);
   const startX = React.useRef(0);

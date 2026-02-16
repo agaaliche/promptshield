@@ -12,6 +12,7 @@ import {
   getDownloadUrl,
   unlockVault,
 } from "../api";
+import { toErrorMessage } from "../errorUtils";
 import type { PIIRegion } from "../types";
 
 interface UseDocumentExportOpts {
@@ -57,8 +58,8 @@ export default function useDocumentExport(opts: UseDocumentExportOpts) {
       if (result.output_path) {
         window.open(getDownloadUrl(activeDocId, "pdf"), "_blank");
       }
-    } catch (e: any) {
-      setStatusMessage(`Anonymization failed: ${e.message}`);
+    } catch (e: unknown) {
+      setStatusMessage(`Anonymization failed: ${toErrorMessage(e)}`);
     } finally {
       setIsProcessing(false);
     }
@@ -85,11 +86,11 @@ export default function useDocumentExport(opts: UseDocumentExportOpts) {
       if (result.output_path) {
         window.open(getDownloadUrl(activeDocId, "pdf"), "_blank");
       }
-    } catch (e: any) {
-      if (e.message?.includes("403") || e.message?.includes("passphrase")) {
+    } catch (e: unknown) {
+      if (toErrorMessage(e).includes("403") || toErrorMessage(e).includes("passphrase")) {
         setVaultError("Invalid passphrase");
       } else {
-        setStatusMessage(`Anonymization failed: ${e.message}`);
+        setStatusMessage(`Anonymization failed: ${toErrorMessage(e)}`);
         setShowVaultPrompt(false);
       }
     } finally {

@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
+import { cancelAllRequests } from "./api";
 import type {
   BBox,
   DocumentInfo,
@@ -137,7 +138,7 @@ interface AppState {
   removeErrorUploads: () => void;
 }
 
-export const useAppStore = create<AppState>()(devtools((set) => ({
+export const useAppStore = create<AppState>()(devtools((set, get) => ({
   // License — the app is purely key-based; no auth state/tokens.
   licenseStatus: null,
   setLicenseStatus: (s) => set({ licenseStatus: s }),
@@ -189,7 +190,11 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
 
   // Active document
   activeDocId: null,
-  setActiveDocId: (id) => set({ activeDocId: id, activePage: 1 }),
+  setActiveDocId: (id) => {
+    const prev = get().activeDocId;
+    if (prev && prev !== id) cancelAllRequests();
+    set({ activeDocId: id, activePage: 1 });
+  },
 
   // Page
   activePage: 1,
@@ -389,6 +394,7 @@ export const useAppStore = create<AppState>()(devtools((set) => ({
 export const useDocumentStore = () =>
   useAppStore(useShallow((s) => ({
     documents: s.documents,
+    setDocuments: s.setDocuments,
     activeDocId: s.activeDocId,
     activePage: s.activePage,
     setActiveDocId: s.setActiveDocId,
@@ -441,4 +447,72 @@ export const useLicenseStore = () =>
     setLicenseChecked: s.setLicenseChecked,
     autoValidateOnline: s.autoValidateOnline,
     setAutoValidateOnline: s.setAutoValidateOnline,
+  })));
+
+/** Snackbar-related selectors. */
+export const useSnackbarStore = () =>
+  useAppStore(useShallow((s) => ({
+    snackbars: s.snackbars,
+    addSnackbar: s.addSnackbar,
+    removeSnackbar: s.removeSnackbar,
+  })));
+
+/** Upload-queue selectors. */
+export const useUploadStore = () =>
+  useAppStore(useShallow((s) => ({
+    uploadQueue: s.uploadQueue,
+    setUploadQueue: s.setUploadQueue,
+    addToUploadQueue: s.addToUploadQueue,
+    updateUploadItem: s.updateUploadItem,
+    clearCompletedUploads: s.clearCompletedUploads,
+    showUploadErrorDialog: s.showUploadErrorDialog,
+    setShowUploadErrorDialog: s.setShowUploadErrorDialog,
+    dismissingErrorUploads: s.dismissingErrorUploads,
+    setDismissingErrorUploads: s.setDismissingErrorUploads,
+    removeErrorUploads: s.removeErrorUploads,
+  })));
+
+/** Sidebar layout selectors. */
+export const useSidebarStore = () =>
+  useAppStore(useShallow((s) => ({
+    leftSidebarWidth: s.leftSidebarWidth,
+    setLeftSidebarWidth: s.setLeftSidebarWidth,
+    rightSidebarWidth: s.rightSidebarWidth,
+    setRightSidebarWidth: s.setRightSidebarWidth,
+    isSidebarDragging: s.isSidebarDragging,
+    setIsSidebarDragging: s.setIsSidebarDragging,
+  })));
+
+/** Connection / backend-readiness selectors. */
+export const useConnectionStore = () =>
+  useAppStore(useShallow((s) => ({
+    backendReady: s.backendReady,
+    setBackendReady: s.setBackendReady,
+  })));
+
+/** Vault selectors. */
+export const useVaultStore = () =>
+  useAppStore(useShallow((s) => ({
+    vaultUnlocked: s.vaultUnlocked,
+    setVaultUnlocked: s.setVaultUnlocked,
+  })));
+
+/** Document-loading state selectors. */
+export const useDocLoadingStore = () =>
+  useAppStore(useShallow((s) => ({
+    docLoading: s.docLoading,
+    setDocLoading: s.setDocLoading,
+    docLoadingMessage: s.docLoadingMessage,
+    setDocLoadingMessage: s.setDocLoadingMessage,
+    docDetecting: s.docDetecting,
+    setDocDetecting: s.setDocDetecting,
+  })));
+
+/** Detection + LLM settings selectors. */
+export const useDetectionStore = () =>
+  useAppStore(useShallow((s) => ({
+    llmStatus: s.llmStatus,
+    setLLMStatus: s.setLLMStatus,
+    detectionSettings: s.detectionSettings,
+    setDetectionSettings: s.setDetectionSettings,
   })));

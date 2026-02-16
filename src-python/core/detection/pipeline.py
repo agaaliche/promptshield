@@ -14,6 +14,7 @@ The heavy implementation is split across submodules:
 
 from __future__ import annotations
 
+import bisect
 import logging
 import time
 from typing import Optional
@@ -22,25 +23,11 @@ from core.config import config
 from core.detection.regex_detector import RegexMatch, detect_regex
 from core.detection.ner_detector import (
     NERMatch,
+    NER_LANGUAGE_REGISTRY,
     detect_ner,
     is_ner_available,
     detect_names_heuristic,
     _is_english_text,
-    _is_french_text,
-    _is_italian_text,
-    _is_german_text,
-    _is_spanish_text,
-    _is_dutch_text,
-    detect_ner_french,
-    is_french_ner_available,
-    detect_ner_italian,
-    is_italian_ner_available,
-    detect_ner_german,
-    is_german_ner_available,
-    detect_ner_spanish,
-    is_spanish_ner_available,
-    detect_ner_dutch,
-    is_dutch_ner_available,
 )
 from core.detection.gliner_detector import GLiNERMatch, detect_gliner, is_gliner_available
 from core.detection.bert_detector import (
@@ -68,6 +55,43 @@ from core.detection.merge import (                # noqa: F401
 from core.detection.propagation import propagate_regions_across_pages
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Sorted-interval overlap index (replaces O(n²) linear scans)
+# ---------------------------------------------------------------------------
+
+class SpanIndex:
+    """Sorted interval set with O(log n) overlap queries.
+
+    Internally keeps a list of ``(end, start)`` tuples sorted by *end* so
+    that ``bisect`` can quickly find candidates whose end is past a query
+    start, then checks the start bound to confirm true overlap.
+    """
+
+    __slots__ = ("_by_end",)
+
+    def __init__(self, spans: list[tuple[int, int]] | set[tuple[int, int]] | None = None):
+        # Store as (end, start) sorted by end for fast bisect
+        if spans:
+            self._by_end: list[tuple[int, int]] = sorted((e, s) for s, e in spans)
+        else:
+            self._by_end = []
+
+    def overlaps(self, start: int, end: int) -> bool:
+        """Return True if *any* stored span overlaps ``[start, end)``."""
+        # We need spans where: existing.start < end AND existing.end > start
+        # Since _by_end is sorted by existing.end, skip entries where end <= start
+        idx = bisect.bisect_left(self._by_end, (start + 1,))
+        for i in range(idx, len(self._by_end)):
+            e_end, e_start = self._by_end[i]
+            if e_start < end:  # combined with e_end > start (guaranteed by idx)
+                return True
+        return False
+
+    def add(self, start: int, end: int) -> None:
+        """Insert a span, maintaining sort order."""
+        bisect.insort(self._by_end, (end, start))
 
 # ---------------------------------------------------------------------------
 # Backward-compatibility re-exports
@@ -183,16 +207,12 @@ def detect_pii_on_page(
         t0 = time.perf_counter()
         cross_line_matches = _detect_cross_line_orgs(text)
         if cross_line_matches:
-            existing_spans = [(m.start, m.end) for m in regex_matches]
+            span_idx = SpanIndex([(m.start, m.end) for m in regex_matches])
             added = 0
             for cl in cross_line_matches:
-                overlaps = any(
-                    cl.start < e_end and cl.end > e_start
-                    for e_start, e_end in existing_spans
-                )
-                if not overlaps:
+                if not span_idx.overlaps(cl.start, cl.end):
                     regex_matches.append(cl)
-                    existing_spans.append((cl.start, cl.end))
+                    span_idx.add(cl.start, cl.end)
                     added += 1
             if added:
                 logger.info(
@@ -233,144 +253,39 @@ def detect_pii_on_page(
         t0 = time.perf_counter()
         heuristic_matches = detect_names_heuristic(text)
         if heuristic_matches:
-            existing_spans = {(m.start, m.end) for m in ner_matches}
+            ner_span_idx = SpanIndex([(m.start, m.end) for m in ner_matches])
             for hm in heuristic_matches:
-                overlaps = any(
-                    hm.start < e_end and hm.end > e_start
-                    for e_start, e_end in existing_spans
-                )
-                if not overlaps:
+                if not ner_span_idx.overlaps(hm.start, hm.end):
                     ner_matches.append(hm)
+                    ner_span_idx.add(hm.start, hm.end)
             logger.info(
                 "Page %d: Heuristic added %d name candidates",
                 page_data.page_number, len(heuristic_matches),
             )
         timings["heuristic"] = (time.perf_counter() - t0) * 1000
 
-        # French NER
-        if not _is_english_text(text) and _is_french_text(text) and is_french_ner_available():
-            t0 = time.perf_counter()
-            try:
-                fr_matches = detect_ner_french(text)
-                if fr_matches:
-                    existing_spans = {(m.start, m.end) for m in ner_matches}
-                    added = 0
-                    for fm in fr_matches:
-                        overlaps = any(
-                            fm.start < e_end and fm.end > e_start
-                            for e_start, e_end in existing_spans
-                        )
-                        if not overlaps:
-                            ner_matches.append(fm)
-                            existing_spans.add((fm.start, fm.end))
-                            added += 1
-                    logger.info(
-                        "Page %d: French NER found %d matches, added %d non-overlapping",
-                        page_data.page_number, len(fr_matches), added,
-                    )
-            except Exception as e:
-                logger.error("French NER detection failed: %s", e)
-            timings["french_ner"] = (time.perf_counter() - t0) * 1000
-
-        # Italian NER
-        if not _is_english_text(text) and _is_italian_text(text) and is_italian_ner_available():
-            t0 = time.perf_counter()
-            try:
-                it_matches = detect_ner_italian(text)
-                if it_matches:
-                    existing_spans = {(m.start, m.end) for m in ner_matches}
-                    added = 0
-                    for im in it_matches:
-                        overlaps = any(
-                            im.start < e_end and im.end > e_start
-                            for e_start, e_end in existing_spans
-                        )
-                        if not overlaps:
-                            ner_matches.append(im)
-                            existing_spans.add((im.start, im.end))
-                            added += 1
-                    logger.info(
-                        "Page %d: Italian NER found %d matches, added %d non-overlapping",
-                        page_data.page_number, len(it_matches), added,
-                    )
-            except Exception as e:
-                logger.error("Italian NER detection failed: %s", e)
-            timings["italian_ner"] = (time.perf_counter() - t0) * 1000
-
-        # German NER
-        if not _is_english_text(text) and _is_german_text(text) and is_german_ner_available():
-            t0 = time.perf_counter()
-            try:
-                de_matches = detect_ner_german(text)
-                if de_matches:
-                    existing_spans = {(m.start, m.end) for m in ner_matches}
-                    added = 0
-                    for dm in de_matches:
-                        overlaps = any(
-                            dm.start < e_end and dm.end > e_start
-                            for e_start, e_end in existing_spans
-                        )
-                        if not overlaps:
-                            ner_matches.append(dm)
-                            existing_spans.add((dm.start, dm.end))
-                            added += 1
-                    logger.info(
-                        "Page %d: German NER found %d matches, added %d non-overlapping",
-                        page_data.page_number, len(de_matches), added,
-                    )
-            except Exception as e:
-                logger.error("German NER detection failed: %s", e)
-            timings["german_ner"] = (time.perf_counter() - t0) * 1000
-
-        # Spanish NER
-        if not _is_english_text(text) and _is_spanish_text(text) and is_spanish_ner_available():
-            t0 = time.perf_counter()
-            try:
-                es_matches = detect_ner_spanish(text)
-                if es_matches:
-                    existing_spans = {(m.start, m.end) for m in ner_matches}
-                    added = 0
-                    for em in es_matches:
-                        overlaps = any(
-                            em.start < e_end and em.end > e_start
-                            for e_start, e_end in existing_spans
-                        )
-                        if not overlaps:
-                            ner_matches.append(em)
-                            existing_spans.add((em.start, em.end))
-                            added += 1
-                    logger.info(
-                        "Page %d: Spanish NER found %d matches, added %d non-overlapping",
-                        page_data.page_number, len(es_matches), added,
-                    )
-            except Exception as e:
-                logger.error("Spanish NER detection failed: %s", e)
-            timings["spanish_ner"] = (time.perf_counter() - t0) * 1000
-
-        # Dutch NER
-        if not _is_english_text(text) and _is_dutch_text(text) and is_dutch_ner_available():
-            t0 = time.perf_counter()
-            try:
-                nl_matches = detect_ner_dutch(text)
-                if nl_matches:
-                    existing_spans = {(m.start, m.end) for m in ner_matches}
-                    added = 0
-                    for nm in nl_matches:
-                        overlaps = any(
-                            nm.start < e_end and nm.end > e_start
-                            for e_start, e_end in existing_spans
-                        )
-                        if not overlaps:
-                            ner_matches.append(nm)
-                            existing_spans.add((nm.start, nm.end))
-                            added += 1
-                    logger.info(
-                        "Page %d: Dutch NER found %d matches, added %d non-overlapping",
-                        page_data.page_number, len(nl_matches), added,
-                    )
-            except Exception as e:
-                logger.error("Dutch NER detection failed: %s", e)
-            timings["dutch_ner"] = (time.perf_counter() - t0) * 1000
+        # Multilingual NER (all non-English languages)
+        if not _is_english_text(text):
+            ml_span_idx = SpanIndex([(m.start, m.end) for m in ner_matches])
+            for entry in NER_LANGUAGE_REGISTRY:
+                if entry.is_text(text) and entry.is_available():
+                    t0 = time.perf_counter()
+                    try:
+                        lang_matches = entry.detect(text)
+                        if lang_matches:
+                            added = 0
+                            for lm in lang_matches:
+                                if not ml_span_idx.overlaps(lm.start, lm.end):
+                                    ner_matches.append(lm)
+                                    ml_span_idx.add(lm.start, lm.end)
+                                    added += 1
+                            logger.info(
+                                "Page %d: %s NER found %d matches, added %d non-overlapping",
+                                page_data.page_number, entry.lang_label, len(lang_matches), added,
+                            )
+                    except Exception as e:
+                        logger.error("%s NER detection failed: %s", entry.lang_label, e)
+                    timings[f"{entry.lang_code}_ner"] = (time.perf_counter() - t0) * 1000
 
     # Layer 2b: GLiNER
     gliner_matches: list[GLiNERMatch] = []
@@ -472,60 +387,25 @@ def reanalyze_bbox(
             ner_matches = detect_ner(text)
 
         heuristic_matches = detect_names_heuristic(text)
-        existing_spans = {(m.start, m.end) for m in ner_matches}
+        re_span_idx = SpanIndex([(m.start, m.end) for m in ner_matches])
         for hm in heuristic_matches:
-            if not any(hm.start < ee and hm.end > es for es, ee in existing_spans):
+            if not re_span_idx.overlaps(hm.start, hm.end):
                 ner_matches.append(hm)
+                re_span_idx.add(hm.start, hm.end)
 
-        if not _is_english_text(text) and _is_french_text(text) and is_french_ner_available():
-            try:
-                fr_matches = detect_ner_french(text)
-                existing_spans = {(m.start, m.end) for m in ner_matches}
-                for fm in fr_matches:
-                    if not any(fm.start < ee and fm.end > es for es, ee in existing_spans):
-                        ner_matches.append(fm)
-            except Exception:
-                pass
-
-        if not _is_english_text(text) and _is_italian_text(text) and is_italian_ner_available():
-            try:
-                it_matches = detect_ner_italian(text)
-                existing_spans = {(m.start, m.end) for m in ner_matches}
-                for im in it_matches:
-                    if not any(im.start < ee and im.end > es for es, ee in existing_spans):
-                        ner_matches.append(im)
-            except Exception:
-                pass
-
-        if not _is_english_text(text) and _is_german_text(text) and is_german_ner_available():
-            try:
-                de_matches = detect_ner_german(text)
-                existing_spans = {(m.start, m.end) for m in ner_matches}
-                for dm in de_matches:
-                    if not any(dm.start < ee and dm.end > es for es, ee in existing_spans):
-                        ner_matches.append(dm)
-            except Exception:
-                pass
-
-        if not _is_english_text(text) and _is_spanish_text(text) and is_spanish_ner_available():
-            try:
-                es_matches = detect_ner_spanish(text)
-                existing_spans = {(m.start, m.end) for m in ner_matches}
-                for em in es_matches:
-                    if not any(em.start < ee and em.end > es for es, ee in existing_spans):
-                        ner_matches.append(em)
-            except Exception:
-                pass
-
-        if not _is_english_text(text) and _is_dutch_text(text) and is_dutch_ner_available():
-            try:
-                nl_matches = detect_ner_dutch(text)
-                existing_spans = {(m.start, m.end) for m in ner_matches}
-                for nm in nl_matches:
-                    if not any(nm.start < ee and nm.end > es for es, ee in existing_spans):
-                        ner_matches.append(nm)
-            except Exception:
-                pass
+        # Multilingual NER
+        if not _is_english_text(text):
+            ml_span_idx = SpanIndex([(m.start, m.end) for m in ner_matches])
+            for entry in NER_LANGUAGE_REGISTRY:
+                if entry.is_text(text) and entry.is_available():
+                    try:
+                        lang_matches = entry.detect(text)
+                        for lm in lang_matches:
+                            if not ml_span_idx.overlaps(lm.start, lm.end):
+                                ner_matches.append(lm)
+                                ml_span_idx.add(lm.start, lm.end)
+                    except Exception:
+                        pass
 
     llm_matches: list[LLMMatch] = []
     if config.llm_detection_enabled and llm_engine is not None:

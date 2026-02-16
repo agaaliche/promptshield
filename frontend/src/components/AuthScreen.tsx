@@ -9,7 +9,8 @@
  */
 
 import { useState, useCallback } from "react";
-import { useAppStore } from "../store";
+import { useLicenseStore, useSnackbarStore } from "../store";
+import { toErrorMessage } from "../errorUtils";
 import {
   storeLocalLicense,
   signInOnline,
@@ -20,7 +21,8 @@ import type { LicenseStatus } from "../types";
 type Mode = "signin" | "key";
 
 export default function AuthScreen() {
-  const { setLicenseStatus, setLicenseChecked, addSnackbar } = useAppStore();
+  const { setLicenseStatus, setLicenseChecked } = useLicenseStore();
+  const { addSnackbar } = useSnackbarStore();
 
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
@@ -44,8 +46,8 @@ export default function AuthScreen() {
       } else {
         setError(status.error ?? "Activation failed");
       }
-    } catch (e: any) {
-      setError(e.message ?? "Sign-in failed");
+    } catch (e: unknown) {
+      setError(toErrorMessage(e) ?? "Sign-in failed");
     } finally {
       setLoading(false);
     }
@@ -64,9 +66,9 @@ export default function AuthScreen() {
       } else {
         setError(status.error ?? "Activation failed");
       }
-    } catch (e: any) {
-      if (e.message !== "Sign-in cancelled") {
-        setError(e.message ?? "Google sign-in failed");
+    } catch (e: unknown) {
+      if (toErrorMessage(e) !== "Sign-in cancelled") {
+        setError(toErrorMessage(e) ?? "Google sign-in failed");
       }
     } finally {
       setLoading(false);
@@ -88,8 +90,8 @@ export default function AuthScreen() {
       } else {
         setError(status.error ?? "Invalid or expired license key");
       }
-    } catch (e: any) {
-      setError(e.message ?? "Failed to apply license key");
+    } catch (e: unknown) {
+      setError(toErrorMessage(e) ?? "Failed to apply license key");
     } finally {
       setLoading(false);
     }

@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api", tags=["settings"])
 class SettingsUpdate(BaseModel):
     """Validated partial settings update."""
     regex_enabled: Optional[bool] = None
+    custom_patterns_enabled: Optional[bool] = None
     ner_enabled: Optional[bool] = None
     llm_detection_enabled: Optional[bool] = None
     confidence_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
@@ -162,6 +163,239 @@ async def save_label_config(labels: list[dict]) -> dict[str, Any]:
     store = get_store()
     store.save_label_config(validated)
     return {"status": "ok", "count": len(validated)}
+
+
+# ---------------------------------------------------------------------------
+# Custom regex patterns
+# ---------------------------------------------------------------------------
+
+class CustomPatternCreate(BaseModel):
+    """Schema for creating/updating a custom pattern."""
+    name: str = Field(..., min_length=1, max_length=100)
+    pattern: Optional[str] = Field(default=None, max_length=2000)
+    template: Optional[list[dict]] = None  # [{type: "letters"|"digits"|"separator", count?: int, value?: str}]
+    pii_type: str = Field(default="CUSTOM", max_length=50)
+    enabled: bool = True
+    case_sensitive: bool = False
+    confidence: float = Field(default=0.85, ge=0.0, le=1.0)
+
+
+class PatternTestRequest(BaseModel):
+    """Schema for testing a pattern against sample text."""
+    pattern: str = Field(..., min_length=1, max_length=2000)
+    test_text: str = Field(..., max_length=10000)
+    case_sensitive: bool = False
+
+
+def _template_to_regex(template: list[dict]) -> str:
+    """Convert a template definition to a regex pattern.
+    
+    Template blocks:
+    - {type: "letters", count: 3} → [A-Za-z]{3}
+    - {type: "LETTERS", count: 3} → [A-Z]{3}  (uppercase only)
+    - {type: "digits", count: 5} → \\d{5}
+    - {type: "alphanumeric", count: 4} → [A-Za-z0-9]{4}
+    - {type: "separator", value: "-"} → \\-
+    - {type: "any", count: 2} → .{2}
+    """
+    import re as re_mod
+    parts = []
+    for block in template:
+        btype = block.get("type", "")
+        count = block.get("count", 1)
+        value = block.get("value", "")
+        
+        if btype == "letters":
+            parts.append(f"[A-Za-z]{{{count}}}")
+        elif btype == "LETTERS":
+            parts.append(f"[A-Z]{{{count}}}")
+        elif btype == "digits":
+            parts.append(f"\\d{{{count}}}")
+        elif btype == "alphanumeric":
+            parts.append(f"[A-Za-z0-9]{{{count}}}")
+        elif btype == "separator":
+            parts.append(re_mod.escape(value))
+        elif btype == "any":
+            parts.append(f".{{{count}}}")
+        elif btype == "literal":
+            parts.append(re_mod.escape(value))
+    
+    return "".join(parts)
+
+
+@router.get("/settings/patterns")
+async def get_custom_patterns() -> list[dict[str, Any]]:
+    """Get all custom regex patterns."""
+    store = get_store()
+    return store.load_custom_patterns()
+
+
+@router.put("/settings/patterns")
+async def save_custom_patterns(patterns: list[dict]) -> dict[str, Any]:
+    """Replace all custom patterns.
+    
+    Validates each pattern entry has required fields and valid regex.
+    """
+    import re as re_mod
+    import uuid
+    
+    _REQUIRED_KEYS = {"name"}
+    _ALLOWED_KEYS = {"id", "name", "pattern", "template", "pii_type", "enabled", "case_sensitive", "confidence"}
+    validated: list[dict] = []
+    
+    for entry in patterns:
+        if not isinstance(entry, dict) or not _REQUIRED_KEYS.issubset(entry.keys()):
+            raise HTTPException(400, f"Each pattern must have at least: {_REQUIRED_KEYS}")
+        
+        # Only keep allowed keys
+        clean = {k: v for k, v in entry.items() if k in _ALLOWED_KEYS}
+        
+        # Ensure ID exists
+        if "id" not in clean:
+            clean["id"] = str(uuid.uuid4())[:8]
+        
+        # Validate regex if provided
+        pattern_str = clean.get("pattern")
+        template = clean.get("template")
+        
+        if pattern_str:
+            try:
+                re_mod.compile(pattern_str)
+            except re_mod.error as e:
+                raise HTTPException(400, f"Invalid regex in pattern '{clean['name']}': {e}")
+        elif template:
+            # Convert template to regex and validate
+            try:
+                generated = _template_to_regex(template)
+                re_mod.compile(generated)
+                clean["_generated_pattern"] = generated
+            except Exception as e:
+                raise HTTPException(400, f"Invalid template in pattern '{clean['name']}': {e}")
+        else:
+            raise HTTPException(400, f"Pattern '{clean['name']}' must have either 'pattern' or 'template'")
+        
+        # Set defaults
+        clean.setdefault("pii_type", "CUSTOM")
+        clean.setdefault("enabled", True)
+        clean.setdefault("case_sensitive", False)
+        clean.setdefault("confidence", 0.85)
+        
+        validated.append(clean)
+    
+    store = get_store()
+    store.save_custom_patterns(validated)
+    
+    # Notify regex detector to reload patterns
+    try:
+        from core.detection.regex_detector import reload_custom_patterns
+        reload_custom_patterns()
+    except Exception:
+        pass  # Non-fatal
+    
+    return {"status": "ok", "count": len(validated)}
+
+
+@router.post("/settings/patterns")
+async def add_custom_pattern(body: CustomPatternCreate) -> dict[str, Any]:
+    """Add a new custom pattern."""
+    import re as re_mod
+    import uuid
+    
+    store = get_store()
+    patterns = store.load_custom_patterns()
+    
+    # Build the new pattern entry
+    new_pattern: dict[str, Any] = {
+        "id": str(uuid.uuid4())[:8],
+        "name": body.name,
+        "pii_type": body.pii_type,
+        "enabled": body.enabled,
+        "case_sensitive": body.case_sensitive,
+        "confidence": body.confidence,
+    }
+    
+    if body.pattern:
+        try:
+            re_mod.compile(body.pattern)
+        except re_mod.error as e:
+            raise HTTPException(400, f"Invalid regex: {e}")
+        new_pattern["pattern"] = body.pattern
+    elif body.template:
+        try:
+            generated = _template_to_regex(body.template)
+            re_mod.compile(generated)
+            new_pattern["template"] = body.template
+            new_pattern["_generated_pattern"] = generated
+        except Exception as e:
+            raise HTTPException(400, f"Invalid template: {e}")
+    else:
+        raise HTTPException(400, "Must provide either 'pattern' or 'template'")
+    
+    patterns.append(new_pattern)
+    store.save_custom_patterns(patterns)
+    
+    # Notify regex detector to reload
+    try:
+        from core.detection.regex_detector import reload_custom_patterns
+        reload_custom_patterns()
+    except Exception:
+        pass
+    
+    return {"status": "ok", "pattern": new_pattern}
+
+
+@router.delete("/settings/patterns/{pattern_id}")
+async def delete_custom_pattern(pattern_id: str) -> dict[str, Any]:
+    """Delete a custom pattern by ID."""
+    store = get_store()
+    patterns = store.load_custom_patterns()
+    
+    original_count = len(patterns)
+    patterns = [p for p in patterns if p.get("id") != pattern_id]
+    
+    if len(patterns) == original_count:
+        raise HTTPException(404, f"Pattern '{pattern_id}' not found")
+    
+    store.save_custom_patterns(patterns)
+    
+    # Notify regex detector to reload
+    try:
+        from core.detection.regex_detector import reload_custom_patterns
+        reload_custom_patterns()
+    except Exception:
+        pass
+    
+    return {"status": "ok", "deleted": pattern_id}
+
+
+@router.post("/settings/patterns/test")
+async def test_pattern(body: PatternTestRequest) -> dict[str, Any]:
+    """Test a regex pattern against sample text.
+    
+    Returns all matches found in the text.
+    """
+    import re as re_mod
+    
+    try:
+        flags = 0 if body.case_sensitive else re_mod.IGNORECASE
+        compiled = re_mod.compile(body.pattern, flags)
+    except re_mod.error as e:
+        raise HTTPException(400, f"Invalid regex: {e}")
+    
+    matches = []
+    for m in compiled.finditer(body.test_text):
+        matches.append({
+            "text": m.group(),
+            "start": m.start(),
+            "end": m.end(),
+        })
+    
+    return {
+        "status": "ok",
+        "pattern": body.pattern,
+        "match_count": len(matches),
+        "matches": matches,
+    }
 
 
 # ---------------------------------------------------------------------------

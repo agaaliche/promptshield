@@ -84,13 +84,13 @@ async def detect_pii(doc_id: str) -> dict[str, Any]:
         engine = get_active_llm_engine()
         total_pages = len(doc.pages)
 
-        # Detect language once from the first non-trivial page (P2 optimisation)
+        # When a specific language is configured, pass it through so
+        # per-page detection is skipped.  In auto mode leave it None so
+        # each page detects its own language independently (supports
+        # mixed-language documents).
         doc_language: str | None = None
-        if not config.detection_language or config.detection_language == "auto":
-            for p in doc.pages:
-                if p.full_text and len(p.full_text.strip()) >= 100:
-                    doc_language = detect_language(p.full_text)
-                    break
+        if config.detection_language and config.detection_language != "auto":
+            doc_language = config.detection_language
 
         # Initialize progress tracker
         detection_progress[doc_id] = {
@@ -264,13 +264,12 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
 
             total_pages = len(pages_to_scan)
 
-            # Detect language once (P2 optimisation)
+            # When a specific language is configured, pass it through.
+            # In auto mode leave None so each page detects independently
+            # (correct for mixed-language documents).
             _redetect_lang: str | None = None
-            if not config.detection_language or config.detection_language == "auto":
-                for p in pages_to_scan:
-                    if p.full_text and len(p.full_text.strip()) >= 100:
-                        _redetect_lang = _detect_lang_r(p.full_text)
-                        break
+            if config.detection_language and config.detection_language != "auto":
+                _redetect_lang = config.detection_language
 
             # Initialize progress tracker (same format as initial detect)
             detection_progress[doc_id] = {
@@ -644,13 +643,11 @@ async def reset_detection(doc_id: str) -> dict[str, Any]:
         engine = get_active_llm_engine()
         total_pages = len(doc.pages)
 
-        # Detect language once (P2 optimisation)
+        # Per-page language detection: only force a single language when
+        # the user explicitly chose one (not "auto").
         _reset_lang: str | None = None
-        if not config.detection_language or config.detection_language == "auto":
-            for p in doc.pages:
-                if p.full_text and len(p.full_text.strip()) >= 100:
-                    _reset_lang = _detect_lang(p.full_text)
-                    break
+        if config.detection_language and config.detection_language != "auto":
+            _reset_lang = config.detection_language
 
         detection_progress[doc_id] = {
             "doc_id": doc_id,

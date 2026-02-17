@@ -17,6 +17,7 @@ SUPPORTED_LANGUAGES = ("en", "es", "fr", "de", "it", "nl", "pt")
 # Model routing for auto mode
 AUTO_MODEL_ENGLISH = "Isotonic/distilbert_finetuned_ai4privacy_v2"
 AUTO_MODEL_MULTILINGUAL = "iiiorg/piiranha-v1-detect-personal-information"
+AUTO_MODEL_PORTUGUESE = "Babelscape/wikineural-multilingual-ner"
 
 _SAMPLE_SIZE = 2_000          # chars to sample
 _MIN_WORDS = 20               # need this many tokens to judge
@@ -140,5 +141,8 @@ def resolve_auto_model(text: str) -> tuple[str, str]:
     lang = detect_language(text)
     if lang == "en":
         return AUTO_MODEL_ENGLISH, lang
+    elif lang == "pt":
+        # Piiranha was not trained on Portuguese; WikiNEural covers PT
+        return AUTO_MODEL_PORTUGUESE, lang
     else:
         return AUTO_MODEL_MULTILINGUAL, lang

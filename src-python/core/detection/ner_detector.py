@@ -31,6 +31,7 @@ _IT_STOP_WORDS: set[str] | None = None
 _DE_STOP_WORDS: set[str] | None = None
 _ES_STOP_WORDS: set[str] | None = None
 _NL_STOP_WORDS: set[str] | None = None
+_PT_STOP_WORDS: set[str] | None = None
 
 
 def _get_en_stop_words() -> set[str]:
@@ -80,6 +81,14 @@ def _get_nl_stop_words() -> set[str]:
         _NL_STOP_WORDS = STOP_WORDS
     return _NL_STOP_WORDS
 
+
+def _get_pt_stop_words() -> set[str]:
+    global _PT_STOP_WORDS
+    if _PT_STOP_WORDS is None:
+        from spacy.lang.pt.stop_words import STOP_WORDS
+        _PT_STOP_WORDS = STOP_WORDS
+    return _PT_STOP_WORDS
+
 # ---------------------------------------------------------------------------
 # Lightweight language detection — skip English NER on non-English text
 # ---------------------------------------------------------------------------
@@ -92,6 +101,7 @@ _IT_STOP_LOWER: set[str] | None = None
 _DE_STOP_LOWER: set[str] | None = None
 _ES_STOP_LOWER: set[str] | None = None
 _NL_STOP_LOWER: set[str] | None = None
+_PT_STOP_LOWER: set[str] | None = None
 
 
 def _get_en_stop_lower() -> set[str]:
@@ -134,6 +144,13 @@ def _get_nl_stop_lower() -> set[str]:
     if _NL_STOP_LOWER is None:
         _NL_STOP_LOWER = {w.lower() for w in _get_nl_stop_words()}
     return _NL_STOP_LOWER
+
+
+def _get_pt_stop_lower() -> set[str]:
+    global _PT_STOP_LOWER
+    if _PT_STOP_LOWER is None:
+        _PT_STOP_LOWER = {w.lower() for w in _get_pt_stop_words()}
+    return _PT_STOP_LOWER
 
 
 _LANG_SAMPLE_SIZE = 2000  # characters to sample for language check
@@ -192,6 +209,10 @@ def _is_spanish_text(text: str) -> bool:
 
 def _is_dutch_text(text: str) -> bool:
     return _is_language(text, _get_nl_stop_lower(), 0.12, "Dutch")
+
+
+def _is_portuguese_text(text: str) -> bool:
+    return _is_language(text, _get_pt_stop_lower(), 0.12, "Portuguese")
 
 
 class NERMatch(NamedTuple):
@@ -295,6 +316,10 @@ _active_es_model_name: str = ""
 _nlp_nl = None
 _active_nl_model_name: str = ""
 
+# Portuguese spaCy model (lazy-loaded separately)
+_nlp_pt = None
+_active_pt_model_name: str = ""
+
 # Lock protecting lazy model initialisation (all languages)
 _model_lock = threading.Lock()
 
@@ -338,6 +363,13 @@ _NL_MODEL_CASCADE: list[str] = [
     "nl_core_news_lg",
     "nl_core_news_md",
     "nl_core_news_sm",
+]
+
+# Portuguese model cascade (best available → smallest fallback)
+_PT_MODEL_CASCADE: list[str] = [
+    "pt_core_news_lg",
+    "pt_core_news_md",
+    "pt_core_news_sm",
 ]
 
 # Chunking parameters (in characters)
@@ -523,6 +555,10 @@ def _get_active_es_model() -> str:
 
 def _get_active_nl_model() -> str:
     return _active_nl_model_name
+
+
+def _get_active_pt_model() -> str:
+    return _active_pt_model_name
 
 
 _EN_CONFIG = _LangNERConfig(
@@ -1445,6 +1481,150 @@ def detect_ner_dutch(text: str) -> list[NERMatch]:
 
 
 # ---------------------------------------------------------------------------
+# Portuguese spaCy NER
+# ---------------------------------------------------------------------------
+
+_SPACY_PT_LABEL_MAP: dict[str, PIIType] = {
+    "PER": PIIType.PERSON,       # pt models older versions
+    "PERSON": PIIType.PERSON,    # pt models newer versions
+    "ORG": PIIType.ORG,
+    "LOC": PIIType.LOCATION,
+    "GPE": PIIType.LOCATION,
+}
+
+_PT_PERSON_STOPWORDS: set[str] = {
+    "o", "a", "os", "as",
+    "senhor", "senhora", "sr", "sra", "dr", "dra",
+    "ele", "ela", "eles", "elas", "nós", "vós",
+    "seu", "sua", "seus", "suas",
+    "meu", "minha", "meus", "minhas",
+    "este", "esta", "estes", "estas",
+    "isso", "isto", "aquilo",
+    "página", "seção", "tabela", "figura", "capítulo", "anexo",
+    "total", "valor", "saldo", "data", "número", "tipo",
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+    "segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo",
+    # Financial terms
+    "balanço", "ativo", "passivo", "patrimônio",
+    "lucro", "prejuízo", "receita",
+    "depreciação", "amortização",
+    "provisão", "provisões",
+    "dívida", "crédito", "débito",
+    "capital", "imposto", "impostos",
+    "dividendo", "juro", "juros",
+    "resultado", "resultados",
+}
+
+_PT_ORG_STOPWORDS: set[str] = {
+    "departamento", "seção", "divisão",
+    "comissão", "diretoria", "conselho", "comitê",
+    "artigo", "cláusula", "anexo", "apêndice",
+    "tabela", "figura", "gráfico", "diagrama", "resumo",
+    "lei", "decreto", "estatuto", "regulamento",
+    "acordo", "contrato", "tratado",
+    "relatório", "sumário",
+    # Financial terms
+    "balanço", "ativo", "passivo",
+    "patrimônio", "líquido",
+    "lucro", "prejuízo", "receita",
+    "depreciação", "amortização",
+    "provisão", "provisões",
+    "demonstração", "financeira",
+    "exercício", "período",
+    "crédito", "débito",
+    "dívida", "dívidas",
+    "investimento", "investimentos",
+    "empréstimo", "empréstimos",
+    "estoque", "estoques",
+}
+
+
+def _load_portuguese_model() -> object | None:
+    global _nlp_pt, _active_pt_model_name
+    if _nlp_pt is not None:
+        return _nlp_pt
+    with _model_lock:
+        if _nlp_pt is not None:
+            return _nlp_pt
+        import spacy
+        for model_name in _PT_MODEL_CASCADE:
+            try:
+                _nlp_pt = spacy.load(model_name)
+                _active_pt_model_name = model_name
+                logger.info(f"Loaded Portuguese spaCy model '{model_name}'")
+                return _nlp_pt
+            except OSError:
+                logger.info(f"Portuguese spaCy model '{model_name}' not installed — trying next")
+        logger.warning("No Portuguese spaCy model found. Install with: python -m spacy download pt_core_news_lg")
+        return None
+
+
+def is_portuguese_ner_available() -> bool:
+    try:
+        return _load_portuguese_model() is not None
+    except BaseException:
+        return False
+
+
+def _is_false_positive_person_pt(text: str) -> bool:
+    return _is_false_positive_person_generic(text, _PT_PERSON_STOPWORDS)
+
+
+def _is_false_positive_org_pt(text: str) -> bool:
+    return _is_false_positive_org_generic(text, _PT_ORG_STOPWORDS, _GENERIC_STOPWORDS)
+
+
+_PT_CONFIG = _LangNERConfig(
+    label_map=_SPACY_PT_LABEL_MAP,
+    article_prefixes=(
+        "o ", "O ", "a ", "A ", "os ", "Os ", "as ", "As ",
+        "um ", "Um ", "uma ", "Uma ",
+    ),
+    strip_title_suffixes=False,
+    fp_person=_is_false_positive_person_pt,
+    fp_org=_is_false_positive_org_pt,
+    generic_stopwords_filter=False,
+    active_model_name=_get_active_pt_model,
+    base_confidence={
+        PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.25,
+    },
+    person_multiword_cap=0.92,
+    org_3word_cap=0.85,
+    person_single_penalty=0.18,
+    org_single_floor=0.30,
+    model_boost_tiers=(("_lg", 0.05, 0.95), ("_md", 0.03, 0.92)),
+)
+
+
+def _process_chunk_pt(nlp, text: str, global_offset: int) -> list[NERMatch]:
+    return _process_chunk_generic(nlp, text, global_offset, _PT_CONFIG)
+
+
+def detect_ner_portuguese(text: str) -> list[NERMatch]:
+    """Run Portuguese spaCy NER on text."""
+    if not _is_portuguese_text(text):
+        logger.info("Text does not appear to be Portuguese — skipping Portuguese NER")
+        return []
+    nlp = _load_portuguese_model()
+    if nlp is None:
+        logger.info("No Portuguese spaCy model available — skipping Portuguese NER")
+        return []
+    if len(text) <= _CHUNK_SIZE:
+        return _process_chunk_pt(nlp, text, global_offset=0)
+    all_matches: list[NERMatch] = []
+    offset = 0
+    while offset < len(text):
+        end = min(offset + _CHUNK_SIZE, len(text))
+        chunk = text[offset:end]
+        all_matches.extend(_process_chunk_pt(nlp, chunk, global_offset=offset))
+        offset += _CHUNK_SIZE - _CHUNK_OVERLAP
+        if end == len(text):
+            break
+    return _deduplicate_matches(all_matches)
+
+
+# ---------------------------------------------------------------------------
 # NER language registry — unified dispatch for multilingual NER
 # ---------------------------------------------------------------------------
 
@@ -1464,6 +1644,7 @@ NER_LANGUAGE_REGISTRY: list[NERLanguageEntry] = [
     NERLanguageEntry("de", "German", _is_german_text, is_german_ner_available, detect_ner_german),
     NERLanguageEntry("es", "Spanish", _is_spanish_text, is_spanish_ner_available, detect_ner_spanish),
     NERLanguageEntry("nl", "Dutch", _is_dutch_text, is_dutch_ner_available, detect_ner_dutch),
+    NERLanguageEntry("pt", "Portuguese", _is_portuguese_text, is_portuguese_ner_available, detect_ner_portuguese),
 ]
 
 
@@ -1641,6 +1822,7 @@ def unload_models() -> None:
     global _nlp_de, _active_de_model_name
     global _nlp_es, _active_es_model_name
     global _nlp_nl, _active_nl_model_name
+    global _nlp_pt, _active_pt_model_name
     with _model_lock:
         _nlp = None
         _active_model_name = ""
@@ -1654,4 +1836,6 @@ def unload_models() -> None:
         _active_es_model_name = ""
         _nlp_nl = None
         _active_nl_model_name = ""
+        _nlp_pt = None
+        _active_pt_model_name = ""
     logger.info("spaCy NER models unloaded")

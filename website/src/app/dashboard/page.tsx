@@ -7,6 +7,7 @@ import { signOut, auth } from "@/lib/firebase";
 import { getLicenseStatus, getOrCreateUser, getMachines, deactivateMachine } from "@/lib/licensing";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import Link from "next/link";
 import {
   Shield,
   Key,
@@ -20,7 +21,12 @@ import {
   Crown,
   Clock,
   AlertCircle,
+  Settings,
 } from "lucide-react";
+
+const ADMIN_EMAILS = new Set(
+  (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "").split(",").map((e) => e.trim()).filter(Boolean)
+);
 
 interface LicenseInfo {
   plan: string;
@@ -30,9 +36,12 @@ interface LicenseInfo {
 }
 
 interface MachineInfo {
-  machine_id: string;
+  id: string;
+  machine_fingerprint: string;
+  machine_name?: string | null;
   activated_at: string;
-  last_seen?: string;
+  last_validated?: string | null;
+  is_active: boolean;
 }
 
 function DashboardContent() {
@@ -139,7 +148,7 @@ function DashboardContent() {
     if (!token) return;
     try {
       await deactivateMachine(token, machineId);
-      setMachines((prev) => prev.filter((m) => m.machine_id !== machineId));
+      setMachines((prev) => prev.filter((m) => m.id !== machineId));
     } catch (err: unknown) {
       setError((err as Error).message || "Failed to deactivate machine");
     }
@@ -203,13 +212,24 @@ function DashboardContent() {
                 Welcome back, {user?.email}
               </p>
             </div>
-            <button
-              onClick={handleSignOut}
-              className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm text-dark-300 transition hover:bg-white/10 hover:text-white"
-            >
-              <LogOut className="h-4 w-4" />
-              Sign Out
-            </button>
+            <div className="flex items-center gap-3">
+              {user?.email && ADMIN_EMAILS.has(user.email) && (
+                <Link
+                  href="/admin"
+                  className="inline-flex items-center gap-2 rounded-lg border border-brand-600/30 bg-brand-600/10 px-4 py-2 text-sm font-medium text-brand-400 transition hover:bg-brand-600/20"
+                >
+                  <Settings className="h-4 w-4" />
+                  Admin
+                </Link>
+              )}
+              <button
+                onClick={handleSignOut}
+                className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm text-dark-300 transition hover:bg-white/10 hover:text-white"
+              >
+                <LogOut className="h-4 w-4" />
+                Sign Out
+              </button>
+            </div>
           </div>
 
           {error && (
@@ -313,12 +333,12 @@ function DashboardContent() {
               <div className="space-y-3">
                 {machines.map((m) => (
                   <div
-                    key={m.machine_id}
+                    key={m.id}
                     className="flex items-center justify-between rounded-xl border border-white/5 bg-dark-900 px-4 py-3"
                   >
                     <div>
                       <div className="text-sm font-medium">
-                        {m.machine_id.slice(0, 16)}...
+                        {m.machine_name || m.machine_fingerprint?.slice(0, 16) + '…'}
                       </div>
                       <div className="text-xs text-dark-500">
                         Activated{" "}
@@ -326,7 +346,7 @@ function DashboardContent() {
                       </div>
                     </div>
                     <button
-                      onClick={() => handleDeactivateMachine(m.machine_id)}
+                      onClick={() => handleDeactivateMachine(m.id)}
                       className="rounded-lg p-2 text-dark-500 transition hover:bg-red-500/10 hover:text-red-400"
                       title="Deactivate this device"
                     >

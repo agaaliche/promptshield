@@ -1,6 +1,6 @@
 /** Document viewer — renders page bitmap with PII highlight overlays. */
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -193,6 +193,65 @@ export default function DocumentViewer() {
     setCopiedRegions, setStatusMessage, handlePasteRegions, batchDeleteRegions,
   });
 
+  // ── Responsive sidebar: shrink right sidebar first when window gets narrow ──
+  const RIGHT_SIDEBAR_MIN_WIDTH = 200;
+  const TOOLBAR_MIN_CONTENT_WIDTH = 400; // Minimum width for toolbar buttons + page nav + zoom
+  const preferredSidebarWidthRef = useRef(rightSidebarWidth);
+  const currentSidebarWidthRef = useRef(rightSidebarWidth);
+
+  // Keep ref in sync with actual width
+  useEffect(() => {
+    currentSidebarWidthRef.current = rightSidebarWidth;
+  }, [rightSidebarWidth]);
+
+  // Track preferred width when user manually resizes (drag ends)
+  useEffect(() => {
+    if (!isSidebarDragging && rightSidebarWidth > RIGHT_SIDEBAR_MIN_WIDTH) {
+      preferredSidebarWidthRef.current = rightSidebarWidth;
+    }
+  }, [rightSidebarWidth, isSidebarDragging]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (sidebarCollapsed || isSidebarDragging) return; // Don't adjust when collapsed or user is dragging
+      
+      const windowWidth = window.innerWidth;
+      const leftSpace = leftSidebarWidth;
+      const availableForToolbarAndSidebar = windowWidth - leftSpace;
+      const neededForToolbar = TOOLBAR_MIN_CONTENT_WIDTH;
+      const maxSidebarWidth = availableForToolbarAndSidebar - neededForToolbar;
+      const currentWidth = currentSidebarWidthRef.current;
+      
+      // If there's plenty of space, restore to preferred width
+      if (maxSidebarWidth >= preferredSidebarWidthRef.current) {
+        if (currentWidth < preferredSidebarWidthRef.current) {
+          setRightSidebarWidth(preferredSidebarWidthRef.current);
+        }
+        return;
+      }
+      
+      // If space is limited, shrink sidebar to max allowed (but not below minimum)
+      if (maxSidebarWidth >= RIGHT_SIDEBAR_MIN_WIDTH) {
+        // Always set to maxSidebarWidth when constrained
+        if (currentWidth !== maxSidebarWidth) {
+          setRightSidebarWidth(maxSidebarWidth);
+        }
+      } else {
+        // At minimum sidebar width, let toolbar compress
+        if (currentWidth > RIGHT_SIDEBAR_MIN_WIDTH) {
+          setRightSidebarWidth(RIGHT_SIDEBAR_MIN_WIDTH);
+        }
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    // Only run initial check if not dragging
+    if (!isSidebarDragging) {
+      handleResize();
+    }
+    return () => window.removeEventListener('resize', handleResize);
+  }, [sidebarCollapsed, leftSidebarWidth, isSidebarDragging, setRightSidebarWidth]);
+
   if (!doc) {
     // When uploading the very first file, show the progress dialog even though
     // no document object exists yet.
@@ -312,82 +371,83 @@ export default function DocumentViewer() {
           }
         >
           <Shield size={14} />
-          Export secure file
+          Export
         </button>
 
-        {/* Spacer */}
-        <div style={{ flex: 1 }} />
-
-        {/* Page navigation + Zoom — centered */}
+        {/* Center section: Page navigation + Zoom */}
         <div style={{
-          position: "fixed",
-          left: "50%",
-          transform: "translateX(-50%)",
+          flex: 1,
           display: "flex",
+          justifyContent: "center",
           alignItems: "center",
-          gap: 4,
-          pointerEvents: "auto",
-          zIndex: 41,
+          minWidth: 0,
+          overflow: "hidden",
         }}>
-          {pageCount > 1 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <button className="btn-ghost btn-sm" onClick={() => setActivePage(1)} disabled={activePage <= 1} title="First page" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
-                <ChevronsLeft size={16} />
-              </button>
-              <button className="btn-ghost btn-sm" onClick={() => setActivePage(Math.max(1, activePage - 1))} disabled={activePage <= 1} title="Previous page" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
-                <ChevronLeft size={16} />
-              </button>
-              <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 4px" }}>
-                <input
-                  type="number"
-                  min={1}
-                  max={pageCount}
-                  value={activePage}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (!isNaN(val) && val >= 1 && val <= pageCount) setActivePage(val);
-                  }}
-                  onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                  style={{
-                    width: 36, padding: "3px 4px", fontSize: 13, fontWeight: 600, textAlign: "center",
-                    background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-                    borderRadius: 4, color: "var(--text-primary)", outline: "none",
-                    MozAppearance: "textfield",
-                  }}
-                  title="Go to page"
-                />
-                <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>/</span>
-                <span style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500 }}>{pageCount}</span>
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+          }}>
+            {pageCount > 1 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <button className="btn-ghost btn-sm" onClick={() => setActivePage(1)} disabled={activePage <= 1} title="First page" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
+                  <ChevronsLeft size={16} />
+                </button>
+                <button className="btn-ghost btn-sm" onClick={() => setActivePage(Math.max(1, activePage - 1))} disabled={activePage <= 1} title="Previous page" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
+                  <ChevronLeft size={16} />
+                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 4px" }}>
+                  <input
+                    type="number"
+                    min={1}
+                    max={pageCount}
+                    value={activePage}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      if (!isNaN(val) && val >= 1 && val <= pageCount) setActivePage(val);
+                    }}
+                    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                    style={{
+                      width: 36, padding: "3px 4px", fontSize: 13, fontWeight: 600, textAlign: "center",
+                      background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                      borderRadius: 4, color: "var(--text-primary)", outline: "none",
+                      MozAppearance: "textfield",
+                    }}
+                    title="Go to page"
+                  />
+                  <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>/</span>
+                  <span style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500 }}>{pageCount}</span>
+                </div>
+                <button className="btn-ghost btn-sm" onClick={() => setActivePage(Math.min(pageCount, activePage + 1))} disabled={activePage >= pageCount} title="Next page" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
+                  <ChevronRight size={16} />
+                </button>
+                <button className="btn-ghost btn-sm" onClick={() => setActivePage(pageCount)} disabled={activePage >= pageCount} title="Last page" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
+                  <ChevronsRight size={16} />
+                </button>
               </div>
-              <button className="btn-ghost btn-sm" onClick={() => setActivePage(Math.min(pageCount, activePage + 1))} disabled={activePage >= pageCount} title="Next page" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
-                <ChevronRight size={16} />
+            )}
+
+            {/* Zoom controls */}
+            <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: pageCount > 1 ? 25 : 0 }}>
+              <button className="btn-ghost btn-sm" onClick={() => setZoom(Math.max(0.1, zoom - 0.1))} title="Zoom out" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
+                <ZoomOut size={16} />
               </button>
-              <button className="btn-ghost btn-sm" onClick={() => setActivePage(pageCount)} disabled={activePage >= pageCount} title="Last page" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
-                <ChevronsRight size={16} />
+              <span
+                style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", minWidth: 40, textAlign: "center", cursor: "pointer" }}
+                onClick={() => setZoom(1)}
+                title="Reset zoom to 100%"
+              >
+                {Math.round(zoom * 100)}%
+              </span>
+              <button className="btn-ghost btn-sm" onClick={() => setZoom(zoom + 0.1)} title="Zoom in" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
+                <ZoomIn size={16} />
               </button>
             </div>
-          )}
-
-          {/* Zoom controls */}
-          <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: pageCount > 1 ? 25 : 0 }}>
-            <button className="btn-ghost btn-sm" onClick={() => setZoom(Math.max(0.1, zoom - 0.1))} title="Zoom out" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
-              <ZoomOut size={16} />
-            </button>
-            <span
-              style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", minWidth: 40, textAlign: "center", cursor: "pointer" }}
-              onClick={() => setZoom(1)}
-              title="Reset zoom to 100%"
-            >
-              {Math.round(zoom * 100)}%
-            </span>
-            <button className="btn-ghost btn-sm" onClick={() => setZoom(zoom + 0.1)} title="Zoom in" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
-              <ZoomIn size={16} />
-            </button>
           </div>
         </div>
 
         {/* User menu */}
-        <div style={{ position: "fixed", right: (sidebarCollapsed ? 60 : rightSidebarWidth) + 12, top: "inherit", display: "flex", alignItems: "center", zIndex: 41, pointerEvents: "auto" }}>
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
           <UserMenu />
         </div>
       </div>

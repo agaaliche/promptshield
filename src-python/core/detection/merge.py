@@ -222,7 +222,7 @@ def _merge_detections(
     #   1. Enclosed in quotation marks ("...", «...», '...', etc.)
     #   2. Rendered in bold or italic font
     #   3. Horizontally centred on the page (blank margins both sides)
-    _BOOST_VISUAL = 0.12
+    _BOOST_VISUAL = 0.15
 
     # Pre-compute block offsets once for bold/italic + centring checks
     _vg_block_offsets = _compute_block_offsets(
@@ -231,7 +231,13 @@ def _merge_detections(
 
     # Build a set of character ranges enclosed in quotation marks
     _QUOTE_PAIRS = [('"', '"'), ("'", "'"), ('\u201c', '\u201d'),
-                    ('\u2018', '\u2019'), ('\u00ab', '\u00bb')]
+                    ('\u201e', '\u201c'),  # German „...“
+                    ('\u201e', '\u201d'),  # German „...”
+                    ('\u2018', '\u2019'), ('\u00ab', '\u00bb'),
+                    ('\u2039', '\u203a'),  # Single guillemets
+                    ('\u300c', '\u300d'),  # CJK
+                    ('\u300e', '\u300f'),  # CJK double
+                    ]
     _quoted_ranges: list[tuple[int, int]] = []
     _ft = page_data.full_text
     for qopen, qclose in _QUOTE_PAIRS:
@@ -243,9 +249,9 @@ def _merge_detections(
             qj = _ft.find(qclose, qi + 1)
             if qj < 0:
                 break
-            # Only keep if the quoted fragment has 2+ words
+            # Keep quoted fragments (single-word ORGs like "SIEMENS" are valid)
             fragment = _ft[qi + 1:qj]
-            if len(fragment.split()) >= 2:
+            if len(fragment.strip()) >= 2:
                 _quoted_ranges.append((qi, qj + 1))
             start_search = qj + 1
 
@@ -253,8 +259,6 @@ def _merge_detections(
 
     for c in candidates:
         if c["pii_type"] != PIIType.ORG:
-            continue
-        if len(c["text"].split()) < 2:
             continue
         already_boosted = False
 
@@ -279,7 +283,7 @@ def _merge_detections(
                 total_count += 1
                 if blk.is_bold or blk.is_italic:
                     styled_count += 1
-            if total_count >= 2 and styled_count > total_count / 2:
+            if total_count >= 1 and styled_count > total_count / 2:
                 c["confidence"] = min(1.0, c["confidence"] + _BOOST_VISUAL)
                 already_boosted = True
                 logger.debug(

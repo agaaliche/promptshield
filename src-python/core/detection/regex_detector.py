@@ -408,6 +408,78 @@ _COMPILED_PATTERNS: list[tuple[re.Pattern, PIIType, float, frozenset[str] | None
     for pattern, pii_type, conf, flags, langs in _PATTERNS
 ]
 
+# ---------------------------------------------------------------------------
+# Custom patterns — user-defined regexes loaded from persistence
+# ---------------------------------------------------------------------------
+
+# Compiled custom patterns: (pattern, pii_type, confidence, case_sensitive, pattern_id, pattern_name)
+_CUSTOM_PATTERNS: list[tuple[re.Pattern, PIIType, float, str, str]] = []
+_CUSTOM_PATTERNS_LOADED: bool = False
+
+
+def _load_custom_patterns() -> None:
+    """Load and compile custom patterns from disk."""
+    global _CUSTOM_PATTERNS, _CUSTOM_PATTERNS_LOADED
+    
+    try:
+        from api.deps import get_store
+        store = get_store()
+        patterns = store.load_custom_patterns()
+    except Exception:
+        # During startup or tests, store may not be available
+        _CUSTOM_PATTERNS = []
+        _CUSTOM_PATTERNS_LOADED = True
+        return
+    
+    compiled: list[tuple[re.Pattern, PIIType, float, str, str]] = []
+    
+    for p in patterns:
+        if not p.get("enabled", True):
+            continue
+        
+        pattern_str = p.get("pattern") or p.get("_generated_pattern")
+        if not pattern_str:
+            continue
+        
+        try:
+            flags = 0 if p.get("case_sensitive", False) else re.IGNORECASE
+            compiled_re = re.compile(pattern_str, flags)
+            
+            # Map pii_type string to PIIType enum
+            pii_type_str = p.get("pii_type", "CUSTOM")
+            try:
+                pii_type = PIIType(pii_type_str)
+            except ValueError:
+                pii_type = PIIType.CUSTOM
+            
+            compiled.append((
+                compiled_re,
+                pii_type,
+                p.get("confidence", 0.85),
+                p.get("id", ""),
+                p.get("name", "Custom"),
+            ))
+        except re.error:
+            # Skip invalid patterns
+            continue
+    
+    _CUSTOM_PATTERNS = compiled
+    _CUSTOM_PATTERNS_LOADED = True
+
+
+def reload_custom_patterns() -> None:
+    """Reload custom patterns from disk. Called when patterns are saved."""
+    global _CUSTOM_PATTERNS_LOADED
+    _CUSTOM_PATTERNS_LOADED = False
+    _load_custom_patterns()
+
+
+def get_custom_pattern_count() -> int:
+    """Return the number of enabled custom patterns."""
+    if not _CUSTOM_PATTERNS_LOADED:
+        _load_custom_patterns()
+    return len(_CUSTOM_PATTERNS)
+
 def _validate_match(text: str, matched_text: str, pii_type: PIIType,
                     match_start: int = 0) -> float:
     """
@@ -571,6 +643,34 @@ def detect_regex(text: str, allowed_types: list[str] | None = None,
                 pii_type=pii_type,
                 confidence=confidence,
             ))
+
+    # ── Custom user-defined patterns ──
+    from core.config import config as _cfg
+    if _cfg.custom_patterns_enabled:
+        if not _CUSTOM_PATTERNS_LOADED:
+            _load_custom_patterns()
+
+        for compiled_re, pii_type, base_confidence, pattern_id, pattern_name in _CUSTOM_PATTERNS:
+            if _allowed and pii_type.value not in _allowed:
+                continue
+            for m in compiled_re.finditer(text):
+                matched_text = m.group()
+
+                # Skip empty or whitespace-only matches
+                if not matched_text or not matched_text.strip():
+                    continue
+
+                # Skip if in excluded context
+                if _in_excluded_context(text, m.start(), m.end()):
+                    continue
+
+                all_matches.append(RegexMatch(
+                    start=m.start(),
+                    end=m.end(),
+                    text=matched_text,
+                    pii_type=pii_type,
+                    confidence=base_confidence,
+                ))
 
     # Sort by start position, remove overlaps (keep higher confidence)
     # Special handling for containment: prefer longer spans when one

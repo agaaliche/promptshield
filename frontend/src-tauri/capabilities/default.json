@@ -36,6 +36,7 @@
         }
       ]
     },
-    "shell:allow-stdin-write"
+    "shell:allow-stdin-write",
+    "dialog:default"
   ]
 }

@@ -104,11 +104,13 @@ from routers.auth import router as auth_router       # noqa: E402
 from routers.license import router as license_router  # noqa: E402
 from routers.billing import router as billing_router  # noqa: E402
 from routers.admin import router as admin_router      # noqa: E402
+from routers.updates import router as updates_router  # noqa: E402
 
 app.include_router(auth_router)
 app.include_router(license_router)
 app.include_router(billing_router)
 app.include_router(admin_router)
+app.include_router(updates_router)
 
 
 @app.get("/health")

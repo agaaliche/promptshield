@@ -298,3 +298,29 @@ export interface SubscriptionInfo {
   trial_end: string | null;
   created_at: string;
 }
+
+// Custom pattern definitions
+export interface PatternTemplateBlock {
+  type: "letters" | "LETTERS" | "digits" | "alphanumeric" | "separator" | "any" | "literal";
+  count?: number;
+  value?: string;
+}
+
+export interface CustomPattern {
+  id: string;
+  name: string;
+  pattern?: string;           // Raw regex (advanced mode)
+  template?: PatternTemplateBlock[];  // Template blocks (simple mode)
+  _generated_pattern?: string; // Generated from template
+  pii_type: string;
+  enabled: boolean;
+  case_sensitive: boolean;
+  confidence: number;
+}
+
+export interface PatternTestResult {
+  status: string;
+  pattern: string;
+  match_count: number;
+  matches: Array<{ text: string; start: number; end: number }>;
+}

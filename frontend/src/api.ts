@@ -730,3 +730,48 @@ export async function saveLabelConfigAPI(labels: PIILabelEntry[]): Promise<void>
     body: JSON.stringify(labels),
   });
 }
+
+// ──────────────────────────────────────────────
+// Custom patterns
+// ──────────────────────────────────────────────
+
+import type { CustomPattern, PatternTestResult } from "./types";
+
+export async function fetchCustomPatterns(): Promise<CustomPattern[]> {
+  return request<CustomPattern[]>("/api/settings/patterns");
+}
+
+export async function saveCustomPatterns(patterns: CustomPattern[]): Promise<void> {
+  await request("/api/settings/patterns", {
+    method: "PUT",
+    body: JSON.stringify(patterns),
+  });
+}
+
+export async function addCustomPattern(pattern: Omit<CustomPattern, "id">): Promise<{ status: string; pattern: CustomPattern }> {
+  return request("/api/settings/patterns", {
+    method: "POST",
+    body: JSON.stringify(pattern),
+  });
+}
+
+export async function deleteCustomPattern(patternId: string): Promise<void> {
+  await request(`/api/settings/patterns/${patternId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function testPattern(
+  pattern: string,
+  testText: string,
+  caseSensitive: boolean = false
+): Promise<PatternTestResult> {
+  return request("/api/settings/patterns/test", {
+    method: "POST",
+    body: JSON.stringify({
+      pattern,
+      test_text: testText,
+      case_sensitive: caseSensitive,
+    }),
+  });
+}

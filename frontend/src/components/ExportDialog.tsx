@@ -199,7 +199,7 @@ export default function ExportDialog({ open, onClose }: Props) {
         <div style={{ display: "flex", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid var(--border-color)", gap: 10 }}>
           <Shield size={18} style={{ color: "#4caf50" }} />
           <span id="export-dialog-title" style={{ flex: 1, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
-            Export Secure Files
+            Export
           </span>
           <button className="btn-ghost btn-sm" onClick={onClose} style={{ padding: 4 }} aria-label="Close export dialog">
             <X size={16} />

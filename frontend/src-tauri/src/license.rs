@@ -242,8 +242,10 @@ pub async fn check_clock_drift() -> Result<(), String> {
         .map_err(|e| format!("HTTP client error: {e}"))?;
 
     // Try primary source: worldtimeapi.org
-    let server_time = fetch_time_worldtimeapi(&client).await
-        .or_else(|_| async { fetch_time_timeapi_io(&client).await }.await);
+    let server_time = match fetch_time_worldtimeapi(&client).await {
+        Ok(t) => Ok(t),
+        Err(_) => fetch_time_timeapi_io(&client).await,
+    };
 
     let server_time = match server_time {
         Ok(t) => t,

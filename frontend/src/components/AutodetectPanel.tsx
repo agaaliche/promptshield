@@ -3,8 +3,10 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X, Save, Trash2, MoreHorizontal } from "lucide-react";
 import { Z_TOP_DIALOG } from "../zIndex";
-import BlacklistGrid, { type BlacklistAction, createEmptyGrid } from "./BlacklistGrid";
-import type { PIIRegion } from "../types";
+import BlacklistGrid, { type BlacklistAction } from "./BlacklistGrid";
+import { createEmptyGrid } from "./blacklistUtils";
+import type { PIIRegion, CustomPattern } from "../types";
+import { fetchCustomPatterns } from "../api";
 
 type TabKey = "patterns" | "blacklist" | "ai" | "deep";
 
@@ -113,6 +115,21 @@ export default function AutodetectPanel({
   // Blacklist state
   const [blCells, setBlCells] = useState(() => createEmptyGrid());
   const [blAction, setBlAction] = useState<BlacklistAction>("none");
+
+  // Custom patterns from settings
+  const [customPatterns, setCustomPatterns] = useState<CustomPattern[]>([]);
+  const [customToggles, setCustomToggles] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    fetchCustomPatterns()
+      .then(patterns => {
+        const enabled = patterns.filter(p => p.enabled);
+        setCustomPatterns(enabled);
+        // Default all enabled custom patterns to checked
+        setCustomToggles(Object.fromEntries(enabled.map(p => [p.id, true])));
+      })
+      .catch(() => {});
+  }, []);
 
   // Compute match status: highlight expressions found in detected regions
   const blMatchStatus = useMemo(() => {
@@ -227,10 +244,17 @@ export default function AutodetectPanel({
     document.addEventListener("mouseup", onUp);
   }, [isMaximized, dragPos, leftOffset, rightOffset, pageNavWidth]);
 
-  const regexEnabled = Object.values(regexTypes).some(Boolean);
+  const regexEnabled = Object.values(regexTypes).some(Boolean) || Object.values(customToggles).some(Boolean);
   const nerEnabled = Object.values(nerTypes).some(Boolean);
   const activeRegexTypes = Object.entries(regexTypes).filter(([, v]) => v).map(([k]) => k);
   const activeNerTypes = Object.entries(nerTypes).filter(([, v]) => v).map(([k]) => k);
+
+  // Include PII types from active custom patterns
+  const activeCustomPiiTypes = customPatterns
+    .filter(p => customToggles[p.id])
+    .map(p => p.pii_type)
+    .filter(t => !activeRegexTypes.includes(t));
+  const allActiveRegexTypes = [...activeRegexTypes, ...activeCustomPiiTypes];
 
   const handleRun = () => {
     const blacklistTerms = blCells.flat().map(c => c.trim()).filter(Boolean);
@@ -240,7 +264,7 @@ export default function AutodetectPanel({
       regexEnabled,
       nerEnabled,
       llmEnabled,
-      regexTypes: regexEnabled ? activeRegexTypes : [],
+      regexTypes: regexEnabled ? allActiveRegexTypes : [],
       nerTypes: nerEnabled ? activeNerTypes : [],
       blacklistTerms,
       blacklistAction: blAction,
@@ -337,34 +361,6 @@ export default function AutodetectPanel({
           cursor: isMaximized ? "default" : "grab",
           userSelect: "none",
         }}>
-        <div style={{ display: "flex", gap: 16, padding: "8px 0" }}>
-          {([
-            { key: "page" as const, label: "Current page" },
-            { key: "all" as const, label: "All pages" },
-          ]).map(({ key, label }) => (
-            <label
-              key={key}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                fontSize: 12,
-                color: scope === key ? "var(--text-primary)" : "var(--text-muted)",
-                cursor: "pointer",
-              }}
-            >
-              <input
-                type="radio"
-                name="detect-scope"
-                checked={scope === key}
-                onChange={() => setScope(key)}
-                style={{ accentColor: "var(--accent-primary)" }}
-              />
-              {label}
-            </label>
-          ))}
-        </div>
-
         {/* Spacer + window controls */}
         <div style={{ flex: 1 }} />
         <div data-nodrag style={{ display: "flex", gap: 2, marginLeft: 8 }}>
@@ -735,6 +731,49 @@ export default function AutodetectPanel({
                 {label}
               </label>
             ))}
+
+            {/* Custom patterns from Settings */}
+            {customPatterns.length > 0 && (
+              <>
+                <div style={{
+                  fontSize: 11, fontWeight: 600, color: "var(--text-muted)",
+                  marginTop: 10, paddingTop: 8,
+                  borderTop: "1px solid var(--border-color)",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}>
+                  🎯 Custom Patterns
+                  <span style={{
+                    fontSize: 10, color: "var(--text-muted)", fontWeight: 400,
+                    marginLeft: "auto",
+                  }}>
+                    from Settings
+                  </span>
+                </div>
+                {customPatterns.map(cp => (
+                  <label key={cp.id} style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    fontSize: 13, color: "var(--text-primary)", cursor: "pointer",
+                    padding: "4px 0",
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={customToggles[cp.id] ?? true}
+                      onChange={(e) => setCustomToggles(prev => ({ ...prev, [cp.id]: e.target.checked }))}
+                      style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
+                    />
+                    <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>🎯</span>
+                    <span style={{ flex: 1 }}>{cp.name}</span>
+                    <span style={{
+                      fontSize: 10, padding: "1px 6px",
+                      background: "rgba(156, 39, 176, 0.15)", color: "#ce93d8",
+                      borderRadius: 3, fontWeight: 500,
+                    }}>
+                      {cp.pii_type}
+                    </span>
+                  </label>
+                ))}
+              </>
+            )}
           </>)}
 
           {/* Blacklist tab */}
@@ -835,8 +874,37 @@ export default function AutodetectPanel({
         </div>
       </>)}
 
-      {/* Run + Clear all buttons side by side */}
-      <div style={{ padding: "10px 14px 14px", display: "flex", gap: 6, flexShrink: 0 }}>
+      {/* Run + scope + clear */}
+      <div style={{ padding: "10px 14px 14px", display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10 }}>
+          {([
+            { key: "page" as const, label: `Page ${activePage}` },
+            { key: "all" as const, label: "All pages" },
+          ]).map(({ key, label }) => (
+            <label
+              key={key}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 11,
+                color: scope === key ? "var(--text-primary)" : "var(--text-muted)",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <input
+                type="radio"
+                name="detect-scope"
+                checked={scope === key}
+                onChange={() => setScope(key)}
+                style={{ accentColor: "var(--accent-primary)", margin: 0 }}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+
         <button
           className="btn-primary"
           onClick={handleRun}
@@ -844,8 +912,11 @@ export default function AutodetectPanel({
           style={{ whiteSpace: "nowrap" }}
         >
           <ScanSearch size={14} />
-          {isProcessing ? "Detecting…" : `Run on ${scope === "page" ? `page ${activePage}` : "all pages"}`}
+          {isProcessing ? "Detecting…" : "Run"}
         </button>
+
+        <div style={{ flex: 1 }} />
+
         <button
           className="btn-ghost btn-sm"
           onClick={() => {
@@ -853,14 +924,14 @@ export default function AutodetectPanel({
           }}
           disabled={isProcessing}
           style={{
-            fontSize: 11,
+            padding: "4px 6px",
             color: "var(--text-muted)",
-            padding: "6px 12px",
-            whiteSpace: "nowrap",
+            display: "flex",
+            alignItems: "center",
           }}
           title={scope === "page" ? `Delete all regions on page ${activePage}` : "Delete all detected regions from the document"}
         >
-          {scope === "page" ? `Clear page ${activePage}` : "Clear all pages"}
+          <Trash2 size={14} />
         </button>
       </div>
 

@@ -80,6 +80,7 @@ interface AppState {
   // ── Detection settings ──
   detectionSettings: {
     regex_enabled: boolean;
+    custom_patterns_enabled: boolean;
     ner_enabled: boolean;
     llm_detection_enabled: boolean;
     ner_backend: string;
@@ -333,6 +334,7 @@ export const useAppStore = create<AppState>()(devtools((set, get) => ({
   // Detection settings
   detectionSettings: {
     regex_enabled: true,
+    custom_patterns_enabled: true,
     ner_enabled: true,
     llm_detection_enabled: true,
     ner_backend: "spacy",

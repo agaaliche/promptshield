@@ -69,6 +69,7 @@ class DocumentStore:
         
         # Settings file for label config etc.
         self._labels_file = self.storage_dir / "pii_labels.json"
+        self._patterns_file = self.storage_dir / "custom_patterns.json"
         
         logger.info(f"Document store initialized at {self.storage_dir}")
 
@@ -328,3 +329,42 @@ class DocumentStore:
             logger.debug(f"Saved {len(labels)} PII label entries")
         except Exception as e:
             logger.error(f"Failed to save label config: {e}")
+
+    # ── Custom pattern persistence ──
+
+    def load_custom_patterns(self) -> list[dict]:
+        """Load custom regex patterns from disk.
+        
+        Returns:
+            List of pattern dicts, each containing:
+            - id: Unique pattern identifier
+            - name: Human-readable name
+            - pattern: Regex string (or None if using template mode)
+            - template: Template definition (or None if using regex mode)
+            - pii_type: Target PIIType label
+            - enabled: Whether pattern is active
+            - case_sensitive: Whether regex should be case-sensitive
+            - confidence: Default confidence score (0.0-1.0)
+        """
+        try:
+            if self._patterns_file.exists():
+                with open(self._patterns_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception as e:
+            logger.error(f"Failed to load custom patterns: {e}")
+        return []
+
+    def save_custom_patterns(self, patterns: list[dict]) -> None:
+        """Save custom regex patterns to disk.
+        
+        Args:
+            patterns: List of pattern dicts.
+        """
+        try:
+            with open(self._patterns_file, "w", encoding="utf-8") as f:
+                json.dump(patterns, f, indent=2, ensure_ascii=False)
+            logger.debug(f"Saved {len(patterns)} custom patterns")
+        except Exception as e:
+            logger.error(f"Failed to save custom patterns: {e}")

@@ -6,15 +6,25 @@ import { useDetectionStore } from "../../store";
 import { toErrorMessage } from "../../errorUtils";
 import { updateSettings, logError } from "../../api";
 import { Section, styles } from "./settingsStyles";
+import { CustomPatternsContent } from "./CustomPatternsSection";
 
 const NER_MODELS = [
-  { value: "auto", label: "Auto — best model per language (recommended)", lang: "Auto", languages: "English, Spanish, French, German, Italian, Dutch" },
+  { value: "auto", label: "Auto — best model per language (recommended)", lang: "Auto", languages: "English, Spanish, French, German, Italian, Dutch, Portuguese" },
   { value: "spacy", label: "Default — fast, works offline, no download", lang: "English" },
-  { value: "dslim/bert-base-NER", label: "General purpose — good all-around", lang: "English" },
-  { value: "StanfordAIMI/stanford-deidentifier-base", label: "Medical & clinical — healthcare documents", lang: "English" },
-  { value: "lakshyakh93/deberta_finetuned_pii", label: "Personal info — names, emails, phones, addresses", lang: "English" },
-  { value: "iiiorg/piiranha-v1-detect-personal-information", label: "Multilingual — 6 languages, high accuracy", lang: "Multilingual", languages: "English, German, French, Spanish, Italian, Dutch" },
-  { value: "Isotonic/distilbert_finetuned_ai4privacy_v2", label: "Comprehensive — 54 data types, very fast", lang: "English", languages: "Covers 54 PII types including names, financial, identity, addresses, and more" },
+  // Multilingual models
+  { value: "iiiorg/piiranha-v1-detect-personal-information", label: "Multilingual (Piiranha) — 6 languages, high accuracy", lang: "Multilingual", languages: "English, German, French, Spanish, Italian, Dutch" },
+  { value: "Babelscape/wikineural-multilingual-ner", label: "Multilingual (WikiNEural) — 9 languages incl. Portuguese", lang: "Multilingual", languages: "English, German, Spanish, French, Italian, Dutch, Polish, Portuguese, Russian" },
+  { value: "Davlan/xlm-roberta-base-ner-hrl", label: "Multilingual (XLM-R) — 10+ high-resource languages", lang: "Multilingual", languages: "English, German, Spanish, French, Italian, Dutch, Portuguese, Chinese, Arabic, and more" },
+  // English-specific models
+  { value: "Isotonic/distilbert_finetuned_ai4privacy_v2", label: "English — Comprehensive, 54 PII types", lang: "English", languages: "Covers 54 PII types including names, financial, identity, addresses, and more" },
+  { value: "dslim/bert-base-NER", label: "English — General purpose, good all-around", lang: "English" },
+  { value: "StanfordAIMI/stanford-deidentifier-base", label: "English — Medical & clinical documents", lang: "English" },
+  { value: "lakshyakh93/deberta_finetuned_pii", label: "English — Personal info (names, emails, phones)", lang: "English" },
+  // Language-specific models
+  { value: "Jean-Baptiste/camembert-ner", label: "French — CamemBERT, high accuracy", lang: "French" },
+  { value: "mrm8488/bert-spanish-cased-finetuned-ner", label: "Spanish — BERT fine-tuned NER", lang: "Spanish" },
+  { value: "fhswf/bert_de_ner", label: "German — BERT GermEval2014, high accuracy", lang: "German" },
+  { value: "pierreguillou/ner-bert-base-cased-pt-lenerbr", label: "Portuguese — LeNER-Br, legal & general NER", lang: "Portuguese" },
 ] as const;
 
 export default function DetectionSection() {
@@ -44,6 +54,24 @@ export default function DetectionSection() {
           />{" "}
           Pattern matching (finds IDs, emails, phone numbers, etc.)
         </label>
+        <label style={{ ...styles.checkboxLabel, marginLeft: 24, opacity: detectionSettings.regex_enabled ? 1 : 0.5 }}>
+          <input
+            type="checkbox"
+            checked={detectionSettings.custom_patterns_enabled}
+            disabled={!detectionSettings.regex_enabled}
+            onChange={(e) => {
+              const v = e.target.checked;
+              setDetectionSettings({ custom_patterns_enabled: v });
+              updateSettings({ custom_patterns_enabled: v }).catch(logError("update-settings"));
+            }}
+          />{" "}
+          Custom patterns
+        </label>
+        {detectionSettings.regex_enabled && detectionSettings.custom_patterns_enabled && (
+          <div style={{ marginLeft: 24, marginTop: 4, marginBottom: 8 }}>
+            <CustomPatternsContent />
+          </div>
+        )}
         <label style={styles.checkboxLabel}>
           <input
             type="checkbox"
@@ -93,10 +121,11 @@ export default function DetectionSection() {
                     const sel = NER_MODELS.find(m => m.value === (pendingNerBackend ?? detectionSettings.ner_backend)) ?? NER_MODELS[0];
                     const isAuto = sel.lang === "Auto";
                     const isMulti = sel.lang === "Multilingual";
+                    const isLangSpecific = ["French", "Spanish", "German", "Portuguese", "Italian", "Dutch"].includes(sel.lang);
                     return (
                       <span style={{
                         fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4, flexShrink: 0,
-                        ...(isAuto ? { background: "rgba(76,175,80,0.15)", color: "var(--accent-success)" } : isMulti ? { background: "rgba(74,158,255,0.12)", color: "var(--accent-primary)" } : { background: "rgba(255,255,255,0.06)", color: "var(--text-muted)" }),
+                        ...(isAuto ? { background: "rgba(76,175,80,0.15)", color: "var(--accent-success)" } : isMulti ? { background: "rgba(74,158,255,0.12)", color: "var(--accent-primary)" } : isLangSpecific ? { background: "rgba(255,183,77,0.15)", color: "#ffb74d" } : { background: "rgba(255,255,255,0.06)", color: "var(--text-muted)" }),
                       }}>{sel.lang}</span>
                     );
                   })()}
@@ -114,6 +143,7 @@ export default function DetectionSection() {
                       const selected = m.value === (pendingNerBackend ?? detectionSettings.ner_backend);
                       const isAuto = m.lang === "Auto";
                       const isMulti = m.lang === "Multilingual";
+                      const isLangSpecific = ["French", "Spanish", "German", "Portuguese", "Italian", "Dutch"].includes(m.lang);
                       return (
                         <button
                           key={m.value}
@@ -132,7 +162,7 @@ export default function DetectionSection() {
                           <span style={{ flex: 1 }}>{m.label}</span>
                           <span style={{
                             fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4, flexShrink: 0,
-                            ...(isAuto ? { background: "rgba(76,175,80,0.15)", color: "var(--accent-success)" } : isMulti ? { background: "rgba(74,158,255,0.12)", color: "var(--accent-primary)" } : { background: "rgba(255,255,255,0.06)", color: "var(--text-muted)" }),
+                            ...(isAuto ? { background: "rgba(76,175,80,0.15)", color: "var(--accent-success)" } : isMulti ? { background: "rgba(74,158,255,0.12)", color: "var(--accent-primary)" } : isLangSpecific ? { background: "rgba(255,183,77,0.15)", color: "#ffb74d" } : { background: "rgba(255,255,255,0.06)", color: "var(--text-muted)" }),
                           }}>{m.lang}</span>
                         </button>
                       );
@@ -174,7 +204,7 @@ export default function DetectionSection() {
                 return (
                   <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
                     🧠 Detects document language automatically and picks the best model.
-                    <br />🌐 Supported: English, Spanish, French, German, Italian, Dutch
+                    <br />🌐 Supported: English, Spanish, French, German, Italian, Dutch, Portuguese
                   </p>
                 );
               }
@@ -245,6 +275,7 @@ export default function DetectionSection() {
             <option value="es">Spanish</option>
             <option value="it">Italian</option>
             <option value="nl">Dutch</option>
+            <option value="pt">Portuguese</option>
           </select>
           <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
             Filters regex patterns to only those relevant for the selected

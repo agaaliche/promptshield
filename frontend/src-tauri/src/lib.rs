@@ -3,6 +3,7 @@
 mod integrity;
 mod license;
 mod machine_id;
+mod updater;
 
 use std::sync::Mutex;
 use tauri::Emitter;
@@ -57,6 +58,49 @@ fn store_license(blob: String) -> Result<license::LicenseStatus, String> {
 #[tauri::command]
 fn clear_license() -> Result<(), String> {
     license::delete_license_file()
+}
+
+// ── Tauri commands for app updates ─────────────────────────────────────
+
+/// Check the update server for a newer version.
+#[tauri::command]
+async fn check_for_updates() -> updater::UpdateCheckResult {
+    updater::check_for_updates().await
+}
+
+/// Download and install an online update.
+#[tauri::command]
+async fn download_and_install_update(
+    manifest_json: String,
+    app: tauri::AppHandle,
+) -> Result<updater::InstallResult, String> {
+    let manifest: updater::UpdateManifest = serde_json::from_str(&manifest_json)
+        .map_err(|e| format!("Invalid manifest: {}", e))?;
+    Ok(updater::download_and_install(&manifest, &app).await)
+}
+
+/// Read and validate an offline update package (without installing).
+#[tauri::command]
+fn read_offline_package(path: String) -> Result<updater::OfflinePackageMeta, String> {
+    updater::read_offline_package(&path)
+}
+
+/// Install an offline update package.
+#[tauri::command]
+fn install_offline_update(path: String) -> updater::InstallResult {
+    updater::install_offline_package(&path)
+}
+
+/// Get the current app version.
+#[tauri::command]
+fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Clean up downloaded update files.
+#[tauri::command]
+fn cleanup_updates() {
+    updater::cleanup_updates();
 }
 
 /// Get the path where the license file is stored, for debugging.
@@ -188,6 +232,7 @@ async fn start_backend(app: tauri::AppHandle) -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(SidecarChild(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             get_machine_id,
@@ -197,6 +242,12 @@ pub fn run() {
             clear_license,
             get_license_path,
             start_backend,
+            check_for_updates,
+            download_and_install_update,
+            read_offline_package,
+            install_offline_update,
+            get_app_version,
+            cleanup_updates,
         ])
         .setup(|app| {
             // Run integrity checks (anti-debug, timing)

@@ -53,6 +53,7 @@ class AppConfig(BaseModel):
 
     # PII Detection thresholds
     regex_enabled: bool = True
+    custom_patterns_enabled: bool = True
     ner_enabled: bool = True
     llm_detection_enabled: bool = True
     regex_types: Optional[list[str]] = None   # None = all; e.g. ["EMAIL", "SSN"]
@@ -139,7 +140,7 @@ class AppConfig(BaseModel):
 
     # Keys that are persisted when changed via the API
     _PERSISTABLE_KEYS: set[str] = {
-        "regex_enabled", "ner_enabled", "llm_detection_enabled",
+        "regex_enabled", "custom_patterns_enabled", "ner_enabled", "llm_detection_enabled",
         "confidence_threshold", "detection_fuzziness", "max_font_size_pt",
         "ocr_language", "ocr_dpi",
         "render_dpi", "tesseract_cmd",

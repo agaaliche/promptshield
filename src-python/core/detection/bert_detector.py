@@ -162,6 +162,68 @@ AVAILABLE_MODELS: dict[str, dict] = {
             "Jobtype": PIIType.CUSTOM,
         },
     },
+    # -- Multilingual (WikiNEural, 9 languages) ----------------------------
+    "Babelscape/wikineural-multilingual-ner": {
+        "description": "WikiNEural — 9-language NER (EN/DE/ES/FR/IT/NL/PL/PT/RU)",
+        "label_map": {
+            "PER": PIIType.PERSON,
+            "ORG": PIIType.ORG,
+            "LOC": PIIType.LOCATION,
+            "MISC": PIIType.CUSTOM,
+        },
+    },
+    # -- Multilingual (XLM-RoBERTa, 10+ high-resource languages) -----------
+    "Davlan/xlm-roberta-base-ner-hrl": {
+        "description": "XLM-R — 10+ high-resource language NER",
+        "label_map": {
+            "PER": PIIType.PERSON,
+            "ORG": PIIType.ORG,
+            "LOC": PIIType.LOCATION,
+            "DATE": PIIType.DATE,
+        },
+    },
+    # -- French (CamemBERT) ------------------------------------------------
+    "Jean-Baptiste/camembert-ner": {
+        "description": "CamemBERT — French NER, high accuracy",
+        "label_map": {
+            "PER": PIIType.PERSON,
+            "ORG": PIIType.ORG,
+            "LOC": PIIType.LOCATION,
+            "MISC": PIIType.CUSTOM,
+        },
+    },
+    # -- Spanish (BERT fine-tuned) -----------------------------------------
+    "mrm8488/bert-spanish-cased-finetuned-ner": {
+        "description": "Spanish BERT — fine-tuned NER",
+        "label_map": {
+            "PER": PIIType.PERSON,
+            "ORG": PIIType.ORG,
+            "LOC": PIIType.LOCATION,
+            "MISC": PIIType.CUSTOM,
+        },
+    },
+    # -- German (GermEval2014, BERT base) -----------------------------------
+    "fhswf/bert_de_ner": {
+        "description": "German BERT — GermEval2014 NER, high accuracy",
+        "label_map": {
+            "PER": PIIType.PERSON,
+            "ORG": PIIType.ORG,
+            "LOC": PIIType.LOCATION,
+            "OTH": PIIType.CUSTOM,
+        },
+    },
+    # -- Portuguese (LeNER-Br, legal + general NER) ------------------------
+    "pierreguillou/ner-bert-base-cased-pt-lenerbr": {
+        "description": "Portuguese BERT — LeNER-Br NER",
+        "label_map": {
+            "PESSOA": PIIType.PERSON,
+            "ORGANIZACAO": PIIType.ORG,
+            "LOCAL": PIIType.LOCATION,
+            "TEMPO": PIIType.DATE,
+            "LEGISLACAO": PIIType.CUSTOM,
+            "JURISPRUDENCIA": PIIType.CUSTOM,
+        },
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -420,8 +482,8 @@ _active_model_id: str = ""
 _label_map: dict[str, PIIType] = {}
 
 # Chunking parameters
-_CHUNK_SIZE = 2_500        # characters per chunk (BERT tokeniser limit ~512 tokens ≈ 2-3k chars)
-_CHUNK_OVERLAP = 300       # overlap in characters
+_CHUNK_SIZE = 1_800        # characters per chunk (BERT tokeniser limit ~512 tokens; conservative for dense languages like DE)
+_CHUNK_OVERLAP = 200       # overlap in characters
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +550,15 @@ def unload_pipeline() -> None:
 
 def _process_chunk(pipe, text: str, global_offset: int) -> list[NERMatch]:
     """Run the HF pipeline on a single chunk and yield NERMatch instances."""
+    # Pre-truncate to model's max token length to avoid tensor size mismatches
+    tokenizer = pipe.tokenizer
+    max_len = getattr(tokenizer, "model_max_length", 512)
+    if max_len > 10_000:
+        max_len = 512  # some tokenisers report a huge default
+    encoded = tokenizer.encode(text, add_special_tokens=True, truncation=True, max_length=max_len)
+    # Decode back to get the safely-truncated text (strip special tokens)
+    if len(encoded) >= max_len:
+        text = tokenizer.decode(encoded[1:-1], skip_special_tokens=True, clean_up_tokenization_spaces=True)
     results = pipe(text)
     matches: list[NERMatch] = []
 

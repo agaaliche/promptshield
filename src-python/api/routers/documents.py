@@ -210,6 +210,14 @@ async def get_page_bitmap(doc_id: str, page_number: int) -> FileResponse:
     bitmap_path = Path(page.bitmap_path)
     if not bitmap_path.exists():
         raise HTTPException(404, "Bitmap not found")
+    # S2: Ensure the resolved bitmap path is within the app's known directories
+    # to prevent serving arbitrary files if persisted state were corrupted.
+    # Bitmaps live in temp_dir (during ingestion) or data_dir (persisted).
+    resolved = bitmap_path.resolve()
+    allowed_dirs = (config.temp_dir.resolve(), config.data_dir.resolve())
+    if not any(resolved.is_relative_to(d) for d in allowed_dirs):
+        logger.warning("Blocked bitmap access outside app directories: %s", bitmap_path)
+        raise HTTPException(403, "Access denied")
     return FileResponse(str(bitmap_path), media_type="image/png")
 
 

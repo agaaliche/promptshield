@@ -1,7 +1,7 @@
 /** Autodetect PII settings dropdown panel with Blacklist grid. */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X, Save, Trash2, MoreHorizontal } from "lucide-react";
+import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X, Save, Trash2, Plus } from "lucide-react";
 import { Z_TOP_DIALOG } from "../zIndex";
 import BlacklistGrid, { type BlacklistAction } from "./BlacklistGrid";
 import { createEmptyGrid } from "./blacklistUtils";
@@ -466,8 +466,8 @@ export default function AutodetectPanel({
         </div>
       </div>
 
-      {/* Saved templates select — only when templates exist */}
-      {templates.length > 0 && (
+      {/* Saved templates — selector (when templates exist) or inline save box (when empty) */}
+      {templates.length > 0 ? (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 14px", marginTop: 6, position: "relative" }}>
           <select
             value={selectedTemplate}
@@ -546,7 +546,7 @@ export default function AutodetectPanel({
             onMouseEnter={(e) => { if (!showSaveMenu) e.currentTarget.style.background = "var(--bg-surface)"; }}
             onMouseLeave={(e) => { if (!showSaveMenu) e.currentTarget.style.background = "transparent"; }}
           >
-            <MoreHorizontal size={14} />
+            <Plus size={14} />
           </button>
           {/* Save-as dropdown menu */}
           {showSaveMenu && (
@@ -632,6 +632,82 @@ export default function AutodetectPanel({
               </button>
             </div>
           )}
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 14px", marginTop: 6 }}>
+          <input
+            type="text"
+            placeholder="Save as template…"
+            value={templateName}
+            onChange={(e) => setTemplateName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const name = templateName.trim();
+                if (!name) return;
+                const tpl: DetectionTemplate = {
+                  name,
+                  fuzziness,
+                  regexTypes: { ...regexTypes },
+                  nerTypes: { ...nerTypes },
+                  llmEnabled,
+                  blCells: blCells.map(r => [...r]),
+                  blAction,
+                };
+                saveTemplates([tpl]);
+                setTemplates([tpl]);
+                setSelectedTemplate(name);
+                setTemplateName("");
+              }
+            }}
+            style={{
+              flex: 1,
+              height: 28,
+              fontSize: 11,
+              background: "var(--bg-surface)",
+              color: "var(--text-primary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 4,
+              padding: "0 8px",
+            }}
+          />
+          <button
+            disabled={!templateName.trim()}
+            onClick={() => {
+              const name = templateName.trim();
+              if (!name) return;
+              const tpl: DetectionTemplate = {
+                name,
+                fuzziness,
+                regexTypes: { ...regexTypes },
+                nerTypes: { ...nerTypes },
+                llmEnabled,
+                blCells: blCells.map(r => [...r]),
+                blAction,
+              };
+              saveTemplates([tpl]);
+              setTemplates([tpl]);
+              setSelectedTemplate(name);
+              setTemplateName("");
+            }}
+            title="Save current settings as template"
+            style={{
+              height: 28,
+              padding: "0 10px",
+              fontSize: 11,
+              fontWeight: 500,
+              background: "var(--accent-primary)",
+              color: "white",
+              border: "none",
+              borderRadius: 4,
+              cursor: templateName.trim() ? "pointer" : "not-allowed",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              opacity: templateName.trim() ? 1 : 0.5,
+            }}
+          >
+            <Save size={12} /> Save
+          </button>
         </div>
       )}
 

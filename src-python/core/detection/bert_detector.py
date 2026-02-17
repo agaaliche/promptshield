@@ -478,6 +478,7 @@ import threading
 
 _pipeline = None
 _pipeline_lock = threading.Lock()
+_inference_lock = threading.Lock()   # serialize pipe() calls — Rust tokenizer is not thread-safe
 _active_model_id: str = ""
 _label_map: dict[str, PIIType] = {}
 
@@ -550,16 +551,19 @@ def unload_pipeline() -> None:
 
 def _process_chunk(pipe, text: str, global_offset: int) -> list[NERMatch]:
     """Run the HF pipeline on a single chunk and yield NERMatch instances."""
-    # Pre-truncate to model's max token length to avoid tensor size mismatches
-    tokenizer = pipe.tokenizer
-    max_len = getattr(tokenizer, "model_max_length", 512)
-    if max_len > 10_000:
-        max_len = 512  # some tokenisers report a huge default
-    encoded = tokenizer.encode(text, add_special_tokens=True, truncation=True, max_length=max_len)
-    # Decode back to get the safely-truncated text (strip special tokens)
-    if len(encoded) >= max_len:
-        text = tokenizer.decode(encoded[1:-1], skip_special_tokens=True, clean_up_tokenization_spaces=True)
-    results = pipe(text)
+    # Acquire lock — the Rust-backed HF tokenizer is not safe for
+    # concurrent access from multiple threads ("Already borrowed").
+    with _inference_lock:
+        # Pre-truncate to model's max token length to avoid tensor size mismatches
+        tokenizer = pipe.tokenizer
+        max_len = getattr(tokenizer, "model_max_length", 512)
+        if max_len > 10_000:
+            max_len = 512  # some tokenisers report a huge default
+        encoded = tokenizer.encode(text, add_special_tokens=True, truncation=True, max_length=max_len)
+        # Decode back to get the safely-truncated text (strip special tokens)
+        if len(encoded) >= max_len:
+            text = tokenizer.decode(encoded[1:-1], skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        results = pipe(text)
     matches: list[NERMatch] = []
 
     for ent in results:

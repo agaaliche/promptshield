@@ -43,14 +43,72 @@ async def get_split_progress(split_id: str) -> dict[str, Any]:
     return _split_progress.get(split_id, {"phase": "idle"})
 
 
-def _validate_path(p: str) -> Path:
-    """Validate that the path exists and is absolute."""
+def _allowed_directories() -> list[Path]:
+    """Return the set of directories that shell endpoints are allowed to access.
+
+    This prevents a malicious local process from using the sidecar API to
+    open / reveal / process arbitrary files on the filesystem.
+    """
+    from core.config import config
+
+    dirs = [
+        config.temp_dir.resolve(),
+        config.data_dir.resolve(),
+    ]
+    # Downloads folder — where exports are saved
+    try:
+        # Import inline to avoid circular dependency at module level
+        from api.routers.anonymize import _get_downloads_folder
+
+        dirs.append(_get_downloads_folder().resolve())
+    except Exception:
+        dirs.append((Path.home() / "Downloads").resolve())
+    return dirs
+
+
+def _validate_path(p: str, *, restrict: bool = True) -> Path:
+    """Validate that the path exists, is absolute, and (optionally) lives
+    inside one of the app-known directories.
+
+    Parameters
+    ----------
+    p : str
+        The raw path string from the request.
+    restrict : bool
+        When *True* (default) the resolved path must be inside one of the
+        directories returned by ``_allowed_directories()``.  Set to *False*
+        only for endpoints that already perform their own access control.
+    """
     path = Path(p)
     if not path.is_absolute():
         raise HTTPException(400, "Path must be absolute")
     if not path.exists():
         raise HTTPException(404, f"Path does not exist: {p}")
+
+    if restrict:
+        resolved = path.resolve()
+        allowed = _allowed_directories()
+        if not any(resolved == d or _is_relative_to(resolved, d) for d in allowed):
+            logger.warning(
+                "Blocked access to path outside allowed directories: %s", p
+            )
+            raise HTTPException(
+                403,
+                "Access denied — path is outside the application's allowed directories",
+            )
     return path
+
+
+def _is_relative_to(child: Path, parent: Path) -> bool:
+    """Path.is_relative_to() back-port (available from Python 3.9+)."""
+    try:
+        return child.is_relative_to(parent)
+    except AttributeError:  # pragma: no cover — Python < 3.9
+        try:
+            child.relative_to(parent)
+            return True
+        except ValueError:
+            return False
 
 
 @router.post("/open-file")

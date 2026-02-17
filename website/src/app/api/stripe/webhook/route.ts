@@ -6,7 +6,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
 });
 
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
-const LICENSING_URL = process.env.LICENSING_SERVER_URL || "http://localhost:8443";
+const LICENSING_URL = process.env.LICENSING_SERVER_URL || "https://licensing-server-455859748614.us-east4.run.app";
 const LICENSING_INTERNAL_KEY = process.env.LICENSING_INTERNAL_KEY || "";
 
 export async function POST(req: NextRequest) {

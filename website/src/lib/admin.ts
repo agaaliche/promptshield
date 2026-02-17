@@ -1,6 +1,6 @@
 import { licensingFetch } from "./licensing";
 
-const LICENSING_URL = process.env.NEXT_PUBLIC_LICENSING_URL || "https://api.promptshield.ca";
+const LICENSING_URL = process.env.NEXT_PUBLIC_LICENSING_URL || "https://licensing-server-455859748614.us-east4.run.app";
 
 // ── Admin API helpers ───────────────────────────────────────────
 

@@ -17,7 +17,7 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir . && pip install --no-cache-dir email-validator
 
 # Copy application source
-COPY main.py config.py database.py models.py schemas.py auth.py crypto.py ./
+COPY main.py config.py database.py models.py schemas.py auth.py crypto.py rate_limit.py ./
 COPY routers/ ./routers/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./

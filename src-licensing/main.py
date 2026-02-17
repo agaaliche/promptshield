@@ -78,13 +78,8 @@ _LICENSING_ALLOWED_ORIGINS = [
     "http://localhost:8910",        # Standalone binary
     "http://localhost:5173",        # Vite dev server
     "http://localhost:1420",        # Tauri dev server
+    "http://localhost:3000",        # Next.js dev (website)
 ]
-
-# M14: Only add dev origins when explicitly in dev mode
-if settings.dev_mode:
-    _LICENSING_ALLOWED_ORIGINS.extend([
-        "http://localhost:3000",    # Next.js dev (website)
-    ])
 
 app.add_middleware(
     CORSMiddleware,

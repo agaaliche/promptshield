@@ -164,7 +164,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     borderRadius: 8,
-    background: "var(--bg-tertiary, rgba(255,255,255,0.03))",
     overflow: "hidden",
   },
   header: {

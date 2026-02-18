@@ -19,12 +19,58 @@ from __future__ import annotations
 import re as _re
 import unicodedata as _unicodedata
 
+import Stemmer as _Stemmer  # PyStemmer — Snowball stemmers
+
 from core.detection import detection_config as det_cfg
 from pathlib import Path
 from typing import Set
 
 from core.text_utils import remove_accents as _remove_accents
 from models.schemas import PIIType
+
+# ---------------------------------------------------------------------------
+# Snowball stemmers — lazy-initialized per language
+# ---------------------------------------------------------------------------
+
+# Mapping from ISO 639-1 codes to Snowball language names
+_SNOWBALL_LANG_MAP: dict[str, str] = {
+    "en": "english",
+    "fr": "french",
+    "de": "german",
+    "es": "spanish",
+    "it": "italian",
+    "nl": "dutch",
+    "pt": "portuguese",
+}
+
+_stemmers: dict[str, _Stemmer.Stemmer] = {}
+
+
+def _get_stemmer(lang: str) -> _Stemmer.Stemmer | None:
+    """Get or create a Snowball stemmer for the given language code."""
+    if lang in _stemmers:
+        return _stemmers[lang]
+    snowball_name = _SNOWBALL_LANG_MAP.get(lang)
+    if not snowball_name:
+        return None
+    stemmer = _Stemmer.Stemmer(snowball_name)
+    _stemmers[lang] = stemmer
+    return stemmer
+
+
+def _stem_word(word: str, langs: tuple[str, ...] = ("en", "fr", "de", "es", "it", "nl", "pt")) -> set[str]:
+    """Return the set of possible stems for a word across given languages.
+    
+    Returns stems from all requested languages since we don't always know
+    the document language when filtering noise.
+    """
+    stems: set[str] = set()
+    for lang in langs:
+        stemmer = _get_stemmer(lang)
+        if stemmer:
+            stems.add(stemmer.stemWord(word))
+    return stems
+
 
 # ---------------------------------------------------------------------------
 # Legal-suffix regex — shared across all noise filters
@@ -217,131 +263,16 @@ def _is_org_pipeline_noise(text: str) -> bool:
                 if w_accented in _common_words:
                     return True
 
-        # Try basic suffix stripping for inflections (plurals, feminine, etc.)
-        # Sorted longest-first so we try more specific suffixes before generic ones.
-        _INFLECTION_SUFFIXES = [
-            # ── Feminine/plural (FR/ES/IT/PT) ──
-            'ées', 'és', 'tes', 'ais',
-            # ── General plural/gender ──
-            'es', 'en',  # EN/ES/DE/NL
-            's',          # FR/EN/ES/PT/NL
-            'e',          # FR/DE/IT
-            # ── German adjective/noun endings ──
-            'em', 'er', 'ern', 'ens',
-            # ── Dutch plural ──
-            'eren',
-            # ── Portuguese plural ──
-            'ões', 'ãos', 'ães',
-            # ── Italian plural ──
-            'chi', 'ghi',  # -co/-go plurals
-        ]
-        for suffix in _INFLECTION_SUFFIXES:
-            if len(w) > len(suffix) + 2 and w.endswith(suffix):
-                stem = w[:-len(suffix)]
-                if stem in _common_words:
-                    return True
-                # Also try stem with accent variants
-                for accented, plain in _ACCENT_SWAPS:
-                    if plain != 'ss' and stem.endswith(plain):
-                        stem_accented = stem[:-len(plain)] + accented
-                        if stem_accented in _common_words:
-                            return True
-
-        # ── Verb conjugation → infinitive resolution ──────────────
-        # Tries to map conjugated forms back to their infinitive.
-        # Multiple target infinitive endings are tried per suffix.
-        _VERB_SUFFIXES = [
-            # ── French ──
-            # Imperfect / subjunctive present
-            ('ions', ('er', 'ir', 're')),
-            ('iez', ('er', 'ir', 're')),
-            ('aient', ('er', 'ir', 're')),
-            ('ait', ('er', 'ir', 're')),
-            ('ais', ('er', 'ir', 're')),
-            # -ir group (present)
-            ('issons', ('ir',)), ('issez', ('ir',)), ('issent', ('ir',)),
-            ('issaient', ('ir',)), ('issait', ('ir',)),
-            # Present participle → infinitive
-            ('ant', ('er', 'ir', 're')),
-            # Past participle (FR)
-            ('é', ('er',)),
-            # Present indicative -ons/-ez (FR)
-            ('ons', ('er', 'ir', 're')),
-
-            # ── Spanish ──
-            # Gerund
-            ('ando', ('ar',)), ('iendo', ('ir', 'er')),
-            # Imperfect -ar
-            ('aba', ('ar',)), ('abas', ('ar',)), ('aban', ('ar',)),
-            ('ábamos', ('ar',)), ('abamos', ('ar',)),
-            # Imperfect -er/-ir
-            ('ía', ('er', 'ir')), ('ían', ('er', 'ir')),
-            ('íamos', ('er', 'ir')), ('iamos', ('er', 'ir')),
-            # Present -ar
-            ('amos', ('ar',)), ('áis', ('ar',)),
-            # Past participle
-            ('ado', ('ar',)), ('ido', ('er', 'ir')),
-
-            # ── Italian ──
-            # Gerund
-            ('ando', ('are',)), ('endo', ('ere', 'ire')),
-            # Imperfect
-            ('ava', ('are',)), ('avano', ('are',)), ('avamo', ('are',)),
-            ('eva', ('ere',)), ('evano', ('ere',)),
-            ('iva', ('ire',)), ('ivano', ('ire',)),
-            # Present
-            ('iamo', ('are', 'ere', 'ire')),
-            # Past participle
-            ('ato', ('are',)), ('uto', ('ere',)), ('ito', ('ire',)),
-
-            # ── Portuguese ──
-            # Gerund
-            ('ando', ('ar',)), ('endo', ('er',)), ('indo', ('ir',)),
-            # Imperfect
-            ('ava', ('ar',)), ('avam', ('ar',)),
-            ('ávamos', ('ar',)), ('avamos', ('ar',)),
-            # Past participle
-            ('ado', ('ar',)), ('ido', ('er', 'ir')),
-
-            # ── German ──
-            # Present participle (-end → -en)
-            ('end', ('en',)),
-            # Past participle (ge-X-t → X-en) handled separately below
-            # Conjugation -st/-t/-en
-            ('st', ('en',)), ('te', ('en',)), ('ten', ('en',)),
-            ('tet', ('en',)), ('tet', ('en',)),
-
-            # ── Dutch ──
-            # Present participle (-end → -en)
-            ('end', ('en',)),
-            # Past tense (-de/-den/-te/-ten → -en)
-            ('de', ('en',)), ('den', ('en',)),
-            ('tte', ('en',)), ('tten', ('en',)),
-
-            # ── English ──
-            ('ing', ('', 'e')),  # running→run, making→make
-            ('ed', ('', 'e')),   # helped→help, liked→like
-            ('tion', ('te',)),   # completion→complete
-            ('ment', ('',)),     # establishment→establish (rare but useful)
-        ]
-        for suffix, inf_endings in _VERB_SUFFIXES:
-            if len(w) > len(suffix) + 2 and w.endswith(suffix):
-                stem = w[:-len(suffix)]
-                for inf_suffix in inf_endings:
-                    infinitive = stem + inf_suffix
-                    if infinitive in _common_words:
-                        return True
-
-        # German past participle: ge-X-t → X-en (e.g. gemacht → machen)
-        if w.startswith('ge') and w.endswith('t') and len(w) > 5:
-            inner = w[2:-1]  # strip ge- and -t
-            if inner + 'en' in _common_words:
+        # Use Snowball stemmers to find stems and check dictionary.
+        # This replaces ~130 lines of hand-written suffix rules with linguistically
+        # correct stemming for all 7 supported languages.
+        for stem in _stem_word(w):
+            if stem in _common_words:
                 return True
-            # ge-X-et → X-en (e.g. gearbeitet → arbeiten)
-            if w.endswith('et') and len(w) > 6:
-                inner2 = w[2:-2]
-                if inner2 + 'en' in _common_words:
-                    return True
+            # Also try accent normalization on the stem
+            stem_noaccent = _remove_accents(stem)
+            if stem_noaccent != stem and stem_noaccent in _common_words:
+                return True
 
         # German compound word decompounding (inline, up to 3 parts)
         # Use the German-only dictionary to avoid false positives from

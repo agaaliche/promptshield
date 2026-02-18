@@ -234,7 +234,7 @@ export default function Sidebar() {
                 padding: "4px",
                 margin: "6px 8px 8px 8px",
                 background: "var(--bg-secondary)",
-                border: "1px solid rgba(255,255,255,0.55)",
+                border: "1px solid rgba(255,255,255,0.15)",
                 borderRadius: 6,
                 paddingBottom: 12,
               }}>
@@ -360,33 +360,22 @@ export default function Sidebar() {
               <div style={{ width: 24, height: 2, borderRadius: 1, background: "rgba(255,255,255,0.25)" }} />
             </div>
 
-            {/* Action buttons: Files / Add */}
+            {/* Action button: Manage Files */}
             <div style={{
               display: "flex",
               gap: 4,
               padding: "6px 8px",
-              background: "rgba(0,0,0,0.15)",
-              borderRadius: "0 0 6px 6px",
+              justifyContent: "flex-end",
             }}>
               <button
                 className="btn-ghost btn-sm"
                 style={{
-                  flex: 1, fontSize: 11, padding: "5px 6px", display: "flex", alignItems: "center", justifyContent: "center", gap: 4, border: "1px solid transparent",
+                  fontSize: 11, padding: "5px 6px", display: "flex", alignItems: "center", gap: 4, border: "1px solid transparent",
                 }}
                 onClick={() => setShowFilesDialog(true)}
-                title="View all files"
+                title="Manage all files"
               >
-                <FolderOpen size={12} /> Files
-              </button>
-              <button
-                className="btn-ghost btn-sm"
-                style={{
-                  flex: 1, fontSize: 11, padding: "5px 6px", display: "flex", alignItems: "center", justifyContent: "center", gap: 4, border: "1px solid transparent",
-                }}
-                onClick={() => setShowAddDialog(true)}
-                title="Add a new file"
-              >
-                <Plus size={12} /> Add
+                <FolderOpen size={12} /> Manage Files
               </button>
             </div>
           </div>

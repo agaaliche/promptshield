@@ -84,6 +84,7 @@ button.btn-primary:hover:not(:disabled) { background: #3a8eef; }
 button.btn-success { background: var(--accent-success); color: white; }
 button.btn-danger { background: var(--accent-danger); color: white; }
 button.btn-warning { background: var(--accent-warning); color: white; }
+button.btn-warning:hover:not(:disabled) { background: #e68900; }
 button.btn-tokenize { background: var(--accent-tokenize); color: white; }
 button.btn-tokenize:hover:not(:disabled) { background: #8c1fa0; }
 button.btn-ghost {

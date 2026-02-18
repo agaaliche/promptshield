@@ -11,6 +11,7 @@ import {
   Shield,
   ScanSearch,
   Loader2,
+  Upload,
 } from "lucide-react";
 import { useDocumentStore, useRegionStore, useUIStore, useVaultStore, useDocLoadingStore, useSidebarStore, useDetectionStore } from "../store";
 import {
@@ -42,7 +43,7 @@ import useLabelConfig from "../hooks/useLabelConfig";
 export default function DocumentViewer() {
   const { activeDocId, documents, activePage, setActivePage } = useDocumentStore();
   const { regions, updateRegionAction, removeRegion, setRegions, updateRegionBBox, updateRegion, selectedRegionIds, setSelectedRegionIds, toggleSelectedRegionId, clearSelection, pushUndo, undo, redo, canUndo, canRedo } = useRegionStore();
-  const { zoom, setZoom, isProcessing, setIsProcessing, setStatusMessage, setDrawMode } = useUIStore();
+  const { zoom, setZoom, isProcessing, setIsProcessing, setStatusMessage, setDrawMode, setCurrentView } = useUIStore();
   const { vaultUnlocked, setVaultUnlocked } = useVaultStore();
   const { docLoading, docLoadingMessage, docDetecting, uploadProgressId, uploadProgressDocId, uploadProgressDocName, uploadProgressPhase } = useDocLoadingStore();
   const { rightSidebarWidth, setRightSidebarWidth, isSidebarDragging, leftSidebarWidth } = useSidebarStore();
@@ -326,6 +327,19 @@ export default function DocumentViewer() {
 
       {/* Toolbar */}
       <div ref={topToolbarRef} style={styles.toolbar}>
+        <button
+          className="btn-warning"
+          onClick={() => setCurrentView("upload")}
+          disabled={isProcessing}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <Upload size={14} />
+          Upload
+        </button>
         <button
           className="btn-primary"
           onClick={() => setShowAutodetect(!showAutodetect)}

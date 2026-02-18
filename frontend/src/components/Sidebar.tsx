@@ -19,10 +19,9 @@ import {
   ArrowUpDown,
   X,
 } from "lucide-react";
-import { useDocumentStore, useRegionStore, useUIStore, useConnectionStore, useSidebarStore, useUploadStore } from "../store";
+import { useDocumentStore, useRegionStore, useUIStore, useSidebarStore, useUploadStore } from "../store";
 import { deleteDocument } from "../api";
 import { useDocumentUpload, ACCEPTED_FILE_TYPES } from "../hooks/useDocumentUpload";
-import LicenseStatus from "./LicenseStatus";
 import UserMenu from "./UserMenu";
 
 type View = "upload" | "viewer" | "detokenize" | "settings";
@@ -36,7 +35,6 @@ type SortDir = "asc" | "desc";
 
 export default function Sidebar() {
   const { currentView, setCurrentView, isProcessing, setIsProcessing, setStatusMessage } = useUIStore();
-  const { backendReady } = useConnectionStore();
   const { documents, activeDocId, setActiveDocId, setDocuments, updateDocument } = useDocumentStore();
   const { setRegions, regions: storeRegions } = useRegionStore();
   const { leftSidebarWidth, setLeftSidebarWidth } = useSidebarStore();
@@ -397,22 +395,14 @@ export default function Sidebar() {
             <span>{item.label}</span>
           </button>
         ))}
-
-        {/* User account */}
-        <div style={{ marginTop: 4 }}>
-          <UserMenu />
-        </div>
       </nav>
 
-      {/* License info */}
-      <LicenseStatus />
+      {/* Spacer */}
+      <div style={{ flex: 1 }} />
 
-      {/* Status */}
-      <div style={sidebarStyles.statusArea}>
-        <div style={sidebarStyles.statusDot(backendReady)} />
-        <span style={sidebarStyles.statusText}>
-          {backendReady ? "Local database connected" : "Connecting..."}
-        </span>
+      {/* User account - bottom */}
+      <div style={{ marginBottom: 20 }}>
+        <UserMenu />
       </div>
 
       {/* Resize handle */}

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import re as _re
 import unicodedata as _unicodedata
+
+from core.detection import detection_config as det_cfg
 from pathlib import Path
 from typing import Set
 
@@ -1068,7 +1070,7 @@ _PERSON_SHORT_NAME_WHITELIST: frozenset[str] = frozenset({
 # into two known dictionary parts (with optional Fugen-element s/es/n/en/er/e)
 # it is almost certainly a common noun, not a person name.
 
-_FUGENLAUTE = ("es", "en", "er", "ns", "s", "n", "e")  # longest-first
+_FUGENLAUTE = det_cfg.GERMAN_FUGENLAUTE  # longest-first
 
 
 def _is_german_compound_noun(word: str) -> bool:

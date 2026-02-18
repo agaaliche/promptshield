@@ -19,6 +19,7 @@ import uuid
 from collections import defaultdict
 
 from core.detection.bbox_utils import _resolve_bbox_overlaps
+from core.detection import detection_config as det_cfg
 from core.detection.block_offsets import (
     _clamp_bbox,
     _compute_block_offsets,
@@ -48,11 +49,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Tuning constants
+# Tuning constants (see detection_config.py for documentation)
 # ---------------------------------------------------------------------------
-_PROPAGATION_OVERLAP_RATIO = 0.5  # min overlap to consider intervals duplicate
-_PROPAGATION_CONF_FACTOR = 0.85  # confidence penalty for propagated regions
-_MIN_BBOX_DIMENSION = 1.0  # minimum bbox width/height in PDF points
+_PROPAGATION_OVERLAP_RATIO = det_cfg.PROPAGATION_OVERLAP_RATIO
+_PROPAGATION_CONF_FACTOR = det_cfg.PROPAGATION_CONF_FACTOR
+_MIN_BBOX_DIMENSION = det_cfg.MIN_BBOX_DIMENSION
 
 
 # Characters treated as transparent for entity matching —

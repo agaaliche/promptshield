@@ -10,6 +10,7 @@ import re
 import uuid
 
 from core.config import config
+from core.detection import detection_config as det_cfg
 from core.detection.bbox_utils import _resolve_bbox_overlaps
 from core.detection.block_offsets import (
     _clamp_bbox,
@@ -47,13 +48,11 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Spatial proximity — max gap between consecutive linked bboxes
+# (see detection_config.py for documentation)
 # ---------------------------------------------------------------------------
 
-_MAX_Y_GAP_FACTOR: float = 3.0
-"""Consecutive bboxes with y-gap > factor × avg_line_height are split."""
-
-_MIN_Y_GAP_ABS: float = 15.0
-"""Absolute minimum threshold (pt) so very small text doesn't over-split."""
+_MAX_Y_GAP_FACTOR = det_cfg.MAX_Y_GAP_FACTOR
+_MIN_Y_GAP_ABS = det_cfg.MIN_Y_GAP_ABS
 
 
 def _split_bboxes_by_proximity(
@@ -181,9 +180,9 @@ def _merge_detections(
             "priority": 1 if m.pii_type in structured_types else 3,
         })
 
-    # ── Cross-layer confidence boost ─────────────────────────────────
-    _BOOST_2_LAYERS = 0.10
-    _BOOST_3_LAYERS = 0.15
+    # ── Cross-layer confidence boost (see detection_config.py) ────────
+    _BOOST_2_LAYERS = det_cfg.BOOST_2_LAYERS
+    _BOOST_3_LAYERS = det_cfg.BOOST_3_LAYERS
 
     idx_sorted = sorted(range(len(candidates)), key=lambda k: candidates[k]["start"])
 
@@ -223,7 +222,7 @@ def _merge_detections(
     #   1. Enclosed in quotation marks ("...", «...», '...', etc.)
     #   2. Rendered in bold or italic font
     #   3. Horizontally centred on the page (blank margins both sides)
-    _BOOST_VISUAL = 0.15
+    _BOOST_VISUAL = det_cfg.BOOST_VISUAL
 
     # Pre-compute block offsets once for bold/italic + centring checks
     _vg_block_offsets = _compute_block_offsets(
@@ -320,7 +319,7 @@ def _merge_detections(
                 right_edge = max(b.bbox.x1 for b in line_blocks)
                 left_margin = left_edge / page_width
                 right_margin = (page_width - right_edge) / page_width
-                _MIN_MARGIN = 0.12  # at least 12 % blank on each side
+                _MIN_MARGIN = det_cfg.CENTERED_MIN_MARGIN
                 if left_margin >= _MIN_MARGIN and right_margin >= _MIN_MARGIN:
                     c["confidence"] = min(1.0, c["confidence"] + _BOOST_VISUAL)
                     c["has_visual_boost"] = True

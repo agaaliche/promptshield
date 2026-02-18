@@ -15,7 +15,7 @@ import { styles } from "./settings/settingsStyles";
 import VaultSection from "./settings/VaultSection";
 import DetectionSection from "./settings/DetectionSection";
 import LLMEngineSection from "./settings/LLMEngineSection";
-import LicenseSection from "./settings/LicenseSection";
+import AccountSection from "./settings/AccountSection";
 import UpdatesSection from "./settings/UpdatesSection";
 
 const TABS = [
@@ -23,7 +23,7 @@ const TABS = [
   { id: "ai",        label: "AI Engine", icon: "🧠" },
   { id: "vault",     label: "Vault",     icon: "🔒" },
   { id: "updates",   label: "Updates",   icon: "🚀" },
-  { id: "general",   label: "License",   icon: "⚙️" },
+  { id: "general",   label: "Account",   icon: "⚙️" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -125,7 +125,7 @@ export default function SettingsView() {
       {activeTab === "ai" && <LLMEngineSection />}
       {activeTab === "vault" && <VaultSection vaultStats={vaultStats} setVaultStats={setVaultStats} />}
       {activeTab === "updates" && <UpdatesSection />}
-      {activeTab === "general" && <LicenseSection />}
+      {activeTab === "general" && <AccountSection />}
     </div>
   );
 }

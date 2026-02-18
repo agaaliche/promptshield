@@ -1,11 +1,11 @@
-/** License section — plan info, auto-validate toggle, deactivate button. */
+/** Account section — plan info, auto-validate toggle, deactivate/logout. */
 
 import { useState } from "react";
-import { Lock, Globe } from "lucide-react";
+import { User, Globe, LogOut } from "lucide-react";
 import { useLicenseStore, useSnackbarStore } from "../../store";
 import { Section } from "./settingsStyles";
 
-export default function LicenseSection() {
+export default function AccountSection() {
   const { licenseStatus, autoValidateOnline, setAutoValidateOnline } = useLicenseStore();
   const { addSnackbar } = useSnackbarStore();
   const [deactivating, setDeactivating] = useState(false);
@@ -36,8 +36,18 @@ export default function LicenseSection() {
         : "#3fb950")
     : "#f85149";
 
+  const handleLogout = async () => {
+    try {
+      const { deactivateLicense } = await import("../../licenseApi");
+      await deactivateLicense();
+      addSnackbar("Logged out", "info");
+    } catch {
+      addSnackbar("Failed to log out", "error");
+    }
+  };
+
   return (
-    <Section title="License" icon={<Lock size={16} />}>
+    <Section title="Account" icon={<User size={16} />}>
       {payload && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -72,42 +82,61 @@ export default function LicenseSection() {
         </p>
       </div>
 
-      <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+      <div style={{ marginTop: 16, display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={handleDeactivate}
+            disabled={deactivating}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              border: "1px solid var(--border-color)",
+              background: "transparent",
+              color: "var(--text-secondary)",
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            {deactivating ? "Deactivating..." : "Deactivate License"}
+          </button>
+          <a
+            href="https://promptshield.ca"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              border: "1px solid var(--border-color)",
+              background: "transparent",
+              color: "var(--accent-primary)",
+              fontSize: 12,
+              cursor: "pointer",
+              textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <Globe size={12} /> Manage Account
+          </a>
+        </div>
         <button
-          onClick={handleDeactivate}
-          disabled={deactivating}
+          onClick={handleLogout}
           style={{
             padding: "6px 12px",
             borderRadius: 6,
             border: "1px solid var(--border-color)",
             background: "transparent",
-            color: "var(--text-secondary)",
+            color: "var(--accent-danger, #f85149)",
             fontSize: 12,
             cursor: "pointer",
-          }}
-        >
-          {deactivating ? "Deactivating..." : "Deactivate License"}
-        </button>
-        <a
-          href="https://promptshield.ca"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            padding: "6px 12px",
-            borderRadius: 6,
-            border: "1px solid var(--border-color)",
-            background: "transparent",
-            color: "var(--accent-primary)",
-            fontSize: 12,
-            cursor: "pointer",
-            textDecoration: "none",
             display: "inline-flex",
             alignItems: "center",
             gap: 4,
           }}
         >
-          <Globe size={12} /> Manage Account
-        </a>
+          <LogOut size={12} /> Logout
+        </button>
       </div>
     </Section>
   );

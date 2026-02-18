@@ -19,7 +19,7 @@ import {
   ArrowUpDown,
   X,
 } from "lucide-react";
-import { useDocumentStore, useRegionStore, useUIStore, useSidebarStore, useUploadStore } from "../store";
+import { useDocumentStore, useRegionStore, useUIStore, useConnectionStore, useSidebarStore, useUploadStore } from "../store";
 import { deleteDocument } from "../api";
 import { useDocumentUpload, ACCEPTED_FILE_TYPES } from "../hooks/useDocumentUpload";
 import UserMenu from "./UserMenu";
@@ -39,6 +39,7 @@ export default function Sidebar() {
   const { setRegions, regions: storeRegions } = useRegionStore();
   const { leftSidebarWidth, setLeftSidebarWidth } = useSidebarStore();
   const { uploadQueue, dismissingErrorUploads } = useUploadStore();
+  const { backendReady } = useConnectionStore();
 
   const isDragging = useRef(false);
   const startX = useRef(0);
@@ -403,6 +404,14 @@ export default function Sidebar() {
       {/* User account - bottom */}
       <div style={{ marginBottom: 20 }}>
         <UserMenu />
+      </div>
+
+      {/* Connection status */}
+      <div style={sidebarStyles.statusArea}>
+        <div style={sidebarStyles.statusDot(backendReady)} />
+        <span style={sidebarStyles.statusText}>
+          {backendReady ? "Local database connected" : "Connecting..."}
+        </span>
       </div>
 
       {/* Resize handle */}

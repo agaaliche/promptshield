@@ -325,7 +325,10 @@ export default function DocumentViewer() {
       )}
 
       {/* Toolbar */}
-      <div ref={topToolbarRef} style={styles.toolbar}>
+      <div ref={topToolbarRef} style={{
+        ...styles.toolbar,
+        paddingRight: 16 + (sidebarCollapsed ? 60 : rightSidebarWidth),
+      }}>
         <button
           className="btn-warning"
           onClick={() => setCurrentView("upload")}
@@ -393,7 +396,7 @@ export default function DocumentViewer() {
           Export
         </button>
 
-        {/* Center section: Page navigation + Zoom */}
+        {/* Center section: Zoom controls */}
         <div style={{
           flex: 1,
           display: "flex",
@@ -402,68 +405,61 @@ export default function DocumentViewer() {
           minWidth: 0,
           overflow: "hidden",
         }}>
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-          }}>
-            {pageCount > 1 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <button className="btn-ghost btn-sm" onClick={() => setActivePage(1)} disabled={activePage <= 1} title="First page" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
-                  <ChevronsLeft size={16} />
-                </button>
-                <button className="btn-ghost btn-sm" onClick={() => setActivePage(Math.max(1, activePage - 1))} disabled={activePage <= 1} title="Previous page" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
-                  <ChevronLeft size={16} />
-                </button>
-                <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 4px" }}>
-                  <input
-                    type="number"
-                    min={1}
-                    max={pageCount}
-                    value={activePage}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value, 10);
-                      if (!isNaN(val) && val >= 1 && val <= pageCount) setActivePage(val);
-                    }}
-                    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                    style={{
-                      width: 36, padding: "3px 4px", fontSize: 13, fontWeight: 600, textAlign: "center",
-                      background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-                      borderRadius: 4, color: "var(--text-primary)", outline: "none",
-                      MozAppearance: "textfield",
-                    }}
-                    title="Go to page"
-                  />
-                  <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>/</span>
-                  <span style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500 }}>{pageCount}</span>
-                </div>
-                <button className="btn-ghost btn-sm" onClick={() => setActivePage(Math.min(pageCount, activePage + 1))} disabled={activePage >= pageCount} title="Next page" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
-                  <ChevronRight size={16} />
-                </button>
-                <button className="btn-ghost btn-sm" onClick={() => setActivePage(pageCount)} disabled={activePage >= pageCount} title="Last page" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
-                  <ChevronsRight size={16} />
-                </button>
-              </div>
-            )}
-
-            {/* Zoom controls */}
-            <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: pageCount > 1 ? 25 : 0 }}>
-              <button className="btn-ghost btn-sm" onClick={() => setZoom(Math.max(0.1, zoom - 0.1))} title="Zoom out" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
-                <ZoomOut size={16} />
-              </button>
-              <span
-                style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", minWidth: 40, textAlign: "center", cursor: "pointer" }}
-                onClick={() => setZoom(1)}
-                title="Reset zoom to 100%"
-              >
-                {Math.round(zoom * 100)}%
-              </span>
-              <button className="btn-ghost btn-sm" onClick={() => setZoom(zoom + 0.1)} title="Zoom in" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
-                <ZoomIn size={16} />
-              </button>
-            </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <button className="btn-ghost btn-sm" onClick={() => setZoom(Math.max(0.1, zoom - 0.1))} title="Zoom out" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
+              <ZoomOut size={16} />
+            </button>
+            <span
+              style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", minWidth: 40, textAlign: "center", cursor: "pointer" }}
+              onClick={() => setZoom(1)}
+              title="Reset zoom to 100%"
+            >
+              {Math.round(zoom * 100)}%
+            </span>
+            <button className="btn-ghost btn-sm" onClick={() => setZoom(zoom + 0.1)} title="Zoom in" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
+              <ZoomIn size={16} />
+            </button>
           </div>
         </div>
+
+        {/* Right section: Page navigation */}
+        {pageCount > 1 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <button className="btn-ghost btn-sm" onClick={() => setActivePage(1)} disabled={activePage <= 1} title="First page" style={{ padding: 6, color: "var(--text-secondary)", background: "var(--bg-tertiary)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <ChevronsLeft size={16} />
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => setActivePage(Math.max(1, activePage - 1))} disabled={activePage <= 1} title="Previous page" style={{ padding: 6, color: "var(--text-secondary)", background: "var(--bg-tertiary)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <ChevronLeft size={16} />
+            </button>
+            <input
+              type="number"
+              className="no-spinner"
+              min={1}
+              max={pageCount}
+              value={activePage}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val) && val >= 1 && val <= pageCount) setActivePage(val);
+              }}
+              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              style={{
+                width: 36, padding: "3px 4px", fontSize: 13, fontWeight: 600, textAlign: "center",
+                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                borderRadius: 4, color: "var(--text-primary)", outline: "none",
+              }}
+              title="Go to page"
+            />
+            <button className="btn-ghost btn-sm" onClick={() => setActivePage(Math.min(pageCount, activePage + 1))} disabled={activePage >= pageCount} title="Next page" style={{ padding: 6, color: "var(--text-secondary)", background: "var(--bg-tertiary)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <ChevronRight size={16} />
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => setActivePage(pageCount)} disabled={activePage >= pageCount} title="Last page" style={{ padding: 6, color: "var(--text-secondary)", background: "var(--bg-tertiary)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <ChevronsRight size={16} />
+            </button>
+            <div style={{ padding: "4px 10px", background: "var(--bg-tertiary)", borderRadius: 14, fontSize: 12, color: "var(--text-secondary)", fontWeight: 500, marginLeft: 20 }}>
+              {pageCount} pages
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Content area — everything below toolbar */}

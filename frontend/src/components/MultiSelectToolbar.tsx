@@ -11,7 +11,7 @@ import {
   Key,
   ReplaceAll,
 } from "lucide-react";
-import useDrag from "../hooks/useDrag";
+import useDraggableToolbar from "../hooks/useDraggableToolbar";
 import {
   batchDeleteRegions,
   setRegionAction,

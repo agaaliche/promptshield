@@ -19,231 +19,63 @@ from typing import Callable, NamedTuple
 
 from models.schemas import PIIType
 
+# Import from split-out modules (M8: modular NER architecture)
+from core.detection.ner_types import (
+    NERMatch,
+    LangNERConfig as _LangNERConfig,
+    SPACY_EN_LABEL_MAP,
+    SPACY_FR_LABEL_MAP,
+    SPACY_IT_LABEL_MAP,
+    SPACY_DE_LABEL_MAP,
+    SPACY_ES_LABEL_MAP,
+    SPACY_NL_LABEL_MAP,
+    SPACY_PT_LABEL_MAP,
+    MIN_ENTITY_LENGTH,
+)
+from core.detection.ner_stopwords import (
+    get_en_stop_words as _get_en_stop_words,
+    get_fr_stop_words as _get_fr_stop_words,
+    get_it_stop_words as _get_it_stop_words,
+    get_de_stop_words as _get_de_stop_words,
+    get_es_stop_words as _get_es_stop_words,
+    get_nl_stop_words as _get_nl_stop_words,
+    get_pt_stop_words as _get_pt_stop_words,
+    get_en_stop_lower as _get_en_stop_lower,
+    get_fr_stop_lower as _get_fr_stop_lower,
+    get_it_stop_lower as _get_it_stop_lower,
+    get_de_stop_lower as _get_de_stop_lower,
+    get_es_stop_lower as _get_es_stop_lower,
+    get_nl_stop_lower as _get_nl_stop_lower,
+    get_pt_stop_lower as _get_pt_stop_lower,
+    is_language as _is_language,
+    is_english_text as _is_english_text,
+    is_french_text as _is_french_text,
+    is_italian_text as _is_italian_text,
+    is_german_text as _is_german_text,
+    is_spanish_text as _is_spanish_text,
+    is_dutch_text as _is_dutch_text,
+    is_portuguese_text as _is_portuguese_text,
+    LANG_SAMPLE_SIZE as _LANG_SAMPLE_SIZE,
+    ENGLISH_STOPWORD_THRESHOLD as _ENGLISH_STOPWORD_THRESHOLD,
+    FRENCH_STOPWORD_THRESHOLD as _FRENCH_STOPWORD_THRESHOLD,
+    ITALIAN_STOPWORD_THRESHOLD as _ITALIAN_STOPWORD_THRESHOLD,
+)
+
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Stop words — lazy-loaded to avoid ~200-400ms import cost at module level
-# ---------------------------------------------------------------------------
-
-_EN_STOP_WORDS: set[str] | None = None
-_FR_STOP_WORDS: set[str] | None = None
-_IT_STOP_WORDS: set[str] | None = None
-_DE_STOP_WORDS: set[str] | None = None
-_ES_STOP_WORDS: set[str] | None = None
-_NL_STOP_WORDS: set[str] | None = None
-_PT_STOP_WORDS: set[str] | None = None
-
-
-def _get_en_stop_words() -> set[str]:
-    global _EN_STOP_WORDS
-    if _EN_STOP_WORDS is None:
-        from spacy.lang.en.stop_words import STOP_WORDS
-        _EN_STOP_WORDS = STOP_WORDS
-    return _EN_STOP_WORDS
-
-
-def _get_fr_stop_words() -> set[str]:
-    global _FR_STOP_WORDS
-    if _FR_STOP_WORDS is None:
-        from spacy.lang.fr.stop_words import STOP_WORDS
-        _FR_STOP_WORDS = STOP_WORDS
-    return _FR_STOP_WORDS
-
-
-def _get_it_stop_words() -> set[str]:
-    global _IT_STOP_WORDS
-    if _IT_STOP_WORDS is None:
-        from spacy.lang.it.stop_words import STOP_WORDS
-        _IT_STOP_WORDS = STOP_WORDS
-    return _IT_STOP_WORDS
-
-
-def _get_de_stop_words() -> set[str]:
-    global _DE_STOP_WORDS
-    if _DE_STOP_WORDS is None:
-        from spacy.lang.de.stop_words import STOP_WORDS
-        _DE_STOP_WORDS = STOP_WORDS
-    return _DE_STOP_WORDS
-
-
-def _get_es_stop_words() -> set[str]:
-    global _ES_STOP_WORDS
-    if _ES_STOP_WORDS is None:
-        from spacy.lang.es.stop_words import STOP_WORDS
-        _ES_STOP_WORDS = STOP_WORDS
-    return _ES_STOP_WORDS
-
-
-def _get_nl_stop_words() -> set[str]:
-    global _NL_STOP_WORDS
-    if _NL_STOP_WORDS is None:
-        from spacy.lang.nl.stop_words import STOP_WORDS
-        _NL_STOP_WORDS = STOP_WORDS
-    return _NL_STOP_WORDS
-
-
-def _get_pt_stop_words() -> set[str]:
-    global _PT_STOP_WORDS
-    if _PT_STOP_WORDS is None:
-        from spacy.lang.pt.stop_words import STOP_WORDS
-        _PT_STOP_WORDS = STOP_WORDS
-    return _PT_STOP_WORDS
+# Re-export label maps with original names for backward compatibility
+_SPACY_LABEL_MAP = SPACY_EN_LABEL_MAP
+_SPACY_FR_LABEL_MAP = SPACY_FR_LABEL_MAP
+_SPACY_IT_LABEL_MAP = SPACY_IT_LABEL_MAP
+_SPACY_DE_LABEL_MAP = SPACY_DE_LABEL_MAP
+_SPACY_ES_LABEL_MAP = SPACY_ES_LABEL_MAP
+_SPACY_NL_LABEL_MAP = SPACY_NL_LABEL_MAP
+_SPACY_PT_LABEL_MAP = SPACY_PT_LABEL_MAP
+_MIN_ENTITY_LENGTH = MIN_ENTITY_LENGTH
 
 # ---------------------------------------------------------------------------
-# Lightweight language detection — skip English NER on non-English text
+# False-positive filters and stopwords (PII detection specific)
 # ---------------------------------------------------------------------------
-# Uses spaCy's built-in stop word lists so we need zero extra dependencies.
-# Lazy-loaded to avoid ~200-400ms module-level import cost.
-
-_EN_STOP_LOWER: set[str] | None = None
-_FR_STOP_LOWER: set[str] | None = None
-_IT_STOP_LOWER: set[str] | None = None
-_DE_STOP_LOWER: set[str] | None = None
-_ES_STOP_LOWER: set[str] | None = None
-_NL_STOP_LOWER: set[str] | None = None
-_PT_STOP_LOWER: set[str] | None = None
-
-
-def _get_en_stop_lower() -> set[str]:
-    global _EN_STOP_LOWER
-    if _EN_STOP_LOWER is None:
-        _EN_STOP_LOWER = {w.lower() for w in _get_en_stop_words()}
-    return _EN_STOP_LOWER
-
-
-def _get_fr_stop_lower() -> set[str]:
-    global _FR_STOP_LOWER
-    if _FR_STOP_LOWER is None:
-        _FR_STOP_LOWER = {w.lower() for w in _get_fr_stop_words()}
-    return _FR_STOP_LOWER
-
-
-def _get_it_stop_lower() -> set[str]:
-    global _IT_STOP_LOWER
-    if _IT_STOP_LOWER is None:
-        _IT_STOP_LOWER = {w.lower() for w in _get_it_stop_words()}
-    return _IT_STOP_LOWER
-
-
-def _get_de_stop_lower() -> set[str]:
-    global _DE_STOP_LOWER
-    if _DE_STOP_LOWER is None:
-        _DE_STOP_LOWER = {w.lower() for w in _get_de_stop_words()}
-    return _DE_STOP_LOWER
-
-
-def _get_es_stop_lower() -> set[str]:
-    global _ES_STOP_LOWER
-    if _ES_STOP_LOWER is None:
-        _ES_STOP_LOWER = {w.lower() for w in _get_es_stop_words()}
-    return _ES_STOP_LOWER
-
-
-def _get_nl_stop_lower() -> set[str]:
-    global _NL_STOP_LOWER
-    if _NL_STOP_LOWER is None:
-        _NL_STOP_LOWER = {w.lower() for w in _get_nl_stop_words()}
-    return _NL_STOP_LOWER
-
-
-def _get_pt_stop_lower() -> set[str]:
-    global _PT_STOP_LOWER
-    if _PT_STOP_LOWER is None:
-        _PT_STOP_LOWER = {w.lower() for w in _get_pt_stop_words()}
-    return _PT_STOP_LOWER
-
-
-_LANG_SAMPLE_SIZE = 2000  # characters to sample for language check
-_ENGLISH_STOPWORD_THRESHOLD = 0.15  # 15% — English text typically 25-40%
-_FRENCH_STOPWORD_THRESHOLD = 0.12   # 12% — French text typically 20-35%
-_ITALIAN_STOPWORD_THRESHOLD = 0.12  # 12% — Italian text typically 20-35%
-
-
-def _is_language(
-    text: str,
-    stopwords: set[str],
-    threshold: float,
-    lang_label: str,
-    short_default: bool = False,
-) -> bool:
-    """Unified language-detection heuristic (M7: dedup EN/FR/IT).
-
-    Samples the first ~2 000 characters, tokenises by whitespace,
-    and checks what fraction of tokens are in the given *stopwords* set.
-    *short_default* is returned when the sample is too short to judge
-    (True for English so we don't block PII, False for others).
-    """
-    sample = text[:_LANG_SAMPLE_SIZE]
-    words = [w.lower().strip(".,;:!?()[]{}\"'") for w in sample.split()]
-    words = [w for w in words if len(w) >= 2]  # drop 1-char tokens
-    if len(words) < 20:
-        return short_default
-    stop_count = sum(1 for w in words if w in stopwords)
-    ratio = stop_count / len(words)
-    logger.debug(
-        "%s language check: %d/%d words (%.1f%%) are stop words",
-        lang_label, stop_count, len(words), ratio * 100,
-    )
-    return ratio >= threshold
-
-
-def _is_english_text(text: str) -> bool:
-    return _is_language(text, _get_en_stop_lower(), _ENGLISH_STOPWORD_THRESHOLD, "English", short_default=True)
-
-
-def _is_french_text(text: str) -> bool:
-    return _is_language(text, _get_fr_stop_lower(), _FRENCH_STOPWORD_THRESHOLD, "French")
-
-
-def _is_italian_text(text: str) -> bool:
-    return _is_language(text, _get_it_stop_lower(), _ITALIAN_STOPWORD_THRESHOLD, "Italian")
-
-
-def _is_german_text(text: str) -> bool:
-    return _is_language(text, _get_de_stop_lower(), 0.12, "German")
-
-
-def _is_spanish_text(text: str) -> bool:
-    return _is_language(text, _get_es_stop_lower(), 0.12, "Spanish")
-
-
-def _is_dutch_text(text: str) -> bool:
-    return _is_language(text, _get_nl_stop_lower(), 0.12, "Dutch")
-
-
-def _is_portuguese_text(text: str) -> bool:
-    return _is_language(text, _get_pt_stop_lower(), 0.12, "Portuguese")
-
-
-class NERMatch(NamedTuple):
-    start: int
-    end: int
-    text: str
-    pii_type: PIIType
-    confidence: float
-
-
-# Map spaCy entity labels to our PII types.
-# Only keep types that are genuinely PII — drop NORP (nationalities),
-# FAC (facilities), MONEY (amounts), and DATE (handled better by regex).
-_SPACY_LABEL_MAP: dict[str, PIIType] = {
-    "PERSON": PIIType.PERSON,
-    "ORG": PIIType.ORG,
-    "GPE": PIIType.LOCATION,      # Countries, cities, states
-    "LOC": PIIType.LOCATION,      # Non-GPE locations
-    # DATE intentionally omitted — regex handles concrete dates much better;
-    # NER dates are mostly noise ("Q4 2024", "the Year Ended ...", "Tuesday").
-}
-
-# Minimum entity text length per type (filter out noise)
-_MIN_ENTITY_LENGTH: dict[PIIType, int] = {
-    PIIType.PERSON: 3,
-    PIIType.ORG: 2,
-    PIIType.LOCATION: 2,
-    PIIType.DATE: 4,
-    PIIType.ADDRESS: 3,
-    PIIType.UNKNOWN: 3,
-}
 
 # Common false-positive strings for PERSON type
 _PERSON_STOPWORDS: set[str] = {

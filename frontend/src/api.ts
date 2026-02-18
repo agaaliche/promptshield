@@ -7,7 +7,9 @@ import type {
   DetectionResult,
   DetokenizeResponse,
   DocumentInfo,
+  DocumentListItem,
   LLMStatus,
+  PaginatedDocumentList,
   PIILabelEntry,
   PIIRegion,
   RedetectResult,
@@ -135,8 +137,44 @@ export async function getDocument(docId: string): Promise<DocumentInfo> {
   return request<DocumentInfo>(`/api/documents/${docId}`);
 }
 
-export async function listDocuments(): Promise<DocumentInfo[]> {
-  return request<DocumentInfo[]>("/api/documents");
+/**
+ * List documents with optional pagination.
+ * @param options.page - Page number (1-indexed), default 1
+ * @param options.limit - Items per page, default 50
+ * @param options.paginated - Return paginated response with metadata, default false
+ */
+export async function listDocuments(options?: {
+  page?: number;
+  limit?: number;
+  paginated?: true;
+}): Promise<PaginatedDocumentList>;
+export async function listDocuments(options?: {
+  page?: number;
+  limit?: number;
+  paginated?: false;
+}): Promise<DocumentListItem[]>;
+export async function listDocuments(options?: {
+  page?: number;
+  limit?: number;
+  paginated?: boolean;
+}): Promise<PaginatedDocumentList | DocumentListItem[]>;
+export async function listDocuments(options: {
+  page?: number;
+  limit?: number;
+  paginated?: boolean;
+} = {}): Promise<PaginatedDocumentList | DocumentListItem[]> {
+  const params = new URLSearchParams();
+  if (options.page !== undefined) params.set("page", String(options.page));
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  // Default to paginated=false for backward compatibility with existing code
+  params.set("paginated", String(options.paginated ?? false));
+  
+  const url = `/api/documents?${params.toString()}`;
+  
+  if (options.paginated) {
+    return request<PaginatedDocumentList>(url);
+  }
+  return request<DocumentListItem[]>(url);
 }
 
 export async function deleteDocument(docId: string): Promise<void> {

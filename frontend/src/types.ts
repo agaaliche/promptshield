@@ -66,6 +66,29 @@ export interface DocumentInfo {
   created_at: string;
 }
 
+/** Summary of a document for list views */
+export interface DocumentListItem {
+  doc_id: string;
+  original_filename: string;
+  filename: string;
+  file_path: string;
+  mime_type: string;
+  page_count: number;
+  status: DocumentStatus;
+  regions_count: number;
+  is_protected: boolean;
+  created_at: string;
+}
+
+/** Paginated list of documents */
+export interface PaginatedDocumentList {
+  items: DocumentListItem[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
 export interface UploadResponse {
   doc_id: string;
   filename: string;

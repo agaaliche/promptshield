@@ -7,6 +7,7 @@ import { cancelAllRequests } from "./api";
 import type {
   BBox,
   DocumentInfo,
+  DocumentListItem,
   PIIRegion,
   RegionAction,
   LLMStatus,
@@ -14,6 +15,13 @@ import type {
   SnackbarItem,
   LicenseStatus,
 } from "./types";
+
+/**
+ * Document entry in the store. 
+ * Contains lightweight fields from list API, plus optional full data (pages/regions)
+ * that gets populated when a document is opened.
+ */
+type DocumentEntry = DocumentListItem & Partial<Pick<DocumentInfo, "pages" | "regions">>;
 
 interface AppState {
   // ── License ──
@@ -34,10 +42,10 @@ interface AppState {
   setVaultUnlocked: (v: boolean) => void;
 
   // ── Documents ──
-  documents: DocumentInfo[];
-  setDocuments: (docs: DocumentInfo[]) => void;
-  addDocument: (doc: DocumentInfo) => void;
-  updateDocument: (docId: string, partial: Partial<DocumentInfo>) => void;
+  documents: DocumentEntry[];
+  setDocuments: (docs: DocumentEntry[]) => void;
+  addDocument: (doc: DocumentEntry) => void;
+  updateDocument: (docId: string, partial: Partial<DocumentEntry>) => void;
 
   // ── Active document ──
   activeDocId: string | null;

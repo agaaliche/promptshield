@@ -1,14 +1,17 @@
-/** User menu — avatar button at toolbar right edge.
+/** User menu — shows user info in sidebar.
  *
- * Click shows a dropdown with:
+ * Always visible:
+ *   - Avatar with initials
  *   - User name (from license payload email)
  *   - Email
+ *
+ * On hover/click shows:
  *   - Subscription plan + days remaining
  *   - Sign Out button (deactivates local license)
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { User, LogOut, Crown, Clock } from "lucide-react";
+import { User, LogOut, Crown, Clock, ChevronDown, ChevronUp } from "lucide-react";
 import { useLicenseStore, useSnackbarStore } from "../store";
 import { deactivateLicense } from "../licenseApi";
 import { auth } from "../firebaseConfig";
@@ -16,31 +19,32 @@ import { auth } from "../firebaseConfig";
 export default function UserMenu() {
   const { licenseStatus } = useLicenseStore();
   const { addSnackbar } = useSnackbarStore();
-  const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Close on outside click
   useEffect(() => {
-    if (!open) return;
+    if (!expanded) return;
     const handler = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setOpen(false);
+        setExpanded(false);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
+  }, [expanded]);
 
   // Close on Escape
   useEffect(() => {
-    if (!open) return;
+    if (!expanded) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") setExpanded(false);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [open]);
+  }, [expanded]);
 
   const handleSignOut = useCallback(async () => {
     setBusy(true);
@@ -54,6 +58,16 @@ export default function UserMenu() {
     }
   }, [addSnackbar]);
 
+  const handleMouseEnter = useCallback(() => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    hoverTimeoutRef.current = setTimeout(() => setExpanded(true), 150);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    hoverTimeoutRef.current = setTimeout(() => setExpanded(false), 300);
+  }, []);
+
   if (!licenseStatus?.valid) return null;
 
   const payload = licenseStatus.payload;
@@ -61,8 +75,8 @@ export default function UserMenu() {
   const daysLeft = licenseStatus.days_remaining;
 
   // Derive display values
-  const initials = email
-    .split("@")[0]
+  const userName = email.split("@")[0];
+  const initials = userName
     .split(".")
     .map((s) => s[0]?.toUpperCase() ?? "")
     .join("")
@@ -94,47 +108,41 @@ export default function UserMenu() {
       : "#3fb950";
 
   return (
-    <div ref={menuRef} style={{ position: "relative" }}>
-      {/* Avatar button */}
-      <button
-        onClick={() => setOpen(!open)}
-        title={email}
-        style={styles.avatarBtn}
+    <div
+      ref={menuRef}
+      style={styles.container}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      {/* Always visible: avatar + name + email */}
+      <div
+        style={styles.header}
+        onClick={() => setExpanded(!expanded)}
       >
-        <span style={styles.avatarCircle}>{initials || <User size={14} />}</span>
-      </button>
+        <div style={styles.avatarCircle}>
+          {initials || <User size={14} />}
+        </div>
+        <div style={styles.userInfo}>
+          <div style={styles.userName}>{userName}</div>
+          <div style={styles.userEmail}>{email}</div>
+        </div>
+        {expanded ? <ChevronUp size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} /> : <ChevronDown size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />}
+      </div>
 
-      {/* Dropdown */}
-      {open && (
-        <div style={styles.dropdown}>
-          {/* User header */}
-          <div style={styles.userHeader}>
-            <div style={styles.avatarLarge}>
-              {initials || <User size={20} />}
-            </div>
-            <div style={styles.userInfo}>
-              <div style={styles.userName}>{email.split("@")[0]}</div>
-              <div style={styles.userEmail}>{email}</div>
-            </div>
-          </div>
-
-          <div style={styles.divider} />
-
+      {/* Expandable section: subscription + logout */}
+      {expanded && (
+        <div style={styles.expandedSection}>
           {/* Subscription info */}
-          <div style={styles.section}>
-            <div style={styles.planRow}>
-              <Crown size={14} style={{ color: statusColor, flexShrink: 0 }} />
-              <span style={styles.planLabel}>{planLabel}</span>
-            </div>
-            {planDetail && (
-              <div style={styles.planRow}>
-                <Clock size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-                <span style={styles.planDetail}>{planDetail}</span>
-              </div>
-            )}
+          <div style={styles.planRow}>
+            <Crown size={14} style={{ color: statusColor, flexShrink: 0 }} />
+            <span style={styles.planLabel}>{planLabel}</span>
           </div>
-
-          <div style={styles.divider} />
+          {planDetail && (
+            <div style={styles.planRow}>
+              <Clock size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+              <span style={styles.planDetail}>{planDetail}</span>
+            </div>
+          )}
 
           {/* Sign out */}
           <button
@@ -152,66 +160,43 @@ export default function UserMenu() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  avatarBtn: {
-    background: "none",
-    border: "none",
-    cursor: "pointer",
-    padding: 2,
+  container: {
+    display: "flex",
+    flexDirection: "column",
+    borderRadius: 8,
+    background: "var(--bg-tertiary, rgba(255,255,255,0.03))",
+    overflow: "hidden",
+  },
+  header: {
     display: "flex",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 8,
+    padding: "8px 10px",
+    cursor: "pointer",
+    transition: "background 0.15s",
   },
   avatarCircle: {
-    width: 30,
-    height: 30,
+    width: 28,
+    height: 28,
     borderRadius: "50%",
     background: "var(--accent-primary, #2f81f7)",
     color: "#fff",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 700,
     letterSpacing: 0.5,
     userSelect: "none",
-  },
-  dropdown: {
-    position: "absolute",
-    top: "calc(100% + 8px)",
-    right: 0,
-    width: 260,
-    background: "var(--bg-secondary, #161b22)",
-    border: "1px solid var(--border-color, #30363d)",
-    borderRadius: 10,
-    boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
-    zIndex: 1000,
-    overflow: "hidden",
-  },
-  userHeader: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    padding: "14px 14px 10px",
-  },
-  avatarLarge: {
-    width: 38,
-    height: 38,
-    borderRadius: "50%",
-    background: "var(--accent-primary, #2f81f7)",
-    color: "#fff",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 15,
-    fontWeight: 700,
-    letterSpacing: 0.5,
     flexShrink: 0,
   },
   userInfo: {
+    flex: 1,
+    minWidth: 0,
     overflow: "hidden",
   },
   userName: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: 600,
     color: "var(--text-primary, #c9d1d9)",
     overflow: "hidden",
@@ -219,22 +204,19 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: "nowrap",
   },
   userEmail: {
-    fontSize: 12,
+    fontSize: 10,
     color: "var(--text-muted, #8b949e)",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  divider: {
-    height: 1,
-    background: "var(--border-color, #30363d)",
-    margin: "0 10px",
-  },
-  section: {
-    padding: "10px 14px",
+  expandedSection: {
     display: "flex",
     flexDirection: "column",
     gap: 6,
+    padding: "8px 10px",
+    borderTop: "1px solid var(--border-color, #30363d)",
+    background: "rgba(0,0,0,0.1)",
   },
   planRow: {
     display: "flex",
@@ -242,26 +224,27 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
   },
   planLabel: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: 600,
     color: "var(--text-primary, #c9d1d9)",
   },
   planDetail: {
-    fontSize: 12,
+    fontSize: 10,
     color: "var(--text-muted, #8b949e)",
   },
   signOutBtn: {
-    width: "100%",
     display: "flex",
     alignItems: "center",
-    gap: 8,
-    padding: "10px 14px",
+    gap: 6,
+    padding: "6px 8px",
+    marginTop: 4,
     background: "none",
-    border: "none",
+    border: "1px solid rgba(248,81,73,0.3)",
+    borderRadius: 6,
     cursor: "pointer",
     color: "#f85149",
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: 500,
-    transition: "background 0.15s",
+    transition: "background 0.15s, border-color 0.15s",
   },
 };

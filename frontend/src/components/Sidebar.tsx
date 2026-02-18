@@ -398,8 +398,11 @@ export default function Sidebar() {
           </button>
         ))}
 
+        {/* Spacer */}
+        <div style={{ flex: 1, minHeight: 16 }} />
+
         {/* User account */}
-        <div style={{ marginTop: 4, paddingLeft: 8 }}>
+        <div style={{ padding: "0 8px 8px" }}>
           <UserMenu />
         </div>
       </nav>

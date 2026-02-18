@@ -31,7 +31,6 @@ import AutodetectPanel from "./AutodetectPanel";
 import VaultUnlockDialog from "./VaultUnlockDialog";
 import CursorToolToolbar from "./CursorToolToolbar";
 import MultiSelectToolbar from "./MultiSelectToolbar";
-import UserMenu from "./UserMenu";
 import useRegionActions from "../hooks/useRegionActions";
 import useDocumentExport from "../hooks/useDocumentExport";
 import useCanvasInteraction from "../hooks/useCanvasInteraction";
@@ -464,11 +463,6 @@ export default function DocumentViewer() {
               </button>
             </div>
           </div>
-        </div>
-
-        {/* User menu */}
-        <div style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
-          <UserMenu />
         </div>
       </div>
 

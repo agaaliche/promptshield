@@ -23,6 +23,7 @@ import { useDocumentStore, useRegionStore, useUIStore, useConnectionStore, useSi
 import { deleteDocument } from "../api";
 import { useDocumentUpload, ACCEPTED_FILE_TYPES } from "../hooks/useDocumentUpload";
 import LicenseStatus from "./LicenseStatus";
+import UserMenu from "./UserMenu";
 
 type View = "upload" | "viewer" | "detokenize" | "settings";
 
@@ -396,6 +397,11 @@ export default function Sidebar() {
             <span>{item.label}</span>
           </button>
         ))}
+
+        {/* User account */}
+        <div style={{ marginTop: 4, paddingLeft: 8 }}>
+          <UserMenu />
+        </div>
       </nav>
 
       {/* License info */}

@@ -1,7 +1,7 @@
 /** Autodetect PII settings dropdown panel with Blacklist grid. */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X, Save, Trash2, Plus } from "lucide-react";
+import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X, Save, Trash2, Plus, Pin } from "lucide-react";
 import { Z_TOP_DIALOG } from "../zIndex";
 import BlacklistGrid, { type BlacklistAction } from "./BlacklistGrid";
 import { createEmptyGrid } from "./blacklistUtils";
@@ -19,6 +19,7 @@ interface DetectionTemplate {
   llmEnabled: boolean;
   blCells: string[][];
   blAction: BlacklistAction;
+  customToggles?: Record<string, boolean>;
 }
 
 const TEMPLATES_KEY = "doc-anon-detection-templates";
@@ -42,6 +43,51 @@ function loadLastTemplateName(): string {
 function saveLastTemplateName(name: string) {
   if (name) localStorage.setItem(LAST_TEMPLATE_KEY, name);
   else localStorage.removeItem(LAST_TEMPLATE_KEY);
+}
+
+const CUSTOM_TOGGLES_KEY = "detect-custom-toggles";
+
+function loadCustomToggles(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(CUSTOM_TOGGLES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function saveCustomTogglesLS(toggles: Record<string, boolean>) {
+  localStorage.setItem(CUSTOM_TOGGLES_KEY, JSON.stringify(toggles));
+}
+
+const FILTER_CONFIG_KEY = "detect-filter-config";
+
+interface FilterConfig {
+  fuzziness: number;
+  regexTypes: Record<string, boolean>;
+  nerTypes: Record<string, boolean>;
+  llmEnabled: boolean;
+  blCells: string[][];
+  blAction: BlacklistAction;
+}
+
+const DEFAULT_REGEX_TYPES: Record<string, boolean> = {
+  EMAIL: true, PHONE: true, SSN: true, CREDIT_CARD: true,
+  IBAN: true, DATE: true, IP_ADDRESS: true, PASSPORT: true,
+  DRIVER_LICENSE: true, ADDRESS: true,
+};
+
+const DEFAULT_NER_TYPES: Record<string, boolean> = {
+  PERSON: true, ORG: true, LOCATION: true, CUSTOM: false,
+};
+
+function loadFilterConfig(): FilterConfig | null {
+  try {
+    const raw = localStorage.getItem(FILTER_CONFIG_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveFilterConfig(cfg: FilterConfig) {
+  localStorage.setItem(FILTER_CONFIG_KEY, JSON.stringify(cfg));
 }
 
 interface AutodetectPanelProps {
@@ -72,9 +118,9 @@ interface AutodetectPanelProps {
   regions?: PIIRegion[];
 }
 
-const MIN_PANEL_W = 340;
+const MIN_PANEL_W = 380;
 const MIN_PANEL_H = 260;
-const DEFAULT_PANEL_W = 420;
+const DEFAULT_PANEL_W = 480;
 const DEFAULT_PANEL_H = 520;
 
 export default function AutodetectPanel({
@@ -90,19 +136,18 @@ export default function AutodetectPanel({
   pageNavWidth = 0,
   regions = [],
 }: AutodetectPanelProps) {
-  const [fuzziness, setFuzziness] = useState(0.55);
+  const savedFilterConfig = useRef(loadFilterConfig());
+  const [fuzziness, setFuzziness] = useState(savedFilterConfig.current?.fuzziness ?? 0.55);
   const [scope, setScope] = useState<"page" | "all">("page");
   const [tab, setTab] = useState<TabKey>("patterns");
   const [showTabs, setShowTabs] = useState(false);
-  const [regexTypes, setRegexTypes] = useState<Record<string, boolean>>({
-    EMAIL: true, PHONE: true, SSN: true, CREDIT_CARD: true,
-    IBAN: true, DATE: true, IP_ADDRESS: true, PASSPORT: true,
-    DRIVER_LICENSE: true, ADDRESS: true,
-  });
-  const [nerTypes, setNerTypes] = useState<Record<string, boolean>>({
-    PERSON: true, ORG: true, LOCATION: true, CUSTOM: false,
-  });
-  const [llmEnabled, setLlmEnabled] = useState(false);
+  const [regexTypes, setRegexTypes] = useState<Record<string, boolean>>(
+    savedFilterConfig.current?.regexTypes ?? { ...DEFAULT_REGEX_TYPES },
+  );
+  const [nerTypes, setNerTypes] = useState<Record<string, boolean>>(
+    savedFilterConfig.current?.nerTypes ?? { ...DEFAULT_NER_TYPES },
+  );
+  const [llmEnabled, setLlmEnabled] = useState(savedFilterConfig.current?.llmEnabled ?? false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [toolbarBottom, setToolbarBottom] = useState(0);
 
@@ -113,8 +158,8 @@ export default function AutodetectPanel({
   const [showSaveMenu, setShowSaveMenu] = useState(false);
 
   // Blacklist state
-  const [blCells, setBlCells] = useState(() => createEmptyGrid());
-  const [blAction, setBlAction] = useState<BlacklistAction>("none");
+  const [blCells, setBlCells] = useState(() => savedFilterConfig.current?.blCells ?? createEmptyGrid());
+  const [blAction, setBlAction] = useState<BlacklistAction>(savedFilterConfig.current?.blAction ?? "none");
 
   // Custom patterns from settings
   const [customPatterns, setCustomPatterns] = useState<CustomPattern[]>([]);
@@ -125,8 +170,9 @@ export default function AutodetectPanel({
       .then(patterns => {
         const enabled = patterns.filter(p => p.enabled);
         setCustomPatterns(enabled);
-        // Default all enabled custom patterns to checked
-        setCustomToggles(Object.fromEntries(enabled.map(p => [p.id, true])));
+        // Restore saved toggles; default new patterns to checked
+        const saved = loadCustomToggles();
+        setCustomToggles(Object.fromEntries(enabled.map(p => [p.id, saved[p.id] ?? true])));
       })
       .catch(() => {});
   }, []);
@@ -175,6 +221,7 @@ export default function AutodetectPanel({
     setLlmEnabled(tpl.llmEnabled);
     setBlCells(tpl.blCells);
     setBlAction(tpl.blAction);
+    if (tpl.customToggles) { setCustomToggles(tpl.customToggles); saveCustomTogglesLS(tpl.customToggles); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // mount-only
 
@@ -194,12 +241,19 @@ export default function AutodetectPanel({
       llmEnabled,
       blCells: blCells.map(r => [...r]),
       blAction,
+      customToggles: { ...customToggles },
     };
     setTemplates(prev => {
       const updated = prev.map(t => t.name === selectedTemplate ? tpl : t);
       saveTemplates(updated);
       return updated;
     });
+  }, [selectedTemplate, fuzziness, regexTypes, nerTypes, llmEnabled, blCells, blAction, customToggles]);
+
+  // Persist filter config to localStorage when no template is selected
+  useEffect(() => {
+    if (selectedTemplate) return;
+    saveFilterConfig({ fuzziness, regexTypes, nerTypes, llmEnabled, blCells, blAction });
   }, [selectedTemplate, fuzziness, regexTypes, nerTypes, llmEnabled, blCells, blAction]);
 
   // Resize state
@@ -224,6 +278,7 @@ export default function AutodetectPanel({
     const toolbar = panelRef.current?.parentElement as HTMLElement | null;
     const topBound = toolbar ? toolbar.getBoundingClientRect().bottom : 48;
     dragRef.current = { startX: e.clientX, startY: e.clientY, origX, origY };
+    const PAD = 8;
     const onMove = (me: MouseEvent) => {
       if (!dragRef.current) return;
       const dx = me.clientX - dragRef.current.startX;
@@ -231,8 +286,8 @@ export default function AutodetectPanel({
       const pw = rect.width;
       const ph = rect.height;
       setDragPos({
-        x: Math.max(leftOffset, Math.min(window.innerWidth - rightOffset - pageNavWidth - pw, dragRef.current.origX + dx)),
-        y: Math.max(topBound, Math.min(window.innerHeight - ph, dragRef.current.origY + dy)),
+        x: Math.max(leftOffset + PAD, Math.min(window.innerWidth - rightOffset - pageNavWidth - pw - PAD, dragRef.current.origX + dx)),
+        y: Math.max(topBound + PAD, Math.min(window.innerHeight - ph - PAD, dragRef.current.origY + dy)),
       });
     };
     const onUp = () => {
@@ -243,6 +298,26 @@ export default function AutodetectPanel({
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
   }, [isMaximized, dragPos, leftOffset, rightOffset, pageNavWidth]);
+
+  // Re-clamp undocked panel when sidebar/nav layout changes
+  useEffect(() => {
+    if (!dragPos || isMaximized) return;
+    const el = panelRef.current;
+    if (!el) return;
+    const PAD = 8;
+    const pw = el.offsetWidth;
+    const ph = el.offsetHeight;
+    const minX = leftOffset + PAD;
+    const maxX = window.innerWidth - rightOffset - pageNavWidth - pw - PAD;
+    const maxY = window.innerHeight - ph - PAD;
+    let { x, y } = dragPos;
+    let changed = false;
+    if (x < minX) { x = minX; changed = true; }
+    if (x > maxX) { x = Math.max(minX, maxX); changed = true; }
+    if (y > maxY) { y = Math.max(0, maxY); changed = true; }
+    if (changed) setDragPos({ x, y });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rightOffset, leftOffset, pageNavWidth]);
 
   const regexEnabled = Object.values(regexTypes).some(Boolean) || Object.values(customToggles).some(Boolean);
   const nerEnabled = Object.values(nerTypes).some(Boolean);
@@ -295,7 +370,7 @@ export default function AutodetectPanel({
     };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
-  }, [panelSize]);
+  }, [panelSize, rightOffset]);
 
   return (
     <div
@@ -323,7 +398,7 @@ export default function AutodetectPanel({
         borderRadius: 8,
         boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
         zIndex: Z_TOP_DIALOG,
-        width: showTabs ? panelSize.w : 340,
+        width: showTabs ? panelSize.w : 380,
         maxWidth: `calc(100vw - ${rightOffset + 8}px)`,
         maxHeight: showTabs ? panelSize.h : undefined,
         display: "flex",
@@ -338,7 +413,7 @@ export default function AutodetectPanel({
         borderRadius: 8,
         boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
         zIndex: Z_TOP_DIALOG,
-        width: showTabs ? panelSize.w : 340,
+        width: showTabs ? panelSize.w : 380,
         maxWidth: `calc(100vw - ${rightOffset + 8}px)`,
         maxHeight: showTabs ? panelSize.h : undefined,
         display: "flex",
@@ -361,6 +436,31 @@ export default function AutodetectPanel({
           cursor: isMaximized ? "default" : "grab",
           userSelect: "none",
         }}>
+        {/* Dock button — left side, only when undocked */}
+        {dragPos && (
+          <button
+            data-nodrag
+            onClick={() => setDragPos(null)}
+            style={{
+              width: 26, height: 26,
+              padding: 0,
+              background: "transparent",
+              border: "none",
+              borderRadius: 4,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--text-secondary)",
+              transition: "all 0.15s ease",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "var(--text-primary)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-secondary)"; }}
+            title="Dock to toolbar"
+          >
+            <Pin size={14} strokeWidth={2.2} />
+          </button>
+        )}
         {/* Spacer + window controls */}
         <div style={{ flex: 1 }} />
         <div data-nodrag style={{ display: "flex", gap: 2, marginLeft: 8 }}>
@@ -482,6 +582,7 @@ export default function AutodetectPanel({
               setLlmEnabled(tpl.llmEnabled);
               setBlCells(tpl.blCells);
               setBlAction(tpl.blAction);
+              if (tpl.customToggles) { setCustomToggles(tpl.customToggles); saveCustomTogglesLS(tpl.customToggles); }
               if (!showTabs) setShowTabs(true);
             }}
             style={{
@@ -603,6 +704,7 @@ export default function AutodetectPanel({
                     llmEnabled,
                     blCells: blCells.map(r => [...r]),
                     blAction,
+                    customToggles: { ...customToggles },
                   };
                   const updated = [...templates.filter(t => t.name !== name), tpl];
                   saveTemplates(updated);
@@ -633,7 +735,7 @@ export default function AutodetectPanel({
             </div>
           )}
         </div>
-      ) : (
+      ) : showTabs ? (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 14px", marginTop: 6 }}>
           <input
             type="text"
@@ -652,6 +754,7 @@ export default function AutodetectPanel({
                   llmEnabled,
                   blCells: blCells.map(r => [...r]),
                   blAction,
+                  customToggles: { ...customToggles },
                 };
                 saveTemplates([tpl]);
                 setTemplates([tpl]);
@@ -683,6 +786,7 @@ export default function AutodetectPanel({
                 llmEnabled,
                 blCells: blCells.map(r => [...r]),
                 blAction,
+                customToggles: { ...customToggles },
               };
               saveTemplates([tpl]);
               setTemplates([tpl]);
@@ -709,7 +813,7 @@ export default function AutodetectPanel({
             <Save size={12} /> Save
           </button>
         </div>
-      )}
+      ) : null}
 
       {/* Detection settings tabs (collapsible via gear) */}
       {showTabs && (<>
@@ -834,7 +938,7 @@ export default function AutodetectPanel({
                     <input
                       type="checkbox"
                       checked={customToggles[cp.id] ?? true}
-                      onChange={(e) => setCustomToggles(prev => ({ ...prev, [cp.id]: e.target.checked }))}
+                      onChange={(e) => setCustomToggles(prev => { const next = { ...prev, [cp.id]: e.target.checked }; saveCustomTogglesLS(next); return next; })}
                       style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
                     />
                     <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>🎯</span>
@@ -950,8 +1054,18 @@ export default function AutodetectPanel({
         </div>
       </>)}
 
-      {/* Run + scope + clear */}
-      <div style={{ padding: "10px 14px 14px", display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
+      {/* Bottom toolbar — scope radio left, detect + delete right */}
+      <div style={{
+        marginTop: 12,
+        padding: "8px 14px",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexShrink: 0,
+        borderTop: "1px solid var(--border-color)",
+        background: "rgba(0,0,0,0.08)",
+      }}>
+        {/* Scope radio group — left */}
         <div style={{ display: "flex", gap: 10 }}>
           {([
             { key: "page" as const, label: `Page ${activePage}` },
@@ -981,33 +1095,36 @@ export default function AutodetectPanel({
           ))}
         </div>
 
-        <button
-          className="btn-primary"
-          onClick={handleRun}
-          disabled={isProcessing || (!regexEnabled && !nerEnabled && !llmEnabled && !blCells.flat().some(c => c.trim()))}
-          style={{ whiteSpace: "nowrap" }}
-        >
-          <ScanSearch size={14} />
-          {isProcessing ? "Detecting…" : "Run"}
-        </button>
-
         <div style={{ flex: 1 }} />
 
+        {/* Delete + Detect — right */}
         <button
-          className="btn-ghost btn-sm"
+          className="btn-ghost"
           onClick={() => {
             if (scope === "page") { onResetPage(activePage); } else { onReset(); }
           }}
           disabled={isProcessing}
           style={{
-            padding: "4px 6px",
-            color: "var(--text-muted)",
+            whiteSpace: "nowrap",
             display: "flex",
             alignItems: "center",
+            gap: 6,
+            color: "var(--text-muted)",
           }}
           title={scope === "page" ? `Delete all regions on page ${activePage}` : "Delete all detected regions from the document"}
         >
           <Trash2 size={14} />
+          Delete
+        </button>
+
+        <button
+          className="btn-primary"
+          onClick={handleRun}
+          disabled={isProcessing || (!regexEnabled && !nerEnabled && !llmEnabled && !blCells.flat().some(c => c.trim()))}
+          style={{ whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6, marginRight: 4 }}
+        >
+          <ScanSearch size={14} />
+          {isProcessing ? "Detecting…" : "Detect"}
         </button>
       </div>
 

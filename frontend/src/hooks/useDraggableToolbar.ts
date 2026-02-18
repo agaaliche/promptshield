@@ -10,8 +10,8 @@ interface UseDraggableToolbarOptions {
   defaultPos: Position;
   toolbarRef: React.RefObject<HTMLElement | null>;
   boundaryRef: React.RefObject<HTMLElement | null>;
-  sidebarRef: React.RefObject<HTMLElement | null>;
-  sidebarCollapsed: boolean;
+  /** Total right-side reserved width (sidebar + page nav, etc.) */
+  rightInset: number;
 }
 
 interface UseDraggableToolbarResult {
@@ -28,8 +28,7 @@ export default function useDraggableToolbar({
   defaultPos,
   toolbarRef,
   boundaryRef,
-  sidebarRef,
-  sidebarCollapsed,
+  rightInset,
 }: UseDraggableToolbarOptions): UseDraggableToolbarResult {
   const [pos, setPos] = useState<Position>(() => {
     try {
@@ -48,17 +47,16 @@ export default function useDraggableToolbar({
       const area = boundaryRef.current;
       if (!tb || !area) return raw;
       const areaRect = area.getBoundingClientRect();
-      const sbWidth = sidebarRef.current?.offsetWidth ?? (sidebarCollapsed ? 60 : 320);
       const minX = areaRect.left + PAD;
       const minY = areaRect.top + PAD;
-      const maxX = areaRect.right - sbWidth - tb.offsetWidth - PAD;
+      const maxX = areaRect.right - rightInset - tb.offsetWidth - PAD;
       const maxY = areaRect.bottom - tb.offsetHeight - PAD;
       return {
         x: Math.max(minX, Math.min(maxX, raw.x)),
         y: Math.max(minY, Math.min(maxY, raw.y)),
       };
     },
-    [toolbarRef, boundaryRef, sidebarRef, sidebarCollapsed],
+    [toolbarRef, boundaryRef, rightInset],
   );
 
   useEffect(() => {

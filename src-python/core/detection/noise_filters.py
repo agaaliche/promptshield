@@ -342,35 +342,38 @@ def _is_org_pipeline_noise(text: str) -> bool:
                     return True
 
         # German compound word decompounding (inline, up to 3 parts)
-        if len(w) >= 7:
-            for i in range(3, len(w) - 2):
+        # Use the German-only dictionary to avoid false positives from
+        # cross-language coincidences (e.g. "gaspésiens" ≠ "gaspé"+"siens").
+        _de_words = _get_german_words()
+        if len(w) >= 8:
+            for i in range(4, len(w) - 3):
                 left = w[:i]
-                if left not in _common_words:
+                if left not in _de_words:
                     continue
                 right = w[i:]
-                if right in _common_words:
+                if right in _de_words:
                     return True
                 # Try Fugen-element then direct match or recursive 2nd split
                 _fuge_candidates = [('', right)]  # no Fuge
                 for fg in ('s', 'es', 'n', 'en', 'e', 'er'):
-                    if right.startswith(fg) and len(right) > len(fg) + 2:
+                    if right.startswith(fg) and len(right) > len(fg) + 3:
                         _fuge_candidates.append((fg, right[len(fg):]))
                 for _fg, remainder in _fuge_candidates:
-                    if remainder in _common_words:
+                    if remainder in _de_words:
                         return True
                     # Try one more split (3-part compounds)
-                    if len(remainder) >= 6:
-                        for j in range(3, len(remainder) - 2):
+                    if len(remainder) >= 7:
+                        for j in range(4, len(remainder) - 3):
                             left2 = remainder[:j]
-                            if left2 not in _common_words:
+                            if left2 not in _de_words:
                                 continue
                             right2 = remainder[j:]
-                            if right2 in _common_words:
+                            if right2 in _de_words:
                                 return True
                             for fg2 in ('s', 'es', 'n', 'en', 'e', 'er'):
-                                if right2.startswith(fg2) and len(right2) > len(fg2) + 2:
+                                if right2.startswith(fg2) and len(right2) > len(fg2) + 3:
                                     rest2 = right2[len(fg2):]
-                                    if rest2 in _common_words:
+                                    if rest2 in _de_words:
                                         return True
 
         return False

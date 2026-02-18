@@ -88,6 +88,10 @@ interface Props {
   portalTarget?: HTMLElement | null;
   imageContainerEl?: HTMLElement | null;
   cursorToolbarExpanded?: boolean;
+  /** Total right-side reserved width (sidebar + page nav) for toolbar/dialog clamping */
+  rightInset?: number;
+  /** Left sidebar width — triggers re-clamp when left sidebar resizes */
+  leftSidebarWidth?: number;
 }
 
 function RegionOverlay({
@@ -111,6 +115,8 @@ function RegionOverlay({
   portalTarget,
   imageContainerEl,
   cursorToolbarExpanded,
+  rightInset = 0,
+  leftSidebarWidth = 0,
 }: Props) {
   const [showEditPanel, setShowEditPanel] = useState(false);
   const [toolbarExpanded, setToolbarExpanded] = useState(getCachedToolbarExpanded);
@@ -130,6 +136,7 @@ function RegionOverlay({
   const [dialogPos, setDialogPos] = useState(getCachedDialogPos);
   const [isDraggingDialog, setIsDraggingDialog] = useState(false);
   const dialogDragStart = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
+  const dialogRef = useRef<HTMLDivElement>(null);
   
   // Convert page coordinates → CSS percentage coordinates on the displayed image.
   // Using percentages keeps regions in sync during CSS transitions (sidebar
@@ -176,7 +183,7 @@ function RegionOverlay({
   const showTab = (hovered && !isMultiSelected) || showDetails;
   const showFrame = hovered || isSelected || isMultiSelected || showEditPanel;
 
-  // Toolbar drag handlers (fixed/viewport coordinates, same as cursor toolbar)
+  // Toolbar drag handlers (fixed/viewport coordinates, identical to useDraggableToolbar)
   useEffect(() => {
     if (!isDraggingToolbar) return;
     const PAD = 8;
@@ -188,13 +195,13 @@ function RegionOverlay({
       let newX = toolbarDragStart.current.startX + dx;
       let newY = toolbarDragStart.current.startY + dy;
 
-      // Clamp within content area (viewport coords, same bounds as cursor toolbar)
+      // Clamp within content area minus right inset (identical to useDraggableToolbar.clamp)
       const area = portalTarget;
       if (area) {
         const areaRect = area.getBoundingClientRect();
         const minX = areaRect.left + PAD;
         const minY = areaRect.top + PAD;
-        const maxX = areaRect.right - tb.offsetWidth - PAD;
+        const maxX = areaRect.right - rightInset - tb.offsetWidth - PAD;
         const maxY = areaRect.bottom - tb.offsetHeight - PAD;
         newX = Math.max(minX, Math.min(maxX, newX));
         newY = Math.max(minY, Math.min(maxY, newY));
@@ -210,7 +217,7 @@ function RegionOverlay({
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isDraggingToolbar, portalTarget]);
+  }, [isDraggingToolbar, portalTarget, rightInset]);
 
   // Save toolbar offset to localStorage + module cache
   useEffect(() => {
@@ -232,16 +239,29 @@ function RegionOverlay({
     }
   }, [toolbarExpanded]);
 
-  // Dialog drag handlers
+  // Dialog drag handlers — constrained to content area minus sidebar (identical to useDraggableToolbar.clamp)
   useEffect(() => {
     if (!isDraggingDialog) return;
-    
+    const PAD = 8;
     const handleMouseMove = (e: MouseEvent) => {
-      const PAD = 4;
+      const dlg = dialogRef.current;
+      if (!dlg) return;
       const dx = e.clientX - dialogDragStart.current.mouseX;
       const dy = e.clientY - dialogDragStart.current.mouseY;
-      const newX = Math.max(PAD, Math.min(window.innerWidth - PAD - 320, dialogDragStart.current.startX + dx));
-      const newY = Math.max(PAD, Math.min(window.innerHeight - PAD - 100, dialogDragStart.current.startY + dy));
+      let newX = dialogDragStart.current.startX + dx;
+      let newY = dialogDragStart.current.startY + dy;
+
+      // Clamp within content area minus right inset (identical to useDraggableToolbar.clamp)
+      const area = portalTarget;
+      if (area) {
+        const areaRect = area.getBoundingClientRect();
+        const minX = areaRect.left + PAD;
+        const minY = areaRect.top + PAD;
+        const maxX = areaRect.right - rightInset - dlg.offsetWidth - PAD;
+        const maxY = areaRect.bottom - dlg.offsetHeight - PAD;
+        newX = Math.max(minX, Math.min(maxX, newX));
+        newY = Math.max(minY, Math.min(maxY, newY));
+      }
       setDialogPos({ x: newX, y: newY });
     };
     
@@ -255,7 +275,32 @@ function RegionOverlay({
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isDraggingDialog]);
+  }, [isDraggingDialog, portalTarget, rightInset]);
+
+  // Clamp dialog position to content area minus right inset (identical to useDraggableToolbar.clamp)
+  useEffect(() => {
+    if (!showEditPanel || !dialogRef.current) return;
+    const PAD = 8;
+    const area = portalTarget;
+    const dlg = dialogRef.current;
+    if (!area) return;
+    const w = dlg.offsetWidth;
+    const h = dlg.offsetHeight;
+    if (w === 0 || h === 0) return;
+    const areaRect = area.getBoundingClientRect();
+    const minX = areaRect.left + PAD;
+    const minY = areaRect.top + PAD;
+    const maxX = areaRect.right - rightInset - w - PAD;
+    const maxY = areaRect.bottom - h - PAD;
+    let { x, y } = dialogPos;
+    let changed = false;
+    if (x < minX) { x = minX; changed = true; }
+    if (x > maxX) { x = maxX; changed = true; }
+    if (y < minY) { y = minY; changed = true; }
+    if (y > maxY) { y = maxY; changed = true; }
+    if (changed) setDialogPos({ x, y });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showEditPanel, dialogPos, portalTarget, rightInset]);
 
   // Save dialog position to localStorage + module cache
   useEffect(() => {
@@ -266,6 +311,56 @@ function RegionOverlay({
       console.error('Failed to save dialog position:', e);
     }
   }, [dialogPos]);
+
+  // Re-clamp toolbar + dialog when layout insets change
+  // (sidebar collapse/expand/resize, page nav toggle, left sidebar resize)
+  useEffect(() => {
+    const PAD = 8;
+    const area = portalTarget;
+    if (!area) return;
+    const areaRect = area.getBoundingClientRect();
+
+    // Re-clamp toolbar
+    const tb = toolbarRef.current;
+    if (tb && toolbarPos) {
+      const w = tb.offsetWidth;
+      const h = tb.offsetHeight;
+      if (w > 0 && h > 0) {
+        const minX = areaRect.left + PAD;
+        const minY = areaRect.top + PAD;
+        const maxX = areaRect.right - rightInset - w - PAD;
+        const maxY = areaRect.bottom - h - PAD;
+        let { x, y } = toolbarPos;
+        let changed = false;
+        if (x < minX) { x = minX; changed = true; }
+        if (x > maxX) { x = maxX; changed = true; }
+        if (y < minY) { y = minY; changed = true; }
+        if (y > maxY) { y = maxY; changed = true; }
+        if (changed) setToolbarPos({ x, y });
+      }
+    }
+
+    // Re-clamp dialog
+    const dlg = dialogRef.current;
+    if (dlg && showEditPanel) {
+      const w = dlg.offsetWidth;
+      const h = dlg.offsetHeight;
+      if (w > 0 && h > 0) {
+        const minX = areaRect.left + PAD;
+        const minY = areaRect.top + PAD;
+        const maxX = areaRect.right - rightInset - w - PAD;
+        const maxY = areaRect.bottom - h - PAD;
+        let { x, y } = dialogPos;
+        let changed = false;
+        if (x < minX) { x = minX; changed = true; }
+        if (x > maxX) { x = maxX; changed = true; }
+        if (y < minY) { y = minY; changed = true; }
+        if (y > maxY) { y = maxY; changed = true; }
+        if (changed) setDialogPos({ x, y });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rightInset, leftSidebarWidth]);
 
   // Set initial toolbar position on first show (absolute coords relative to contentArea)
   useEffect(() => {
@@ -282,25 +377,21 @@ function RegionOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showDetails]);
 
-  // Clamp toolbar position to stay within document (image) bounds + 4px padding
+  // Clamp toolbar position to content area minus right inset (identical to useDraggableToolbar.clamp)
   useEffect(() => {
     if (!showDetails || !toolbarRef.current || !toolbarPos) return;
-    const PAD = 4;
+    const PAD = 8;
     const area = portalTarget;
-    const img = imageContainerEl;
     const tb = toolbarRef.current;
-    if (!area || !img) return;
+    if (!area) return;
     const w = tb.offsetWidth;
     const h = tb.offsetHeight;
     if (w === 0 || h === 0) return;
     const areaRect = area.getBoundingClientRect();
-    const imgRect = img.getBoundingClientRect();
-    const imgLeft = imgRect.left - areaRect.left;
-    const imgTop = imgRect.top - areaRect.top;
-    const minX = imgLeft + PAD;
-    const minY = imgTop + PAD;
-    const maxX = imgLeft + imgRect.width - w - PAD;
-    const maxY = imgTop + imgRect.height - h - PAD;
+    const minX = areaRect.left + PAD;
+    const minY = areaRect.top + PAD;
+    const maxX = areaRect.right - rightInset - w - PAD;
+    const maxY = areaRect.bottom - h - PAD;
     let { x, y } = toolbarPos;
     let changed = false;
     if (x < minX) { x = minX; changed = true; }
@@ -337,7 +428,7 @@ function RegionOverlay({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showDetails, toolbarExpanded, toolbarPos, portalTarget, imageContainerEl, cursorToolbarExpanded]);
+  }, [showDetails, toolbarExpanded, toolbarPos, portalTarget, cursorToolbarExpanded, rightInset]);
 
   if (region.action === "CANCEL") {
     return null;
@@ -705,9 +796,10 @@ function RegionOverlay({
         portalTarget
       )}
 
-      {/* Floating edit dialog - shown when edit is active */}
-      {showEditPanel && (
+      {/* Floating edit dialog - rendered via portal to escape userSelect:none */}
+      {showEditPanel && portalTarget && createPortal(
         <div
+          ref={dialogRef}
           role="dialog"
           aria-label="Edit region"
           style={{
@@ -721,6 +813,8 @@ function RegionOverlay({
             minWidth: 320,
             maxWidth: 450,
             border: "1px solid var(--border-color)",
+            userSelect: "text",
+            WebkitUserSelect: "text",
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
@@ -815,7 +909,7 @@ function RegionOverlay({
           </div>
 
           {/* Tab content */}
-          <div style={{ padding: 12 }}>
+          <div style={{ padding: 12, userSelect: "text", WebkitUserSelect: "text" }}>
             {activeTab === "label" ? (
               <div>
                 {/* Label selector */}
@@ -912,6 +1006,7 @@ function RegionOverlay({
                       autoFocus
                       value={editedText}
                       onChange={(e) => setEditedText(e.target.value)}
+                      onMouseDown={(e) => e.stopPropagation()}
                       style={{
                         width: "100%",
                         minHeight: 80,
@@ -923,6 +1018,8 @@ function RegionOverlay({
                         color: "var(--text-primary)",
                         resize: "vertical",
                         fontFamily: "inherit",
+                        userSelect: "text",
+                        WebkitUserSelect: "text",
                       }}
                     />
                     <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
@@ -952,7 +1049,8 @@ function RegionOverlay({
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        portalTarget
       )}
     </>
   );

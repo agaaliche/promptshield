@@ -48,7 +48,8 @@ export default function DocumentViewer() {
   const { rightSidebarWidth, setRightSidebarWidth, isSidebarDragging, leftSidebarWidth } = useSidebarStore();
   const { llmStatus } = useDetectionStore();
 
-
+  const doc = documents.find((d) => d.doc_id === activeDocId) ?? null;
+  const pageCount = doc?.page_count ?? 0;
 
   // ── UI chrome (toolbars, sidebar, cursor tool) ──
   const {
@@ -63,15 +64,14 @@ export default function DocumentViewer() {
     sidebarCollapsed, setSidebarCollapsed,
     sidebarTypeFilter, setSidebarTypeFilter,
     pageNavCollapsed, setPageNavCollapsed,
-  } = useViewerToolbars({ setDrawMode });
+    rightInset,
+  } = useViewerToolbars({ setDrawMode, rightSidebarWidth, leftSidebarWidth, pageCount });
 
   // ── DOM refs for canvas ──
   const containerRef = useRef<HTMLDivElement>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
 
-  const doc = documents.find((d) => d.doc_id === activeDocId) ?? null;
-  const pageCount = doc?.page_count ?? 0;
   const isImageFile = doc?.mime_type?.startsWith("image/") || false;
   const bitmapUrl = activeDocId ? getPageBitmapUrl(activeDocId, activePage) : "";
   const pageData = doc?.pages?.[activePage - 1];
@@ -198,15 +198,21 @@ export default function DocumentViewer() {
   const TOOLBAR_MIN_CONTENT_WIDTH = 400; // Minimum width for toolbar buttons + page nav + zoom
   const preferredSidebarWidthRef = useRef(rightSidebarWidth);
   const currentSidebarWidthRef = useRef(rightSidebarWidth);
+  const wasDraggingSidebarRef = useRef(false);
 
   // Keep ref in sync with actual width
   useEffect(() => {
     currentSidebarWidthRef.current = rightSidebarWidth;
   }, [rightSidebarWidth]);
 
-  // Track preferred width when user manually resizes (drag ends)
+  // Track preferred width when user manually resizes (drag ends).
+  // Only capture on drag→no-drag transition so auto-shrink from the
+  // responsive handler doesn't overwrite the user's preferred width.
   useEffect(() => {
-    if (!isSidebarDragging && rightSidebarWidth > RIGHT_SIDEBAR_MIN_WIDTH) {
+    if (isSidebarDragging) {
+      wasDraggingSidebarRef.current = true;
+    } else if (wasDraggingSidebarRef.current) {
+      wasDraggingSidebarRef.current = false;
       preferredSidebarWidthRef.current = rightSidebarWidth;
     }
   }, [rightSidebarWidth, isSidebarDragging]);
@@ -528,7 +534,7 @@ export default function DocumentViewer() {
       {/* Canvas area */}
       <div ref={containerRef} style={{
         ...styles.canvasArea,
-        paddingRight: (sidebarCollapsed ? 60 : rightSidebarWidth) + (pageCount > 1 ? (pageNavCollapsed ? 28 : 148) : 0),
+        paddingRight: rightInset,
         transition: isSidebarDragging ? 'none' : 'padding-right 0.2s ease',
       }}>
         <div
@@ -629,6 +635,8 @@ export default function DocumentViewer() {
                     portalTarget={contentAreaRef.current}
                     imageContainerEl={imageContainerRef.current}
                     cursorToolbarExpanded={cursorToolbarExpanded}
+                    rightInset={rightInset}
+                    leftSidebarWidth={leftSidebarWidth}
                   />
                 );
               })}

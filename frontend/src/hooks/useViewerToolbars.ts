@@ -13,10 +13,16 @@ type CursorTool = "pointer" | "lasso" | "draw";
 
 interface UseViewerToolbarsOpts {
   setDrawMode: (v: boolean) => void;
+  /** Current right sidebar width (from store) */
+  rightSidebarWidth: number;
+  /** Current left sidebar width (from store) — used as re-constrain trigger */
+  leftSidebarWidth: number;
+  /** Total number of pages in current document */
+  pageCount: number;
 }
 
 export default function useViewerToolbars(opts: UseViewerToolbarsOpts) {
-  const { setDrawMode } = opts;
+  const { setDrawMode, rightSidebarWidth, leftSidebarWidth, pageCount } = opts;
 
   // ── Cursor tool mode ──
   const [cursorTool, setCursorToolRaw] = useState<CursorTool>("pointer");
@@ -40,6 +46,11 @@ export default function useViewerToolbars(opts: UseViewerToolbarsOpts) {
   const topToolbarRef = useRef<HTMLDivElement>(null);
   const contentAreaRef = useRef<HTMLDivElement>(null);
 
+  // ── Compute right inset (sidebar + page nav) for toolbar clamping ──
+  const sidebarWidth = sidebarCollapsed ? 60 : rightSidebarWidth;
+  const pageNavWidth = pageCount > 1 ? (pageNavCollapsed ? 28 : 148) : 0;
+  const rightInset = sidebarWidth + pageNavWidth;
+
   // ── Cursor toolbar ──
   const [cursorToolbarExpanded, setCursorToolbarExpanded] = useState(() => {
     try {
@@ -60,8 +71,7 @@ export default function useViewerToolbars(opts: UseViewerToolbarsOpts) {
     defaultPos: { x: 208, y: 60 },
     toolbarRef: cursorToolbarRef,
     boundaryRef: contentAreaRef,
-    sidebarRef,
-    sidebarCollapsed,
+    rightInset,
   });
 
   // ── Multi-select toolbar ──
@@ -84,8 +94,7 @@ export default function useViewerToolbars(opts: UseViewerToolbarsOpts) {
     defaultPos: { x: 300, y: 200 },
     toolbarRef: multiSelectToolbarRef,
     boundaryRef: contentAreaRef,
-    sidebarRef,
-    sidebarCollapsed,
+    rightInset,
   });
 
   // ── Multi-select edit dialog ──
@@ -99,11 +108,13 @@ export default function useViewerToolbars(opts: UseViewerToolbarsOpts) {
     } catch {}
   }, [multiSelectToolbarExpanded]);
 
-  // ── Re-constrain toolbars when sidebar collapses ──
+  // ── Re-constrain toolbars when any layout inset changes ──
+  // rightInset: sidebar collapse/expand/resize, page nav toggle
+  // leftSidebarWidth: left sidebar resize (areaRect.left shifts)
   useEffect(() => {
     constrainCursorToolbar();
     constrainMultiSelectToolbar();
-  }, [sidebarCollapsed, constrainCursorToolbar, constrainMultiSelectToolbar]);
+  }, [rightInset, leftSidebarWidth, constrainCursorToolbar, constrainMultiSelectToolbar]);
 
   return {
     cursorTool,
@@ -137,5 +148,7 @@ export default function useViewerToolbars(opts: UseViewerToolbarsOpts) {
     setSidebarTypeFilter,
     pageNavCollapsed,
     setPageNavCollapsed,
+    // Computed inset
+    rightInset,
   };
 }

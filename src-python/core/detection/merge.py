@@ -24,6 +24,7 @@ from core.detection.noise_filters import (
     _is_address_number_only,
     _strip_phone_labels_from_address,
     _STRUCTURED_MIN_DIGITS,
+    has_legal_suffix,
 )
 from core.detection.region_shapes import (
     _enforce_region_shapes,
@@ -266,6 +267,7 @@ def _merge_detections(
         for qs, qe in _quoted_ranges:
             if c["start"] >= qs and c["end"] <= qe:
                 c["confidence"] = min(1.0, c["confidence"] + _BOOST_VISUAL)
+                c["has_visual_boost"] = True
                 already_boosted = True
                 logger.debug(
                     "Page %d: ORG visual boost (quoted): %r +%.2f",
@@ -285,6 +287,7 @@ def _merge_detections(
                     styled_count += 1
             if total_count >= 1 and styled_count > total_count / 2:
                 c["confidence"] = min(1.0, c["confidence"] + _BOOST_VISUAL)
+                c["has_visual_boost"] = True
                 already_boosted = True
                 logger.debug(
                     "Page %d: ORG visual boost (bold/italic): %r +%.2f",
@@ -320,11 +323,34 @@ def _merge_detections(
                 _MIN_MARGIN = 0.12  # at least 12 % blank on each side
                 if left_margin >= _MIN_MARGIN and right_margin >= _MIN_MARGIN:
                     c["confidence"] = min(1.0, c["confidence"] + _BOOST_VISUAL)
+                    c["has_visual_boost"] = True
                     logger.debug(
                         "Page %d: ORG visual boost (centred): %r +%.2f "
                         "(L=%.0f%% R=%.0f%%)",
                         page_data.page_number, c["text"], _BOOST_VISUAL,
                         left_margin * 100, right_margin * 100,
+                    )
+
+        # 4. Title-case boost — multi-word ORGs where each word starts with
+        #    a capital letter indicate proper nouns (e.g., "Filets Sports
+        #    Gaspésiens"). Only apply when there's NO legal suffix, since
+        #    legal suffixes already provide strong detection signals.
+        if not already_boosted and not has_legal_suffix(c["text"]):
+            words = c["text"].split()
+            if len(words) >= 2:
+                # Check if all words start with uppercase (ignoring articles/prepositions)
+                _SKIP_WORDS = {"de", "du", "des", "la", "le", "les", "l'", "d'",
+                               "di", "da", "del", "della", "dei", "degli",
+                               "of", "the", "and", "&", "et", "und", "e", "y"}
+                title_words = [w for w in words if w.lower() not in _SKIP_WORDS]
+                if len(title_words) >= 2 and all(
+                    w[0].isupper() for w in title_words if len(w) > 0
+                ):
+                    c["confidence"] = min(1.0, c["confidence"] + _BOOST_VISUAL)
+                    c["has_visual_boost"] = True
+                    logger.debug(
+                        "Page %d: ORG visual boost (title-case): %r +%.2f",
+                        page_data.page_number, c["text"], _BOOST_VISUAL,
                     )
 
     # ── Extend PERSON / ORG to cover full quoted text ─────────────────
@@ -414,9 +440,17 @@ def _merge_detections(
         ptype = item["pii_type"]
         txt = item["text"]
 
-        # ORG noise
-        if ptype == PIIType.ORG and _is_org_pipeline_noise(txt):
-            return True
+        # ORG noise — skip if candidate has visual indicators (bold, italic,
+        # centered, quoted) since those are strong signals of intentional
+        # emphasis by the document author.
+        if ptype == PIIType.ORG:
+            if item.get("has_visual_boost"):
+                logger.debug(
+                    "Page %d: ORG skipping noise filter (visual boost): %r",
+                    page_data.page_number, txt,
+                )
+            elif _is_org_pipeline_noise(txt):
+                return True
         # LOCATION noise
         if ptype == PIIType.LOCATION and _is_loc_pipeline_noise(txt):
             return True

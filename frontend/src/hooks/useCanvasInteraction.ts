@@ -43,7 +43,7 @@ interface UseCanvasInteractionOpts {
   setSelectedRegionIds: (ids: string[]) => void;
   setRegions: (regions: PIIRegion[]) => void;
   setStatusMessage: (msg: string) => void;
-  handleRefreshRegion: (id: string) => Promise<void>;
+  handleRefreshRegion: (id: string, textOnly?: boolean) => Promise<void>;
 }
 
 export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
@@ -526,7 +526,7 @@ export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
 
       if (autoRefreshTimerRef.current) clearTimeout(autoRefreshTimerRef.current);
       autoRefreshTimerRef.current = setTimeout(() => {
-        handleRefreshRegion(ix.regionId);
+        handleRefreshRegion(ix.regionId, true);
       }, 300);
     };
 
@@ -585,7 +585,7 @@ export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
         if (autoRefreshTimerRef.current) clearTimeout(autoRefreshTimerRef.current);
         const regionId = fullRegion.id;
         autoRefreshTimerRef.current = setTimeout(() => {
-          handleRefreshRegion(regionId);
+          handleRefreshRegion(regionId, true);
         }, 300);
       } catch (e: unknown) {
         setStatusMessage(`Failed to add region: ${toErrorMessage(e)}`);

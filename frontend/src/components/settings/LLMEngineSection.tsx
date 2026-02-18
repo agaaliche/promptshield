@@ -57,9 +57,10 @@ export default function LLMEngineSection() {
     if (llmStatus?.remote_model && !remoteModel) setRemoteModel(llmStatus.remote_model);
   }, [llmStatus, remoteApiUrl, remoteModel]);
 
-  // Minimum hardware for local LLM: GPU with 4+ GB VRAM required
+  // Minimum hardware for local LLM: GPU with 4+ GB VRAM or 16+ GB system RAM
   const localLlmReady = hwInfo
-    ? hwInfo.gpus.length > 0 && Math.max(...hwInfo.gpus.map(g => g.vram_total_mb)) >= 4096
+    ? (hwInfo.gpus.length > 0 && Math.max(...hwInfo.gpus.map(g => g.vram_total_mb)) >= 4096)
+      || hwInfo.ram.total_gb >= 16
     : null;
 
   // Auto-unload local LLM if hardware is insufficient

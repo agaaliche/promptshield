@@ -63,25 +63,34 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
   );
 
   const handleRefreshRegion = useCallback(
-    async (regionId: string) => {
+    async (regionId: string, textOnly?: boolean) => {
       if (!activeDocId) return;
       try {
-        pushUndo();
+        if (!textOnly) pushUndo();
         const result = await reanalyzeRegion(activeDocId, regionId);
-        updateRegion(regionId, {
-          text: result.text,
-          pii_type: result.pii_type as PIIType,
-          confidence: result.confidence,
-          source: result.source as any,
-        });
-        setStatusMessage(
-          result.text
-            ? `Refreshed: ${result.pii_type} — "${result.text.slice(0, 40)}"`
-            : "No text found under this region",
-        );
+        if (textOnly) {
+          // Auto-refresh after move/resize/create: only update extracted text,
+          // preserve the user-chosen PII type, confidence, and source.
+          if (result.text) {
+            updateRegion(regionId, { text: result.text });
+          }
+        } else {
+          // Explicit "Detect" button: full re-classification.
+          updateRegion(regionId, {
+            text: result.text,
+            pii_type: result.pii_type as PIIType,
+            confidence: result.confidence,
+            source: result.source as any,
+          });
+          setStatusMessage(
+            result.text
+              ? `Refreshed: ${result.pii_type} — "${result.text.slice(0, 40)}"`
+              : "No text found under this region",
+          );
+        }
       } catch (e: unknown) {
         console.error("Failed to refresh region:", e);
-        setStatusMessage(`Refresh failed: ${toErrorMessage(e)}`);
+        if (!textOnly) setStatusMessage(`Refresh failed: ${toErrorMessage(e)}`);
       }
     },
     [activeDocId, pushUndo, updateRegion, setStatusMessage],

@@ -62,16 +62,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         # Clear persisted detection regions so stale results never carry
         # over between restarts — the user must re-run detection.
-        for doc in deps.documents.values():
-            if doc.regions:
-                logger.info(
-                    f"Clearing {len(doc.regions)} stale regions from "
-                    f"'{doc.original_filename}' ({doc.doc_id})"
-                )
-                doc.regions = []
-                if doc.status == DocumentStatus.REVIEWING:
-                    doc.status = DocumentStatus.PROCESSING
-                deps.store.save_document(doc)
+        # NOTE: Disabled — regions are now fully persisted across restarts.
+        # The user's manual edits, action choices, and bbox adjustments
+        # are valuable state that should survive a server restart.
+        # for doc in deps.documents.values():
+        #     if doc.regions:
+        #         doc.regions = []
+        #         deps.store.save_document(doc)
 
         # Sanitize legacy regions — clamp bboxes to page bounds
         sanitized = 0

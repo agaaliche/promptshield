@@ -24,6 +24,7 @@ import { getUploadProgress, getDetectionProgress } from "../api";
 import type { UploadProgressInfo } from "../api";
 import type { DetectionProgressData } from "../types";
 import { Z_MODAL } from "../zIndex";
+import { useDetectionStore } from "../store";
 
 interface Props {
   /** Upload progress tracking ID (passed to uploadDocument). */
@@ -59,6 +60,7 @@ export default function UploadProgressDialog({
   phase,
   visible,
 }: Props) {
+  const { detectionSettings } = useDetectionStore();
   const [uploadInfo, setUploadInfo] = useState<UploadProgressInfo | null>(null);
   const [detectionInfo, setDetectionInfo] = useState<DetectionProgressData | null>(null);
   const uploadPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -190,6 +192,13 @@ export default function UploadProgressDialog({
   const detPageStatuses = detectionInfo?.page_statuses ?? [];
   const totalPages = uploadInfo?.total_pages || detectionInfo?.total_pages || 0;
 
+  // Build active pipeline label
+  const pipelineSteps: string[] = [];
+  if (detectionSettings.regex_enabled) pipelineSteps.push("Regex");
+  if (detectionSettings.ner_enabled) pipelineSteps.push("NER");
+  if (detectionSettings.llm_detection_enabled) pipelineSteps.push("LLM");
+  const pipelineLabel = pipelineSteps.join(" → ");
+
   return (
     <div
       role="dialog"
@@ -244,18 +253,40 @@ export default function UploadProgressDialog({
 
         {/* Body */}
         <div style={{ padding: "16px 20px" }}>
-          {/* Document name */}
+          {/* Document name + pipeline */}
           <div
             style={{
-              fontSize: 13,
-              color: "var(--text-secondary)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
               marginBottom: 16,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
             }}
           >
-            {docName}
+            <span
+              style={{
+                fontSize: 13,
+                color: "var(--text-secondary)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                minWidth: 0,
+              }}
+            >
+              {docName}
+            </span>
+            {(isDetecting || isDone) && pipelineLabel && (
+              <span
+                style={{
+                  fontSize: 11,
+                  color: "var(--text-muted)",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                }}
+              >
+                {pipelineLabel}
+              </span>
+            )}
           </div>
 
           {/* Phase steps indicator */}

@@ -360,5 +360,5 @@ class TestNoDoubleboost:
         result = _merge_detections([], [nm], [], page)
         orgs = [r for r in result if r.pii_type == PIIType.ORG]
         assert len(orgs) == 1
-        # Should be exactly one +0.12 boost, not two
-        assert 0.71 <= orgs[0].confidence <= 0.73
+        # Should be exactly one +0.15 boost, not two (0.60 + 0.15 = 0.75)
+        assert 0.74 <= orgs[0].confidence <= 0.76

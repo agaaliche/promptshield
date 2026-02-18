@@ -153,6 +153,214 @@ def _libreoffice_convert_to_pdf(src: Path, out_dir: Path) -> Path:
     return pdf_path
 
 
+def _docx_to_pdf(src: Path, out_dir: Path) -> Path:
+    """Convert a DOCX file to PDF using python-docx and reportlab.
+
+    This is a pure-Python alternative to LibreOffice for docx files.
+    Extracts paragraphs, tables, headers/footers, and renders them into
+    a PDF preserving text content and basic formatting for accurate
+    text extraction and PII detection.
+    """
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak,
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    from xml.sax.saxutils import escape
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = out_dir / f"{src.stem}.pdf"
+
+    docx_doc = Document(str(src))
+
+    # ── styles ──────────────────────────────────────────────────────
+    styles = getSampleStyleSheet()
+    body_style = ParagraphStyle(
+        "DocxBody", parent=styles["Normal"],
+        fontSize=10, leading=13, spaceAfter=4,
+    )
+    bold_style = ParagraphStyle(
+        "DocxBold", parent=body_style,
+        fontName="Helvetica-Bold",
+    )
+    heading_styles: dict[int, ParagraphStyle] = {}
+    for level, (fs, lead) in enumerate(
+        [(16, 20), (14, 18), (12, 16), (11, 15), (10, 14)], start=1
+    ):
+        heading_styles[level] = ParagraphStyle(
+            f"DocxH{level}", parent=styles["Normal"],
+            fontSize=fs, leading=lead, spaceAfter=6, spaceBefore=8,
+            fontName="Helvetica-Bold",
+        )
+    cell_style = ParagraphStyle(
+        "DocxCell", parent=styles["Normal"],
+        fontSize=9, leading=11, wordWrap="CJK",
+    )
+
+    # ── helper: convert a docx paragraph to reportlab Paragraph ─────
+    def _para_to_flowable(para):
+        """Return a reportlab Paragraph (or None for empty paragraphs)."""
+        text_parts: list[str] = []
+        for run in para.runs:
+            t = escape(run.text) if run.text else ""
+            if not t:
+                continue
+            # Preserve basic formatting via HTML-like tags
+            if run.bold and run.italic:
+                t = f"<b><i>{t}</i></b>"
+            elif run.bold:
+                t = f"<b>{t}</b>"
+            elif run.italic:
+                t = f"<i>{t}</i>"
+            if run.underline:
+                t = f"<u>{t}</u>"
+            text_parts.append(t)
+
+        full = "".join(text_parts).strip()
+        if not full:
+            return None
+
+        # Pick style based on heading level
+        style_name = para.style.name if para.style else ""
+        lvl = 0
+        if style_name.startswith("Heading"):
+            try:
+                lvl = int(style_name.split()[-1])
+            except (ValueError, IndexError):
+                lvl = 1
+        pstyle = heading_styles.get(lvl, body_style)
+
+        # Alignment
+        align = para.alignment
+        if align == WD_ALIGN_PARAGRAPH.CENTER:
+            pstyle = ParagraphStyle(f"_c{id(para)}", parent=pstyle, alignment=1)
+        elif align == WD_ALIGN_PARAGRAPH.RIGHT:
+            pstyle = ParagraphStyle(f"_r{id(para)}", parent=pstyle, alignment=2)
+
+        return Paragraph(full, pstyle)
+
+    # ── helper: convert a docx table to reportlab Table ─────────────
+    def _table_to_flowable(tbl):
+        """Return a reportlab Table flowable."""
+        data: list[list] = []
+        for row in tbl.rows:
+            row_data: list = []
+            for cell in row.cells:
+                cell_text = escape(cell.text.strip()) if cell.text else ""
+                if len(cell_text) > 200:
+                    cell_text = cell_text[:197] + "..."
+                row_data.append(Paragraph(cell_text, cell_style))
+            data.append(row_data)
+        if not data:
+            return None
+        ncols = max(len(r) for r in data)
+        available = letter[0] - 1 * inch
+        col_w = min(available / max(ncols, 1), 2.5 * inch)
+        t = Table(data, colWidths=[col_w] * ncols)
+        t.setStyle(TableStyle([
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        return t
+
+    # ── walk the document body in order ─────────────────────────────
+    # python-docx exposes paragraphs and tables as separate lists, but
+    # the underlying XML has them interleaved.  Iterate the body XML
+    # children to preserve correct ordering.
+    from docx.oxml.ns import qn
+
+    elements: list = []
+
+    # Header text (first section only, for PII detection)
+    for section in docx_doc.sections:
+        for hdr in (section.header,):
+            if hdr and not hdr.is_linked_to_previous:
+                for p in hdr.paragraphs:
+                    fl = _para_to_flowable(p)
+                    if fl:
+                        elements.append(fl)
+        break  # first section headers only
+
+    body = docx_doc.element.body
+    for child in body:
+        tag = child.tag
+        if tag == qn("w:p"):
+            # paragraph
+            para = None
+            for p in docx_doc.paragraphs:
+                if p._element is child:
+                    para = p
+                    break
+            if para is None:
+                continue
+            # Page break detection
+            if para.style and para.style.name and "page" in para.style.name.lower():
+                elements.append(PageBreak())
+            fl = _para_to_flowable(para)
+            if fl:
+                elements.append(fl)
+            else:
+                elements.append(Spacer(1, 4))
+        elif tag == qn("w:tbl"):
+            tbl = None
+            for t in docx_doc.tables:
+                if t._element is child:
+                    tbl = t
+                    break
+            if tbl:
+                fl = _table_to_flowable(tbl)
+                if fl:
+                    elements.append(Spacer(1, 4))
+                    elements.append(fl)
+                    elements.append(Spacer(1, 4))
+        elif tag == qn("w:sectPr"):
+            # Section break — treat as page break
+            elements.append(PageBreak())
+
+    # Footer text (first section only)
+    for section in docx_doc.sections:
+        for ftr in (section.footer,):
+            if ftr and not ftr.is_linked_to_previous:
+                for p in ftr.paragraphs:
+                    fl = _para_to_flowable(p)
+                    if fl:
+                        elements.append(fl)
+        break
+
+    # ── build PDF ───────────────────────────────────────────────────
+    doc = SimpleDocTemplate(
+        str(pdf_path),
+        pagesize=letter,
+        leftMargin=0.75 * inch,
+        rightMargin=0.75 * inch,
+        topMargin=0.75 * inch,
+        bottomMargin=0.75 * inch,
+    )
+
+    if not elements:
+        elements.append(Paragraph("(Empty document)", styles["Normal"]))
+
+    doc.build(elements)
+
+    if not pdf_path.exists():
+        raise RuntimeError(
+            f"DOCX to PDF conversion failed — expected output at {pdf_path}"
+        )
+
+    logger.info(f"Converted DOCX to PDF: {pdf_path}")
+    return pdf_path
+
+
 def _xlsx_to_pdf(src: Path, out_dir: Path) -> Path:
     """Convert an Excel xlsx file to PDF using openpyxl and reportlab.
     
@@ -808,10 +1016,13 @@ async def ingest_document(
         elif mime_type in IMAGE_TYPES:
             return _process_image(file_path, doc_id, progress_callback)
         elif mime_type in OFFICE_TYPES:
-            # Use native converter for xlsx files (no LibreOffice needed)
+            # Use native converters where possible (no LibreOffice needed)
             xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            docx_mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             if mime_type == xlsx_mime:
                 pdf_path = _xlsx_to_pdf(file_path, config.temp_dir / doc_id)
+            elif mime_type == docx_mime:
+                pdf_path = _docx_to_pdf(file_path, config.temp_dir / doc_id)
             else:
                 pdf_path = _libreoffice_convert_to_pdf(
                     file_path,

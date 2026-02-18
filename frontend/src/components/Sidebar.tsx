@@ -342,7 +342,9 @@ export default function Sidebar() {
                 const onMove = (ev: MouseEvent) => {
                   if (!isResizingFileList.current) return;
                   const delta = ev.clientY - fileListStartY.current;
-                  setFileListHeight(Math.max(80, Math.min(600, fileListStartH.current + delta)));
+                  // Allow expansion up to window height minus space for logo, nav items, user menu, status
+                  const maxH = Math.max(200, window.innerHeight - 280);
+                  setFileListHeight(Math.max(80, Math.min(maxH, fileListStartH.current + delta)));
                 };
                 const onUp = () => {
                   isResizingFileList.current = false;
@@ -397,9 +399,6 @@ export default function Sidebar() {
           </button>
         ))}
       </nav>
-
-      {/* Spacer */}
-      <div style={{ flex: 1 }} />
 
       {/* User account - bottom */}
       <div style={{ marginBottom: 20 }}>

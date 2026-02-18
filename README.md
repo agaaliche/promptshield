@@ -35,6 +35,134 @@ Offline desktop application for detecting and redacting PII (Personally Identifi
 | Frontend | `frontend/src/` | React 19, TypeScript 5.9, Vite 7 |
 | Backend | `src-python/` | Python 3.11+, FastAPI, pypdfium2, spaCy |
 
+### Detection Pipeline
+
+The PII detection system uses a multi-layer approach for optimal precision and recall:
+
+```mermaid
+flowchart LR
+    subgraph Layer1["Layer 1: Regex"]
+        R[Pattern Matching]
+        R --> |SSN, Email, Phone| ROut[High Precision]
+    end
+    
+    subgraph Layer2["Layer 2: NER"]
+        N[spaCy/BERT/GLiNER]
+        N --> |PERSON, ORG, LOC| NOut[Named Entities]
+    end
+    
+    subgraph Layer3["Layer 3: LLM"]
+        L[Local/Remote LLM]
+        L --> |Context Analysis| LOut[Contextual PII]
+    end
+    
+    Input[Document Text] --> Layer1
+    Input --> Layer2
+    Input --> Layer3
+    
+    ROut --> Merge[Merge & Dedupe]
+    NOut --> Merge
+    LOut --> Merge
+    
+    Merge --> Propagate[Cross-Page Propagation]
+    Propagate --> Filter[Noise Filtering]
+    Filter --> Output[Final Regions]
+```
+
+**Layer Details:**
+- **Regex** (fastest): High-precision patterns for SSN, email, phone, credit card, IBAN, dates
+- **NER** (balanced): spaCy transformer models for names, organizations, locations
+- **LLM** (optional): Context-aware detection using local GGUF models or remote APIs
+
+### Data Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant UI as React Frontend
+    participant API as FastAPI Backend
+    participant Det as Detection Pipeline
+    participant Vault as Token Vault
+
+    U->>UI: Upload Document
+    UI->>API: POST /documents/upload
+    API->>API: Parse PDF, Extract Pages
+    API-->>UI: Document ID
+
+    U->>UI: Click "Detect PII"
+    UI->>API: POST /documents/{id}/detect
+    API->>Det: Run Detection Pipeline
+    Det->>Det: Regex → NER → LLM → Merge
+    Det-->>API: PII Regions
+    API-->>UI: Regions with Confidence
+
+    U->>UI: Review & Accept/Modify Regions
+    UI->>API: PUT /regions/batch-action
+
+    U->>UI: Click "Export"
+    UI->>API: POST /documents/{id}/anonymize
+    API->>Vault: Store Token Mappings
+    API->>API: Generate Redacted PDF
+    API-->>UI: Download Link
+```
+
+### Token Vault Security
+
+```mermaid
+flowchart TB
+    subgraph Encryption
+        P[User Passphrase]
+        P --> PBKDF2[PBKDF2-HMAC-SHA256]
+        PBKDF2 --> |100k iterations| Key[Encryption Key]
+        Key --> Fernet[Fernet Symmetric Encryption]
+    end
+    
+    subgraph Storage
+        Fernet --> SQLite[(SQLite Database)]
+        SQLite --> |Encrypted| Tokens[Token Mappings]
+    end
+    
+    subgraph Detokenization
+        Token[Token String] --> Lookup[Vault Lookup]
+        Lookup --> Decrypt[Decrypt with Key]
+        Decrypt --> Original[Original Text]
+    end
+```
+
+### Code Organization
+
+```
+src-python/
+├── api/
+│   ├── server.py          # FastAPI app, middleware, lifespan
+│   ├── deps.py            # Shared state, document store
+│   ├── repository.py      # DocumentRepository pattern
+│   └── routers/           # API endpoint handlers
+│       ├── documents.py   # Upload, list, delete (paginated)
+│       ├── detection.py   # PII detection, progress
+│       ├── regions.py     # Region CRUD, batch ops
+│       ├── anonymize.py   # Export, download
+│       ├── vault.py       # Token vault management
+│       └── llm.py         # Model loading, status
+├── core/
+│   ├── config.py          # Pydantic app configuration
+│   ├── detection/
+│   │   ├── pipeline.py    # Detection orchestrator
+│   │   ├── detection_config.py  # Centralized constants
+│   │   ├── regex_detector.py    # Pattern matching
+│   │   ├── ner_detector.py      # spaCy NER
+│   │   ├── llm_detector.py      # LLM analysis
+│   │   ├── merge.py             # Multi-layer merging
+│   │   └── noise_filters.py     # False positive filtering
+│   ├── anonymizer/        # Redaction engine
+│   ├── ingestion/         # PDF/DOCX parsing
+│   ├── ocr/               # Tesseract integration
+│   ├── llm/               # GGUF model engine
+│   └── vault/             # Encrypted token storage
+└── models/
+    └── schemas.py         # Pydantic data models
+```
+
 ### Backend Modules
 
 | Module | Purpose |

@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from core.config import config
 from core.persistence import DocumentStore
 from models.schemas import BBox, DocumentInfo
+from api.repository import DocumentRepository
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 documents: dict[str, DocumentInfo] = {}
 store: Optional[DocumentStore] = None
+
+# Repository instance for cleaner data access (wraps the documents dict)
+doc_repo: DocumentRepository = DocumentRepository(documents)
 
 # H1: asyncio lock to serialise document mutations from concurrent requests
 _documents_lock = asyncio.Lock()

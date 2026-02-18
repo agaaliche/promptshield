@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import logging
+import math
 import time as _time
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
 from core.config import config
 from models.schemas import (
+    DocumentListItem,
+    DocumentStatus,
+    PaginatedDocumentList,
     RegionAction,
     UploadResponse,
 )
@@ -221,28 +225,59 @@ async def get_page_bitmap(doc_id: str, page_number: int) -> FileResponse:
     return FileResponse(str(bitmap_path), media_type="image/png")
 
 
-@router.get("/documents")
-async def list_documents() -> list[dict[str, Any]]:
-    """List all uploaded documents."""
-    return [
-        {
-            "doc_id": d.doc_id,
-            "original_filename": d.original_filename,
-            "filename": d.original_filename,
-            "file_path": d.file_path,
-            "mime_type": d.mime_type,
-            "page_count": d.page_count,
-            "status": d.status.value,
-            "regions_count": len(d.regions),
-            "is_protected": (
+@router.get("/documents", response_model=Union[PaginatedDocumentList, list[DocumentListItem]])
+async def list_documents(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    limit: int = Query(50, ge=1, le=500, description="Items per page"),
+    paginated: bool = Query(True, description="Return paginated response"),
+) -> Union[PaginatedDocumentList, list[DocumentListItem]]:
+    """List all uploaded documents with optional pagination.
+    
+    Args:
+        page: Page number (1-indexed, default: 1)
+        limit: Items per page (default: 50, max: 500)
+        paginated: If True, return paginated response with metadata. If False, return flat list.
+    """
+    all_docs = sorted(documents.values(), key=lambda d: d.created_at, reverse=True)
+    total = len(all_docs)
+    
+    # Build DocumentListItem for each document
+    items = [
+        DocumentListItem(
+            doc_id=d.doc_id,
+            original_filename=d.original_filename,
+            filename=d.original_filename,
+            file_path=d.file_path,
+            mime_type=d.mime_type,
+            page_count=d.page_count,
+            status=d.status,
+            regions_count=len(d.regions),
+            is_protected=(
                 len(d.regions) > 0
                 and not any(r.action == RegionAction.PENDING for r in d.regions)
                 and any(r.action in (RegionAction.TOKENIZE, RegionAction.REMOVE) for r in d.regions)
             ),
-            "created_at": d.created_at.isoformat(),
-        }
-        for d in documents.values()
+            created_at=d.created_at,
+        )
+        for d in all_docs
     ]
+    
+    if not paginated:
+        return items
+    
+    # Apply pagination
+    start = (page - 1) * limit
+    end = start + limit
+    page_items = items[start:end]
+    pages = math.ceil(total / limit) if total > 0 else 1
+    
+    return PaginatedDocumentList(
+        items=page_items,
+        total=total,
+        page=page,
+        limit=limit,
+        pages=pages,
+    )
 
 
 @router.delete("/documents/{doc_id}")

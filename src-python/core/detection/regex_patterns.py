@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from models.schemas import PIIType
+from core.detection.detection_config import REGEX_CONTEXT_WINDOW
 
 _NOFLAGS = 0
 _IC = re.IGNORECASE
@@ -20,7 +21,7 @@ _IC = re.IGNORECASE
 
 # Keywords that, when appearing within CTX_WINDOW chars BEFORE a match,
 # significantly increase the likelihood that it's real PII.
-CTX_WINDOW = 100  # characters to look back for context keywords
+CTX_WINDOW = REGEX_CONTEXT_WINDOW  # characters to look back for context keywords
 
 CONTEXT_KEYWORDS: dict[PIIType, list[str]] = {
     PIIType.SSN: [

@@ -16,6 +16,7 @@ import logging
 from typing import Optional
 
 from core.config import config
+from core.detection.detection_config import BLOCK_ABSOLUTE_MAX_GAP_PX, BLOCK_MIN_GAP_LINE_RATIO
 from models.schemas import BBox, PageData, TextBlock
 
 logger = logging.getLogger(__name__)
@@ -24,8 +25,8 @@ logger = logging.getLogger(__name__)
 # Spatial thresholds for gap-splitting
 # ---------------------------------------------------------------------------
 
-_ABSOLUTE_MAX_GAP_PX: float = 20.0
-_MIN_GAP_LINE_RATIO: float = 0.50
+_ABSOLUTE_MAX_GAP_PX: float = BLOCK_ABSOLUTE_MAX_GAP_PX
+_MIN_GAP_LINE_RATIO: float = BLOCK_MIN_GAP_LINE_RATIO
 _MAX_GAP_LINE_RATIO: float = 1.25
 _GAP_OUTLIER_FACTOR: float = 3.0
 _MAX_WORD_GAP_WS: int = 3

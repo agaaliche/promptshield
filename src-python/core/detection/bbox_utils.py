@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from models.schemas import BBox, PIIRegion
+from core.detection.detection_config import BBOX_GRID_CELL_SIZE
 
 
 def _bbox_overlap_area(a: BBox, b: BBox) -> float:
@@ -31,7 +32,7 @@ def _bbox_area(b: BBox) -> float:
 # Grid-based spatial index for fast overlap queries
 # ---------------------------------------------------------------------------
 
-_GRID_CELL = 50.0  # cell size in PDF points (~0.7 inch)
+_GRID_CELL = BBOX_GRID_CELL_SIZE  # cell size in PDF points (~0.7 inch)
 
 
 def _bbox_cells(bbox: BBox) -> set[tuple[int, int]]:

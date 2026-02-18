@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel as _PydanticBaseModel
 
-from models.schemas import VaultStatsResponse
+from models.schemas import VaultStatsResponse, VaultUnlockResponse, VaultStatusResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["vault"])
@@ -44,8 +44,8 @@ def _check_unlock_rate_limit() -> None:
             )
 
 
-@router.post("/vault/unlock")
-async def unlock_vault(body: _PassphraseBody) -> dict[str, str]:
+@router.post("/vault/unlock", response_model=VaultUnlockResponse)
+async def unlock_vault(body: _PassphraseBody) -> VaultUnlockResponse:
     """Unlock the token vault with a passphrase."""
     from core.vault.store import vault
 
@@ -56,7 +56,7 @@ async def unlock_vault(body: _PassphraseBody) -> dict[str, str]:
         # Success — clear failure history
         with _unlock_lock:
             _unlock_attempts.clear()
-        return {"status": "ok", "message": "Vault unlocked"}
+        return VaultUnlockResponse(status="ok", message="Vault unlocked")
     except ValueError as e:
         with _unlock_lock:
             _unlock_attempts.append(time.monotonic())
@@ -65,13 +65,11 @@ async def unlock_vault(body: _PassphraseBody) -> dict[str, str]:
         raise HTTPException(500, "Failed to open vault. Check server logs for details.")
 
 
-@router.get("/vault/status")
-async def vault_status() -> dict[str, bool]:
+@router.get("/vault/status", response_model=VaultStatusResponse)
+async def vault_status() -> VaultStatusResponse:
     """Check vault status."""
     from core.vault.store import vault
-    return {
-        "unlocked": vault.is_unlocked,
-    }
+    return VaultStatusResponse(unlocked=vault.is_unlocked)
 
 
 @router.get("/vault/stats", response_model=VaultStatsResponse)

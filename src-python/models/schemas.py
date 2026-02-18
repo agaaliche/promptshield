@@ -242,3 +242,112 @@ class PIILabelEntry(BaseModel):
     hidden: bool = False
     user_added: bool = False
     color: str = "#888"
+
+
+# ---------------------------------------------------------------------------
+# Document List Response (Paginated)
+# ---------------------------------------------------------------------------
+
+class DocumentListItem(BaseModel):
+    """Summary of a document for list views."""
+    doc_id: str
+    original_filename: str
+    filename: str
+    file_path: str
+    mime_type: str
+    page_count: int
+    status: DocumentStatus
+    regions_count: int
+    is_protected: bool
+    created_at: datetime
+
+
+class PaginatedDocumentList(BaseModel):
+    """Paginated list of documents."""
+    items: list[DocumentListItem]
+    total: int
+    page: int
+    limit: int
+    pages: int
+
+
+# ---------------------------------------------------------------------------
+# Additional Typed API Responses
+# ---------------------------------------------------------------------------
+
+class StatusResponse(BaseModel):
+    """Generic status response."""
+    status: str
+    message: str = ""
+
+
+class VaultUnlockResponse(BaseModel):
+    """Response from vault unlock."""
+    status: str  # "ok" | "error"
+    message: str = ""
+
+
+class VaultStatusResponse(BaseModel):
+    """Response from vault status check."""
+    unlocked: bool
+
+
+class DetectionProgressResponse(BaseModel):
+    """Progress of PII detection."""
+    doc_id: str
+    status: str  # "idle" | "running" | "completed" | "error"
+    current_page: int = 0
+    total_pages: int = 0
+    phase: str = ""  # "regex" | "ner" | "llm" | "merging"
+    regions_found: int = 0
+    error: Optional[str] = None
+
+
+class ExportProgressResponse(BaseModel):
+    """Progress of document export/anonymization."""
+    export_id: str
+    status: str  # "processing" | "completed" | "error"
+    phase: str = ""
+    current_page: int = 0
+    total_pages: int = 0
+    output_path: Optional[str] = None
+    output_text_path: Optional[str] = None
+    tokens_created: int = 0
+    error: Optional[str] = None
+
+
+class RegionSyncResponse(BaseModel):
+    """Response from region sync operation."""
+    status: str
+    synced: int
+
+
+class LLMModelInfo(BaseModel):
+    """Information about an available LLM model."""
+    name: str
+    path: str
+    size_bytes: int
+    size_human: str
+
+
+class RemoteLLMTestResponse(BaseModel):
+    """Response from remote LLM connection test."""
+    status: str  # "ok" | "error"
+    message: str = ""
+    model: str = ""
+    latency_ms: float = 0
+
+
+class DetectionSettingsResponse(BaseModel):
+    """Current detection settings."""
+    confidence_threshold: float
+    use_llm: bool
+    llm_provider: str
+    enabled_types: list[str]
+    disabled_types: list[str]
+
+
+class ResetDetectionResponse(BaseModel):
+    """Response from reset detection."""
+    status: str
+    regions_removed: int

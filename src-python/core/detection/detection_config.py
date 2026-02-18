@@ -184,3 +184,60 @@ CURRENCY_SYMBOLS: frozenset[str] = frozenset({
     "$", "€", "£", "¥", "₹", "₽", "₩", "฿", "₫", "₴", "₦", "₱", "₲", "₵",
     "CHF", "kr", "zł", "Kč", "Ft", "lei", "лв", "ден", "din", "KM",
 })
+
+
+# =============================================================================
+# REGEX DETECTION
+# =============================================================================
+
+REGEX_CONTEXT_WINDOW: int = 100
+"""Characters to look back for context keywords when boosting regex matches."""
+
+# =============================================================================
+# BBOX PROCESSING
+# =============================================================================
+
+BBOX_GRID_CELL_SIZE: float = 50.0
+"""Grid cell size in PDF points (~0.7 inch) for spatial indexing."""
+
+BLOCK_ABSOLUTE_MAX_GAP_PX: float = 20.0
+"""Maximum absolute gap in pixels between blocks to consider grouping."""
+
+BLOCK_MIN_GAP_LINE_RATIO: float = 0.50
+"""Minimum gap as ratio of line height to consider blocks separate."""
+
+# =============================================================================
+# CROSS-LINE DETECTION
+# =============================================================================
+
+CROSS_LINE_WORD_WINDOW: int = 5
+"""Number of words to consider for cross-line entity detection."""
+
+# =============================================================================
+# BERT DETECTOR
+# =============================================================================
+
+BERT_CHUNK_OVERLAP: int = 200
+"""Character overlap between BERT processing chunks."""
+
+BERT_MAX_TOKEN_LENGTH: int = 512
+"""Maximum token length for BERT models (default cap for transformers)."""
+
+BERT_MERGE_GAP_CHARS: int = 50
+"""Maximum character gap to merge consecutive BERT detections."""
+
+# =============================================================================
+# FALSE POSITIVE FILTERING THRESHOLDS
+# =============================================================================
+
+FP_MIN_TEXT_LENGTH: int = 2
+"""Minimum text length - entities shorter than this are filtered."""
+
+FP_MAX_CAPS_ACRONYM_LENGTH: int = 5
+"""Maximum length for all-caps text to be considered an acronym (filtered for ORG)."""
+
+FP_MIN_PERSON_WORD_LENGTH: int = 3
+"""Minimum word length for single-word PERSON entities."""
+
+FP_MIN_ORG_WORD_LENGTH: int = 3
+"""Minimum word length for single-word ORG entities."""

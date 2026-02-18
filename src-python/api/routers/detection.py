@@ -15,8 +15,10 @@ from core.config import config
 from core.detection.noise_filters import has_legal_suffix as _has_legal_suffix
 from models.schemas import (
     BBox,
+    DetectionProgressResponse,
     DocumentStatus,
     PIIRegion,
+    ResetDetectionResponse,
 )
 from api.deps import (
     cleanup_stale_progress,

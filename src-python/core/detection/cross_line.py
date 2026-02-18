@@ -9,9 +9,10 @@ from __future__ import annotations
 import re
 
 from core.detection.regex_detector import RegexMatch
+from core.detection.detection_config import CROSS_LINE_WORD_WINDOW
 from models.schemas import PIIType
 
-_CROSS_LINE_WORD_WINDOW: int = 5
+_CROSS_LINE_WORD_WINDOW: int = CROSS_LINE_WORD_WINDOW
 
 
 def _detect_cross_line_orgs(full_text: str) -> list[RegexMatch]:

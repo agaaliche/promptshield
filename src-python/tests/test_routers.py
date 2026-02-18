@@ -60,6 +60,17 @@ class TestDocuments:
     async def test_list_empty(self, client: AsyncClient):
         resp = await client.get("/api/documents")
         assert resp.status_code == 200
+        data = resp.json()
+        # Paginated response by default
+        assert "items" in data
+        assert isinstance(data["items"], list)
+        assert data["total"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_empty_flat(self, client: AsyncClient):
+        """Test that paginated=false returns a flat list."""
+        resp = await client.get("/api/documents?paginated=false")
+        assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
     @pytest.mark.asyncio

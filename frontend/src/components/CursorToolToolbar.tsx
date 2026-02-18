@@ -8,7 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { CURSOR_GRAB, CURSOR_GRABBING } from "../cursors";
+import { CURSOR_GRABBING } from "../cursors";
 
 interface CursorToolToolbarProps {
   cursorToolbarRef: React.RefObject<HTMLDivElement | null>;
@@ -68,7 +68,7 @@ export default function CursorToolToolbar({
         style={{
           padding: "4px 6px",
           background: "var(--bg-primary)",
-          cursor: isDragging ? CURSOR_GRABBING : CURSOR_GRAB,
+          cursor: isDragging ? CURSOR_GRABBING : "pointer",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",

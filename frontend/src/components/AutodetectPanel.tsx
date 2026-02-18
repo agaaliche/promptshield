@@ -433,7 +433,7 @@ export default function AutodetectPanel({
           flexShrink: 0,
           padding: "0 10px",
           alignItems: "center",
-          cursor: isMaximized ? "default" : "grab",
+          cursor: isMaximized ? "default" : "pointer",
           userSelect: "none",
         }}>
         {/* Dock button — left side, only when undocked */}

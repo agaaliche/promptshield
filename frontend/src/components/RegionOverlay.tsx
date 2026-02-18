@@ -6,7 +6,7 @@
 import { useState, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
 import { PII_COLORS, getPIIColor, loadLabelConfig, type PIIRegion, type RegionAction, type PIIType } from "../types";
-import { CURSOR_GRAB, CURSOR_GRABBING } from "../cursors";
+import { CURSOR_GRABBING } from "../cursors";
 import { X, Trash2, Key, Edit3, Tag, ChevronRight, ChevronLeft, ReplaceAll, Search } from "lucide-react";
 
 export type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
@@ -582,7 +582,7 @@ function RegionOverlay({
             style={{
               padding: "4px 6px",
               background: "var(--bg-primary)",
-              cursor: isDraggingToolbar ? CURSOR_GRABBING : CURSOR_GRAB,
+              cursor: isDraggingToolbar ? CURSOR_GRABBING : "pointer",
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
@@ -834,7 +834,7 @@ function RegionOverlay({
               padding: "10px 12px",
               background: "var(--bg-primary)",
               borderRadius: "8px 8px 0 0",
-              cursor: isDraggingDialog ? CURSOR_GRABBING : CURSOR_GRAB,
+              cursor: isDraggingDialog ? CURSOR_GRABBING : "pointer",
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",

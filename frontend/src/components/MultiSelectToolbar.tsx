@@ -11,7 +11,7 @@ import {
   Key,
   ReplaceAll,
 } from "lucide-react";
-import { CURSOR_GRABBING } from "../cursors";
+import useDrag from "../hooks/useDrag";
 import {
   batchDeleteRegions,
   setRegionAction,
@@ -102,7 +102,7 @@ export default function MultiSelectToolbar({
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
-          cursor: isDragging ? CURSOR_GRABBING : "default",
+          cursor: "pointer",
         }}
       >
         {/* Drag handle header */}
@@ -114,7 +114,7 @@ export default function MultiSelectToolbar({
           style={{
             padding: "4px 6px",
             background: "var(--bg-primary)",
-            cursor: isDragging ? CURSOR_GRABBING : "pointer",
+            cursor: "pointer",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",

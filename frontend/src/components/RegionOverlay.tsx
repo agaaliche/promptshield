@@ -985,14 +985,14 @@ function RegionOverlay({
                     }}>
                       "{region.text}"
                     </div>
-                    {isImageFile && onUpdateText && (
+                    {onUpdateText && (
                       <button
                         className="btn-ghost btn-sm"
                         onClick={() => {
                           setEditedText(region.text);
                           setIsEditingText(true);
                         }}
-                        title="Edit text (images only)"
+                        title="Edit detected text"
                         style={{ padding: "6px 10px", fontSize: 12, marginTop: 8 }}
                       >
                         Edit Text

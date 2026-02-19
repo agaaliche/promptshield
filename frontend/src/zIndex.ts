@@ -48,6 +48,8 @@ export const Z_MODAL = 100;
 export const Z_POPOVER = 1000;
 
 // ── Top-level layer ──────────────────────────────────────────────
+/** Upload dialog overlay */
+export const Z_UPLOAD_DIALOG = 9500;
 /** Autodetect panel, file dialogs, export dialog */
 export const Z_TOP_DIALOG = 10000;
 

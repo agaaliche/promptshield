@@ -156,26 +156,6 @@ export default function PageNavigator({
         </div>
       ) : (
         <>
-          {/* Header */}
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "8px 8px 6px",
-            borderBottom: "1px solid var(--border-color)",
-            flexShrink: 0,
-          }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)" }}>
-              Pages
-            </span>
-            <button
-              onClick={() => onCollapsedChange(true)}
-              style={btnStyle}
-              title="Collapse page navigator"
-            >
-              <ChevronRight size={14} />
-            </button>
-          </div>
           {/* Thumbnail list */}
           <div ref={listRef} style={{
             flex: 1,

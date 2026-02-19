@@ -12,8 +12,10 @@ import {
   ScanSearch,
   Loader2,
   Upload,
+  LayoutGrid,
+  X,
 } from "lucide-react";
-import { useDocumentStore, useRegionStore, useUIStore, useVaultStore, useDocLoadingStore, useSidebarStore, useDetectionStore } from "../store";
+import { useDocumentStore, useRegionStore, useUIStore, useVaultStore, useDocLoadingStore, useSidebarStore, useDetectionStore, useUploadStore } from "../store";
 import {
   getPageBitmapUrl,
   batchRegionAction,
@@ -43,11 +45,12 @@ import useLabelConfig from "../hooks/useLabelConfig";
 export default function DocumentViewer() {
   const { activeDocId, documents, activePage, setActivePage } = useDocumentStore();
   const { regions, updateRegionAction, removeRegion, setRegions, updateRegionBBox, updateRegion, selectedRegionIds, setSelectedRegionIds, toggleSelectedRegionId, clearSelection, pushUndo, undo, redo, canUndo, canRedo } = useRegionStore();
-  const { zoom, setZoom, isProcessing, setIsProcessing, setStatusMessage, setDrawMode, setCurrentView } = useUIStore();
+  const { zoom, setZoom, isProcessing, setIsProcessing, setStatusMessage, setDrawMode } = useUIStore();
   const { vaultUnlocked, setVaultUnlocked } = useVaultStore();
   const { docLoading, docLoadingMessage, docDetecting, uploadProgressId, uploadProgressDocId, uploadProgressDocName, uploadProgressPhase } = useDocLoadingStore();
   const { rightSidebarWidth, setRightSidebarWidth, isSidebarDragging, leftSidebarWidth } = useSidebarStore();
   const { llmStatus } = useDetectionStore();
+  const { setShowUploadDialog } = useUploadStore();
 
   const doc = documents.find((d) => d.doc_id === activeDocId) ?? null;
   const pageCount = doc?.page_count ?? 0;
@@ -330,7 +333,7 @@ export default function DocumentViewer() {
       }}>
         <button
           className="btn-warning"
-          onClick={() => setCurrentView("upload")}
+          onClick={() => setShowUploadDialog(true)}
           disabled={isProcessing}
           style={{
             display: "flex",
@@ -365,7 +368,7 @@ export default function DocumentViewer() {
               llmStatus={llmStatus}
               rightOffset={sidebarCollapsed ? 60 : rightSidebarWidth}
               leftOffset={leftSidebarWidth}
-              pageNavWidth={pageCount > 1 ? (pageNavCollapsed ? 28 : 148) : 0}
+              pageNavWidth={pageCount > 1 && !pageNavCollapsed ? 148 : 0}
               regions={regions}
               onDetect={(opts) => {
                 setShowAutodetect(false);
@@ -457,6 +460,25 @@ export default function DocumentViewer() {
             <div style={{ padding: "4px 10px", background: "var(--bg-tertiary)", borderRadius: 14, fontSize: 12, color: "var(--text-secondary)", fontWeight: 500, marginLeft: 20 }}>
               {pageCount} pages
             </div>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => setPageNavCollapsed(!pageNavCollapsed)}
+              title={pageNavCollapsed ? "Show page thumbnails" : "Hide page thumbnails"}
+              style={{
+                marginLeft: 4,
+                padding: 0,
+                width: 28,
+                height: 28,
+                borderRadius: "50%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: pageNavCollapsed ? "var(--text-secondary)" : "var(--text-primary)",
+                background: pageNavCollapsed ? "var(--bg-tertiary)" : "rgba(255,255,255,0.12)",
+              }}
+            >
+              {pageNavCollapsed ? <LayoutGrid size={15} /> : <X size={15} />}
+            </button>
           </div>
         )}
       </div>
@@ -724,18 +746,20 @@ export default function DocumentViewer() {
         />
       )}
 
-      <PageNavigator
-        docId={activeDocId}
-        pageCount={pageCount}
-        activePage={activePage}
-        onPageSelect={setActivePage}
-        rightOffset={sidebarCollapsed ? 60 : rightSidebarWidth}
-        collapsed={pageNavCollapsed}
-        onCollapsedChange={setPageNavCollapsed}
-        regions={regions}
-        sidebarWidth={rightSidebarWidth}
-        onSidebarWidthChange={setRightSidebarWidth}
-      />
+      {!pageNavCollapsed && pageCount > 1 && (
+        <PageNavigator
+          docId={activeDocId}
+          pageCount={pageCount}
+          activePage={activePage}
+          onPageSelect={setActivePage}
+          rightOffset={sidebarCollapsed ? 60 : rightSidebarWidth}
+          collapsed={false}
+          onCollapsedChange={setPageNavCollapsed}
+          regions={regions}
+          sidebarWidth={rightSidebarWidth}
+          onSidebarWidthChange={setRightSidebarWidth}
+        />
+      )}
       </div>{/* end contentArea */}
 
       <RegionSidebar
@@ -779,7 +803,7 @@ export default function DocumentViewer() {
         batchRegionAction={batchRegionAction}
         batchDeleteRegions={batchDeleteRegions}
         onTypeFilterChange={setSidebarTypeFilter}
-        hideResizeHandle={pageCount > 1}
+        hideResizeHandle={pageCount > 1 && !pageNavCollapsed}
       />
     </div>
   );

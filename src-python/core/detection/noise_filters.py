@@ -211,6 +211,15 @@ def _is_org_pipeline_noise(text: str) -> bool:
     """
     _get_common_words()  # ensure dictionary is loaded into module global
     clean = text.strip()
+
+    # ── Max word-count guard ──────────────────────────────────────────
+    # Real company names rarely exceed 10 words.  Very long candidates
+    # are almost certainly full sentences that happen to contain a
+    # company name (possibly ending with a legal suffix like "Ltée").
+    _words_quick = clean.split()
+    if len(_words_quick) > 12:
+        return True
+
     # Fix double-encoded UTF-8 (mojibake) for dictionary lookup
     clean_fixed = _fix_double_utf8(clean)
     low = clean.lower()
@@ -1048,6 +1057,31 @@ def _is_person_pipeline_noise(text: str) -> bool:
     low = clean.lower()
     if low in _PERSON_PIPELINE_NOISE:
         return True
+
+    # Pronoun + verb patterns in FR/ES/IT/PT/DE/NL — never a person name.
+    # Catches: "Nous n'avons", "nous n'exprimons", "Il est", "Wir haben", etc.
+    words = clean.split()
+    if len(words) >= 2:
+        first = words[0].lower().rstrip("'\u2019")
+        if first in {
+            # French
+            "je", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles",
+            "ce", "c", "ça", "cela", "ceci",
+            # Spanish
+            "yo", "él", "ella", "nosotros", "nosotras", "vosotros", "vosotras", "ellos", "ellas",
+            # Italian
+            "io", "lui", "lei", "noi", "voi", "loro", "esso", "essa",
+            # German
+            "ich", "er", "sie", "wir", "ihr",
+            # Dutch
+            "ik", "hij", "zij", "wij", "jullie",
+            # Portuguese
+            "eu", "ele", "ela", "nós", "nos", "vós", "vos", "eles", "elas",
+            # English
+            "we", "they", "he", "she",
+        }:
+            return True
+
     stripped = _re.sub(
         r"^(?:[Ll][ea]s?|[Dd][ue]s?|[Uu]n[e]?|[Ll]['']|[Dd]['']"  # FR
         r"|[Ee]l|[Ll]os|[Ll]as"  # ES

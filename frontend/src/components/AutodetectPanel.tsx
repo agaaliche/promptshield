@@ -1064,7 +1064,7 @@ export default function AutodetectPanel({
         </div>
       </>)}
 
-      {/* Bottom toolbar — scope radio left, detect + delete right */}
+      {/* Bottom toolbar — scope radio left, detect right */}
       <div style={{
         marginTop: 12,
         padding: "8px 14px",
@@ -1107,26 +1107,7 @@ export default function AutodetectPanel({
 
         <div style={{ flex: 1 }} />
 
-        {/* Delete + Detect — right */}
-        <button
-          className="btn-ghost"
-          onClick={() => {
-            if (scope === "page") { onResetPage(activePage); } else { onReset(); }
-          }}
-          disabled={isProcessing}
-          style={{
-            whiteSpace: "nowrap",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            color: "var(--text-muted)",
-          }}
-          title={scope === "page" ? `Delete all regions on page ${activePage}` : "Delete all detected regions from the document"}
-        >
-          <Trash2 size={14} />
-          Delete
-        </button>
-
+        {/* Detect — right */}
         <button
           className="btn-primary"
           onClick={handleRun}

@@ -344,25 +344,7 @@ def _is_false_positive_org(text: str) -> bool:
 
 
 # ── Per-language NER configuration (M7: dedup EN/FR/IT) ──────────
-
-@dataclass(frozen=True)
-class _LangNERConfig:
-    """All per-language parameters that differ between EN/FR/IT NER."""
-
-    label_map: dict[str, PIIType]
-    article_prefixes: tuple[str, ...]
-    strip_title_suffixes: bool  # True only for EN
-    fp_person: Callable[[str], bool]
-    fp_org: Callable[[str], bool]
-    generic_stopwords_filter: bool  # extra _GENERIC_STOPWORDS check (EN only)
-    active_model_name: Callable[[], str]
-    # confidence tuning
-    base_confidence: dict[PIIType, float] = field(default_factory=dict)
-    person_multiword_cap: float = 0.95
-    org_3word_cap: float = 0.80
-    person_single_penalty: float = 0.20
-    org_single_floor: float = 0.25
-    model_boost_tiers: tuple[tuple[str, float, float], ...] = ()
+# _LangNERConfig is imported from ner_types module
 
 
 def _get_active_en_model() -> str:
@@ -439,6 +421,14 @@ def _process_chunk_generic(
                 cleaned = cleaned[len(prefix):].strip()
                 break
 
+        # For ORG entities, strip leading company-context words
+        # (e.g., FR "société X" → "X", "compagnie Y" → "Y")
+        if pii_type == PIIType.ORG and cfg.org_context_prefixes:
+            for ctx_prefix in cfg.org_context_prefixes:
+                if cleaned.lower().startswith(ctx_prefix.lower()):
+                    cleaned = cleaned[len(ctx_prefix):].strip()
+                    break
+
         # For PERSON entities, trim trailing job titles (EN only)
         if cfg.strip_title_suffixes and pii_type == PIIType.PERSON:
             words = cleaned.split()
@@ -463,10 +453,21 @@ def _process_chunk_generic(
         if cfg.generic_stopwords_filter and cleaned.lower() in _GENERIC_STOPWORDS:
             continue
 
-        end_char = ent.start_char + len(raw_text.rstrip())
+        # Compute char offsets from the original entity span but
+        # advance start when article/context prefixes were stripped so
+        # the bbox covers only the cleaned text.
+        prefix_stripped = len(ent.text) - len(ent.text.lstrip()) + (
+            len(ent.text.lstrip()) - len(raw_text)
+            if len(ent.text.lstrip()) > len(raw_text) else 0
+        )
+        # Additionally account for article and context prefix stripping:
+        # cleaned starts after those prefixes relative to raw_text.
+        offset_in_raw = raw_text.find(cleaned) if cleaned in raw_text else 0
+        start_char = ent.start_char + offset_in_raw
+        end_char = start_char + len(cleaned)
         confidence = _estimate_confidence_generic(ent, pii_type, cfg)
         matches.append(NERMatch(
-            start=global_offset + ent.start_char,
+            start=global_offset + start_char,
             end=global_offset + end_char,
             text=cleaned,
             pii_type=pii_type,
@@ -657,7 +658,20 @@ _FR_ORG_STOPWORDS: set[str] = {
 
 def _is_false_positive_person_fr(text: str) -> bool:
     """Return True if a French PERSON entity is likely a false positive."""
-    return _is_false_positive_person_generic(text, _FR_PERSON_STOPWORDS)
+    if _is_false_positive_person_generic(text, _FR_PERSON_STOPWORDS):
+        return True
+    # French pronoun (+ optional contraction) + verb → never a person name.
+    # Catches: "Nous n'avons", "nous n'exprimons", "Il est", "Elle a", etc.
+    clean = text.strip()
+    words = clean.split()
+    if len(words) >= 2:
+        first = words[0].lower().rstrip("'\u2019")
+        if first in {
+            "je", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles",
+            "ce", "c", "ça", "cela", "ceci",
+        }:
+            return True
+    return False
 
 
 def _is_false_positive_org_fr(text: str) -> bool:
@@ -676,6 +690,9 @@ _FR_CONFIG = _LangNERConfig(
     fp_org=_is_false_positive_org_fr,
     generic_stopwords_filter=False,
     active_model_name=_get_active_fr_model,
+    org_context_prefixes=(
+        "société ", "societe ", "sociétés ", "societes ",
+    ),
     base_confidence={
         PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.25,
     },
@@ -826,6 +843,9 @@ _IT_CONFIG = _LangNERConfig(
     fp_org=_is_false_positive_org_it,
     generic_stopwords_filter=False,
     active_model_name=_get_active_it_model,
+    org_context_prefixes=(
+        "società ", "societa ",
+    ),
     base_confidence={
         PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.25,
     },
@@ -989,6 +1009,10 @@ _DE_CONFIG = _LangNERConfig(
     fp_org=_is_false_positive_org_de,
     generic_stopwords_filter=False,
     active_model_name=_get_active_de_model,
+    org_context_prefixes=(
+        "Gesellschaft ", "gesellschaft ", "Unternehmen ", "unternehmen ",
+        "Firma ", "firma ",
+    ),
     base_confidence={
         PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.25,
     },
@@ -1132,6 +1156,9 @@ _ES_CONFIG = _LangNERConfig(
     fp_org=_is_false_positive_org_es,
     generic_stopwords_filter=False,
     active_model_name=_get_active_es_model,
+    org_context_prefixes=(
+        "sociedad ",
+    ),
     base_confidence={
         PIIType.PERSON: 0.78, PIIType.ORG: 0.40, PIIType.LOCATION: 0.25,
     },

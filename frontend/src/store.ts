@@ -150,6 +150,8 @@ interface AppState {
   addToUploadQueue: (items: UploadItem[]) => void;
   updateUploadItem: (id: string, updates: Partial<UploadItem>) => void;
   clearCompletedUploads: () => void;
+  showUploadDialog: boolean;
+  setShowUploadDialog: (v: boolean) => void;
   showUploadErrorDialog: boolean;
   setShowUploadErrorDialog: (v: boolean) => void;
   dismissingErrorUploads: boolean;
@@ -409,6 +411,8 @@ export const useAppStore = create<AppState>()(devtools((set, get) => ({
   clearCompletedUploads: () => set((s) => ({
     uploadQueue: s.uploadQueue.filter((u) => u.status !== "done"),
   })),
+  showUploadDialog: false,
+  setShowUploadDialog: (v) => set({ showUploadDialog: v }),
   showUploadErrorDialog: false,
   setShowUploadErrorDialog: (v) => set({ showUploadErrorDialog: v }),
   dismissingErrorUploads: false,
@@ -495,6 +499,8 @@ export const useUploadStore = () =>
     addToUploadQueue: s.addToUploadQueue,
     updateUploadItem: s.updateUploadItem,
     clearCompletedUploads: s.clearCompletedUploads,
+    showUploadDialog: s.showUploadDialog,
+    setShowUploadDialog: s.setShowUploadDialog,
     showUploadErrorDialog: s.showUploadErrorDialog,
     setShowUploadErrorDialog: s.setShowUploadErrorDialog,
     dismissingErrorUploads: s.dismissingErrorUploads,

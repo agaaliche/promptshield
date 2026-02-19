@@ -107,6 +107,8 @@ class LangNERConfig:
     fp_org: Callable[[str], bool]
     generic_stopwords_filter: bool  # extra generic stopwords check (EN only)
     active_model_name: Callable[[], str]
+    # ORG-specific context prefixes to strip (e.g., "société ", "compagnie ")
+    org_context_prefixes: tuple[str, ...] = ()
     # Confidence tuning
     base_confidence: dict[PIIType, float] = field(default_factory=dict)
     person_multiword_cap: float = 0.95

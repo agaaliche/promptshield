@@ -243,11 +243,9 @@ class RedetectRequest(_PydanticBaseModel):
 async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
     """Re-run PII detection with custom fuzziness (confidence threshold).
 
-    Merge strategy:
-    - New regions (no significant bbox overlap with existing) → added.
-    - Existing regions that overlap with a new detection → updated in place
-      (text, pii_type, confidence, source refreshed) but action preserved.
-    - Existing regions with no new match → kept untouched (never deleted).
+    On success, all existing regions on the scanned pages are replaced with
+    the fresh detections.  Regions on non-scanned pages (when scope is a
+    single page) are kept.
     """
     import asyncio
     import traceback
@@ -261,7 +259,7 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
         raise HTTPException(409, detail="Another detection with custom settings is running. Please wait.")
 
     try:
-        from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages, _bbox_overlap_area, _bbox_area
+        from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages
         from core.detection.language import detect_language as _detect_lang_r
 
         # Thread-safe config override for this detection run
@@ -584,27 +582,16 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
             if _trimmed_count:
                 logger.info("Trimmed %d auto-detected region(s) to match user expressions", _trimmed_count)
 
-        # ── Merge new detections into existing regions ──
+        # ── Replace regions on scanned pages with fresh detections ──
+        # Old regions on scanned pages are discarded; regions on
+        # non-scanned pages (when scope is a single page) are kept.
         scanned_pages = {p.page_number for p in pages_to_scan}
-        existing_on_scanned = [r for r in doc.regions if r.page_number in scanned_pages]
         existing_other = [r for r in doc.regions if r.page_number not in scanned_pages]
-
-        # Remove stale blacklist (MANUAL+CUSTOM+PENDING) regions on scanned
-        # pages so that deleted blacklist terms don't persist across runs.
-        from models.schemas import DetectionSource as _DetSourceFilter, RegionAction as _RActFilter
-        _bl_terms_lower = {_norm_quotes(t.lower()) for t in (body.blacklist_terms or [])} if body.blacklist_terms else set()
-        existing_on_scanned = [
-            r for r in existing_on_scanned
-            if not (
-                r.source == _DetSourceFilter.MANUAL
-                and (r.pii_type.value if hasattr(r.pii_type, 'value') else str(r.pii_type)) == "CUSTOM"
-                and r.action == _RActFilter.PENDING
-                and _norm_quotes((r.text or "").strip().lower()) not in _bl_terms_lower
-            )
-        ]
+        old_count = len(doc.regions) - len(existing_other)
+        added_count = len(new_regions)
 
         # Build set of PII types that were explicitly excluded by the user
-        # so we can remove stale regions of those types from previous runs.
+        # so we can strip them after propagation.
         _regex_tab_types = {"EMAIL", "PHONE", "SSN", "CREDIT_CARD", "IBAN", "DATE",
                             "IP_ADDRESS", "PASSPORT", "DRIVER_LICENSE", "ADDRESS"}
         _ner_tab_types = {"PERSON", "ORG", "LOCATION", "CUSTOM"}
@@ -618,92 +605,8 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
         if not body.ner_enabled:
             excluded_types |= _ner_tab_types
 
-        # Drop existing regions whose type was explicitly excluded
-        # (but never drop MANUAL regions — e.g. blacklist or user-drawn)
-        if excluded_types:
-            from models.schemas import DetectionSource as _DetSourceFilter
-            existing_on_scanned = [
-                r for r in existing_on_scanned
-                if r.source == _DetSourceFilter.MANUAL
-                or (r.pii_type.value if hasattr(r.pii_type, 'value') else str(r.pii_type)) not in excluded_types
-            ]
-
-        OVERLAP_THRESHOLD = 0.50
-        matched_existing_ids: set[str] = set()
-        updated_indices: set[int] = set()
-        added_count = 0
-        updated_count = 0
-
-        for ni, nr in enumerate(new_regions):
-            nr_area = _bbox_area(nr.bbox)
-            if nr_area <= 0:
-                continue
-
-            best_match = None
-            best_iou = 0.0
-            for er in existing_on_scanned:
-                if er.page_number != nr.page_number or er.id in matched_existing_ids:
-                    continue
-                overlap = _bbox_overlap_area(nr.bbox, er.bbox)
-                er_area = _bbox_area(er.bbox)
-                if er_area <= 0:
-                    continue
-                union = nr_area + er_area - overlap
-                iou = overlap / union if union > 0 else 0
-                if iou > best_iou:
-                    best_iou = iou
-                    best_match = er
-
-            if best_match and best_iou >= OVERLAP_THRESHOLD:
-                best_match.bbox = nr.bbox
-                best_match.text = nr.text
-                best_match.pii_type = nr.pii_type
-                best_match.confidence = nr.confidence
-                best_match.source = nr.source
-                best_match.char_start = nr.char_start
-                best_match.char_end = nr.char_end
-                matched_existing_ids.add(best_match.id)
-                updated_indices.add(ni)
-                updated_count += 1
-
-        newly_added_ids: set[str] = set()
-        for ni, nr in enumerate(new_regions):
-            if ni not in updated_indices:
-                existing_on_scanned.append(nr)
-                newly_added_ids.add(nr.id)
-                added_count += 1
-
-        # ── Prune stale auto-detected regions ──
-        # Remove old auto-detected regions that are still PENDING and
-        # had no matching new detection (i.e. the improved detection no
-        # longer flags them).  Regions that the user acted on (REMOVE,
-        # TOKENIZE, CANCEL) or that were manually created are preserved.
-        from models.schemas import RegionAction, DetectionSource
-        pruned = []
-        removed_count = 0
-        for r in existing_on_scanned:
-            if r.id in matched_existing_ids:
-                # Was matched (updated) by a new detection — keep
-                pruned.append(r)
-            elif r.id in newly_added_ids:
-                # Newly added this run — keep
-                pruned.append(r)
-            elif r.action != RegionAction.PENDING:
-                # User already acted on it — keep
-                pruned.append(r)
-            elif r.source == DetectionSource.MANUAL:
-                # Manually created — keep
-                pruned.append(r)
-            else:
-                # Old auto-detected, still PENDING, no new match — remove
-                removed_count += 1
-                logger.debug(
-                    "Pruning stale region %s: [%s] '%s' (source=%s)",
-                    r.id, r.pii_type, r.text[:40] if r.text else "", r.source,
-                )
-        existing_on_scanned = pruned
-
-        merged_regions = existing_other + existing_on_scanned
+        from models.schemas import DetectionSource
+        merged_regions = existing_other + new_regions
 
         # Propagate newly detected text across all pages
         all_regions = propagate_regions_across_pages(merged_regions, doc.pages)
@@ -758,15 +661,15 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
         logger.info(
             f"Redetect for '{doc.original_filename}' "
             f"(threshold={body.confidence_threshold}, pages={body.page_number or 'all'}): "
-            f"{added_count} added, {updated_count} updated, {removed_count} pruned, "
+            f"cleared {old_count} old, {added_count} new, "
             f"{len(doc.regions)} total"
         )
 
         return {
             "doc_id": doc_id,
             "added": added_count,
-            "updated": updated_count,
-            "removed": removed_count,
+            "updated": 0,
+            "removed": old_count,
             "total_regions": len(doc.regions),
             "regions": [r.model_dump(mode="json") for r in doc.regions],
         }

@@ -2,33 +2,29 @@
 
 import { useRef, useCallback, useEffect, useState, useMemo } from "react";
 import {
-  Upload,
   FileSearch,
   ArrowRightLeft,
   Settings,
   Shield,
-  ShieldCheck,
   FileText,
   Trash2,
   ChevronDown,
   ChevronRight,
-  Plus,
   FolderOpen,
-  FolderUp,
   Search,
   ArrowUpDown,
   X,
 } from "lucide-react";
-import { useDocumentStore, useRegionStore, useUIStore, useConnectionStore, useSidebarStore, useUploadStore } from "../store";
+import { useShallow } from "zustand/react/shallow";
+import { useDocumentStore, useRegionStore, useUIStore, useConnectionStore, useSidebarStore, useUploadStore, useAppStore } from "../store";
 import { deleteDocument } from "../api";
-import { useDocumentUpload, ACCEPTED_FILE_TYPES } from "../hooks/useDocumentUpload";
+import { useDocumentUpload } from "../hooks/useDocumentUpload";
 import UserMenu from "./UserMenu";
 
 type View = "upload" | "viewer" | "detokenize" | "settings";
 
 const MIN_WIDTH = 160;
 const MAX_WIDTH = 400;
-const ACCEPT = ACCEPTED_FILE_TYPES;
 
 type SortField = "name" | "pages" | "date";
 type SortDir = "asc" | "desc";
@@ -39,6 +35,7 @@ export default function Sidebar() {
   const { setRegions, regions: storeRegions } = useRegionStore();
   const { leftSidebarWidth, setLeftSidebarWidth } = useSidebarStore();
   const { uploadQueue, dismissingErrorUploads } = useUploadStore();
+  const { showUploadDialog, setShowUploadDialog } = useAppStore(useShallow((s) => ({ showUploadDialog: s.showUploadDialog, setShowUploadDialog: s.setShowUploadDialog })));
   const { backendReady } = useConnectionStore();
 
   const isDragging = useRef(false);
@@ -49,14 +46,9 @@ export default function Sidebar() {
   const [protectExpanded, setProtectExpanded] = useState(currentView === "viewer" || currentView === "upload");
   // Dialogs
   const [showFilesDialog, setShowFilesDialog] = useState(false);
-  const [showAddDialog, setShowAddDialog] = useState(false);
   const [filesSearch, setFilesSearch] = useState("");
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-  // Upload drag state
-  const [uploadDragging, setUploadDragging] = useState(false);
-  const uploadFileRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
   // File list height resize
   const [fileListHeight, setFileListHeight] = useState(280);
   const isResizingFileList = useRef(false);
@@ -145,7 +137,7 @@ export default function Sidebar() {
   // Upload handler — shared hook (M5)
   const { handleFiles } = useDocumentUpload({
     onBeforeUpload: () => {
-      setShowAddDialog(false);
+      setShowUploadDialog(false);
       setProtectExpanded(true);
     },
     verboseLoadingMessages: true,
@@ -427,109 +419,6 @@ export default function Sidebar() {
         onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-primary)")}
         onMouseLeave={(e) => { if (!isDragging.current) e.currentTarget.style.background = "transparent"; }}
       />
-
-      {/* ── Add Document Dialog ── */}
-      {showAddDialog && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Add document"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.6)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 10000,
-          }}
-          onClick={() => setShowAddDialog(false)}
-        >
-          <div
-            style={{
-              background: "var(--bg-secondary)",
-              border: "1px solid var(--border-color)",
-              borderRadius: 10,
-              width: 480,
-              maxWidth: "90vw",
-              display: "flex",
-              flexDirection: "column",
-              boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Dialog header */}
-            <div style={{ display: "flex", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid var(--border-color)", gap: 10 }}>
-              <Upload size={18} style={{ color: "var(--accent-primary)" }} />
-              <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>Add Document</span>
-              <button
-                className="btn-ghost btn-sm"
-                onClick={() => setShowAddDialog(false)}
-                style={{ padding: 4 }}
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            {/* Upload area */}
-            <div style={{ padding: 20 }}>
-              <div
-                style={{
-                  border: `2px dashed ${uploadDragging ? "var(--accent-primary)" : "var(--border-color)"}`,
-                  borderRadius: 10,
-                  padding: "36px 24px",
-                  textAlign: "center",
-                  cursor: isProcessing ? "default" : "pointer",
-                  background: uploadDragging ? "rgba(74,158,255,0.06)" : "transparent",
-                  transition: "all 0.2s ease",
-                }}
-                onDragOver={(e) => { e.preventDefault(); setUploadDragging(true); }}
-                onDragLeave={() => setUploadDragging(false)}
-                onDrop={(e) => { e.preventDefault(); setUploadDragging(false); handleFiles(e.dataTransfer.files); }}
-                onClick={() => !isProcessing && uploadFileRef.current?.click()}
-              >
-                <input
-                  ref={uploadFileRef}
-                  type="file"
-                  accept={ACCEPT}
-                  multiple
-                  style={{ display: "none" }}
-                  onChange={(e) => { handleFiles(e.target.files); if (e.target) e.target.value = ""; }}
-                />
-                <input
-                  ref={folderInputRef}
-                  type="file"
-                  // @ts-expect-error webkitdirectory is non-standard
-                  webkitdirectory=""
-                  multiple
-                  style={{ display: "none" }}
-                  onChange={(e) => { handleFiles(e.target.files); if (e.target) e.target.value = ""; }}
-                />
-                {isProcessing ? (
-                  <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>Processing...</div>
-                ) : (
-                  <>
-                    <Upload size={36} style={{ color: "var(--accent-primary)", marginBottom: 12 }} />
-                    <div style={{ fontSize: 14, color: "var(--text-secondary)", lineHeight: 1.4, marginBottom: 6 }}>
-                      Drag & drop files here, or click to browse
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
-                      PDF, DOCX, XLSX, PPTX, JPG, PNG, TIFF, BMP
-                    </div>
-                    <button
-                      className="btn-ghost btn-sm"
-                      style={{ fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4, padding: "6px 12px", border: "1px solid var(--border-color)", borderRadius: 6 }}
-                      onClick={(e) => { e.stopPropagation(); folderInputRef.current?.click(); }}
-                    >
-                      <FolderUp size={14} /> Upload folder
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Files Dialog (portal-style overlay) ── */}
       {showFilesDialog && (

@@ -376,12 +376,42 @@ def _is_org_pipeline_noise(text: str) -> bool:
         return True
     if len(words) == 1 and len(words[0]) <= 3:
         return True
+    # ── Single capitalized word in dictionary → noise ─────────────
+    # Real ORG names are proper nouns (Apple, Google, Desjardins) that
+    # do NOT appear in language dictionaries.  Common nouns like
+    # "Déboursés", "Equipements", "Processus" do.  This is a
+    # multilingual structural check that works across all 7 languages.
+    if len(words) == 1 and not has_legal_suffix(clean) and _in_dict(clean):
+        return True
+    # ── Word + bare digit → noise (without legal suffix) ──────────
+    # "Choix 2", "Annexe 1", "Option 3" — a regular word followed by
+    # a digit is categorisation/labelling, never a company name.
+    if len(words) == 2 and not has_legal_suffix(clean):
+        if words[1].isdigit() and _in_dict(words[0]):
+            return True
+        if words[0].isdigit() and _in_dict(words[1]):
+            return True
     if len(words) >= 2 and not has_legal_suffix(clean) and all(
         _in_dict(w)
+        or w.isdigit()  # treat bare digits as pass-through in dict check
         or all(c in "-\u2013\u2014/." for c in w)
         for w in words
     ):
         return True
+    # ── ALL-CAPS multi-word phrases (accounting headers) ──────────
+    # "BÉNÉFICES NON RÉPARTIS PRÉVISIONNELS" — all-uppercase phrases
+    # with 3+ words and no legal suffix are almost always document
+    # section headers, not company names.  Filter if ≥75% of words
+    # are in the dictionary.
+    # Only respect legal suffix if it appears at the END of the phrase
+    # (real company: "SOCIÉTÉ GÉNÉRALE SE") — mid-phrase matches like
+    # "SE" in "EXERCICES SE TERMINANT" are coincidental.
+    if len(words) >= 3 and clean.replace('\n', ' ').replace(' ', '').isupper():
+        _tail_has_suffix = has_legal_suffix(words[-1])
+        if not _tail_has_suffix:
+            dict_count = sum(1 for w in words if _in_dict(w) or w.isdigit())
+            if dict_count >= len(words) * 0.75:
+                return True
     # Strip parenthetical codes (e.g., "(NCSC)", "(ABC)") and standalone numbers/single letters
     # then check if what remains is all dictionary words. Catches regulatory/standard names.
     if len(words) >= 3 and not has_legal_suffix(clean):
@@ -476,7 +506,7 @@ def _is_org_pipeline_noise(text: str) -> bool:
     ):
         return True
     if any(w.lower() in ("pour", "para", "für", "fuer", "per", "voor") for w in words):
-        if not has_legal_suffix(clean):
+        if not has_legal_suffix(words[-1]):
             return True
     # For 3+ word phrases without legal suffix: if ALL words are dictionary
     # words, it's descriptive text, not a real organization name.
@@ -861,12 +891,12 @@ _LOC_ONLY_NOISE: frozenset[str] = frozenset({
     'instalacion', 'instalaciones', 'instalación', 'instalacoes', 'instalação', 'instalações',
     'interest', 'interests', 'investissement', 'invoice', 'invoices', 'kantoor',
     'kantoren', 'lager', 'lagerhalle', 'local', 'locale', 'locales',
-    'locali', 'locaux', 'losses', 'magasin', 'magasins', 'magazijn',
+    'locali', 'locaux', 'location', 'location-acquisition', 'losses', 'magasin', 'magasins', 'magazijn',
     'magazijnen', 'magazzini', 'magazzino', 'meubilair', 'mobiliario', 'mobiliário',
     'moebel', 'mortgage', 'mortgages', 'möbel', 'nautique', 'nave',
     'naves', 'officina', 'officine', 'oficina', 'oficinas', 'ordonnance',
     'ordonnances', 'palasport', 'palazzetto', 'pand', 'panden', 'parking',
-    'parkings', 'patients', 'pelouse', 'piscina', 'piscine', 'pitch',
+    'parkings', 'patients', 'pays', 'pelouse', 'piscina', 'piscine', 'pitch',
     'polideportivo', 'pool', 'premises', 'profiverein', 'profivereine', 'profivereins',
     'rates', 'recinto', 'recintos', 'rent', 'rental', 'rents',
     'resultats', 'revenues', 'ruimte', 'ruimten', 'résultats', 'salaries',
@@ -934,7 +964,17 @@ _PERSON_PIPELINE_NOISE: frozenset[str] = _COMMON_DOMAIN_NOISE | _PERSON_ONLY_NOI
 
 
 def _is_loc_pipeline_noise(text: str) -> bool:
-    """Return True if *text* looks like a noisy LOCATION false-positive."""
+    """Return True if *text* looks like a noisy LOCATION false-positive.
+
+    Uses language dictionaries for vocabulary checks — same approach as
+    the ORG and PERSON filters.  Structural rules cover:
+      • apostrophe contractions (l'emplacement, d'outre-mer)
+      • single-word dictionary words (localement, régions)
+      • hyphenated compounds (outre-mer)
+      • multi-word all-dictionary phrases (Province / Territoire)
+      • trailing colon form labels
+    """
+    _get_common_words()
     clean = text.strip()
     low = clean.lower()
     if low in _LOC_PIPELINE_NOISE:
@@ -945,26 +985,126 @@ def _is_loc_pipeline_noise(text: str) -> bool:
         return True
     if clean and clean[0].isdigit():
         return True
-    if _re.match(r"^location\s+(?:de|d[''])", low):
+    if _re.match(r"^location\s+(?:de|d[''\u2019])", low):
         return True
-    # Strip leading articles/prepositions (FR, ES, IT, PT, DE, NL)
+    # Trailing colon → form label ("Pays :", "Province :")
+    if clean.rstrip().endswith(':'):
+        return True
+    # URL / hostname → not a location
+    if _re.search(r'(?:www\.|https?://|[a-z0-9]+\.[a-z]{2,})', low):
+        return True
+
+    # ── Apostrophe contraction stripping: l'…, d'… ──────────────
+    # Handled separately because there is no space after the
+    # apostrophe (e.g. "l'emplacement", "d'outre-mer").
+    _cont = _re.sub(r"^[LlDd][''\u2019]\s*", "", clean)
+    if _cont and _cont != clean:
+        _cont_low = _cont.lower()
+        if _cont_low in _LOC_PIPELINE_NOISE:
+            return True
+        if _cont_low in _common_words:
+            return True
+        na = _remove_accents(_cont_low)
+        if na != _cont_low and na in _common_words:
+            return True
+        for stem in _stem_word(_cont_low):
+            if stem in _common_words:
+                return True
+
+    # ── Space-separated article/preposition stripping ────────────
     _stripped = _re.sub(
-        r"^(?:[Ll][eao]s?|[Dd][eiu]s?|[Uu]n[ea]?|[Ll]['']\s*|[Dd]['']\s*"  # FR
+        r"^(?:[Ll][eao]s?|[Dd][eiu]s?|[Uu]n[ea]?"  # FR
         r"|[Ee]l|[Ll]os|[Ll]as"  # ES
         r"|[Ii]l|[Gg]li|[Ll][oae]|[Uu]n[oa]?"  # IT
         r"|[Dd][aeo]s?|[Oo]s?|[Aa]s?"  # PT
         r"|[Dd](?:er|ie|as|en|em|es)|[Ee]in[e]?"  # DE
         r"|[Hh]et|[Dd]e|[Ee]en"  # NL
         r")\s+", "", clean)
-    if _stripped and _stripped.lower() in _LOC_PIPELINE_NOISE:
-        return True
+    if _stripped and _stripped != clean:
+        _s_low = _stripped.lower()
+        if _s_low in _LOC_PIPELINE_NOISE:
+            return True
+        # After stripping article, check dictionary for remaining word
+        if len(_stripped.split()) == 1:
+            if _s_low in _common_words:
+                return True
+            na = _remove_accents(_s_low)
+            if na != _s_low and na in _common_words:
+                return True
+            for stem in _stem_word(_s_low):
+                if stem in _common_words:
+                    return True
+
     words = clean.split()
+
+    # ── Single-word checks ───────────────────────────────────────
+    if len(words) == 1:
+        # ALL-UPPERCASE single word → header/label (e.g. "PAYS")
+        if clean.isupper():
+            return True
+        # Lowercase single word in dictionary → common noun, never
+        # a proper location (locations are always capitalised).
+        if clean == clean.lower():
+            if low in _common_words:
+                return True
+            na = _remove_accents(low)
+            if na != low and na in _common_words:
+                return True
+            for stem in _stem_word(low):
+                if stem in _common_words:
+                    return True
+        # Hyphenated compounds: "outre-mer" → check each part
+        if '-' in clean:
+            parts = [p for p in clean.split('-') if p]
+            if len(parts) >= 2 and all(p.lower() in _common_words for p in parts):
+                return True
+
+    # ── Multi-word checks ──────────────────────────────────────────
+    # NOTE: Unlike ORG/PERSON, location names often consist entirely
+    # of common words ("New York City", "Salt Lake City", "Cape Town").
+    # The all-dictionary check must therefore be more conservative.
+
+    # Words all in the explicit noise set (with punct pass-through)
     if len(words) >= 2 and all(
         w.lower() in _LOC_PIPELINE_NOISE
+        or w.isdigit()
         or all(c in "-\u2013\u2014/." for c in w)
         for w in words
     ):
         return True
+    # ALL-UPPERCASE multi-word where all words are common vocabulary
+    # → financial/legal headers ("PROTÉGÉ B", "BIENS IMMOBILIERS")
+    if len(words) >= 2 and clean.isupper():
+        if all(
+            w.lower() in _common_words
+            or w.isdigit()
+            or len(w) == 1
+            or all(c in "-\u2013\u2014/." for c in w)
+            for w in words
+        ):
+            return True
+    # Multi-word with punctuation separator (/.) where all content
+    # words are common vocabulary: "Province / Territoire"
+    if len(words) >= 2:
+        _punct_w = [w for w in words if all(c in "/.\u2013\u2014" for c in w)]
+        if _punct_w:
+            _content_w = [w for w in words if w not in _punct_w]
+            if _content_w and all(
+                w.lower() in _common_words or w.isdigit() or len(w) == 1
+                for w in _content_w
+            ):
+                return True
+    # Multi-word (≥3 words) where ≥ half of content words start
+    # lowercase → descriptive phrase, not a proper location.
+    # Content words = words > 2 chars (skips articles/prepositions).
+    # Covers: "Responsable local ou régional",
+    #         "Installation de mouillages"
+    if len(words) >= 3:
+        _cw = [w for w in words if len(w) > 2]
+        if _cw:
+            _lc = sum(1 for w in _cw if w[0].islower())
+            if _lc >= len(_cw) * 0.5:
+                return True
     # All-lowercase multi-word phrase → common noun, not a proper location
     if len(words) >= 2 and clean == clean.lower():
         return True
@@ -1051,6 +1191,82 @@ def _is_german_compound_noun(word: str) -> bool:
     return False
 
 
+# ── Expanded multilingual first-name whitelist ────────────────────────────
+# Person names that also appear in language dictionaries (e.g.
+# "Pierre" = stone in FR, "Rose" = pink/flower in FR/EN).
+# These are EXEMPTED from the single-word dictionary noise check
+# to avoid filtering real person names.
+
+_PERSON_FIRST_NAME_WHITELIST: frozenset[str] = _PERSON_SHORT_NAME_WHITELIST | frozenset({
+    # French (names that are also common nouns/adjectives)
+    "pierre", "marie", "rose", "violet", "claire", "claude",
+    "pascal", "christian", "gilbert", "florence", "constant",
+    "prudence", "victoire", "clément", "clement", "patrice",
+    "marguerite", "solange", "aimé", "aime", "desire", "désiré",
+    "dominique", "michel", "marcel", "fortune", "fortuné",
+    # English
+    "grace", "hope", "faith", "joy", "mark", "bill", "bob",
+    "will", "nick", "amber", "crystal", "hunter", "mason",
+    "robin", "august", "pearl", "violet", "dawn", "summer",
+    # German
+    "wolf", "ernst", "otto", "stein", "hans",
+    # Spanish
+    "dolores", "mercedes", "pilar", "consuelo", "santos",
+    # Italian
+    "bianca", "stella", "felice", "leone", "franco",
+    # Dutch
+    "storm",
+    # Portuguese
+    "clara", "aurora",
+    # Cross-language
+    "victoria", "martin", "roman", "roman", "max", "leon",
+    "oliver", "iris", "alma", "cesar", "hugo", "felix",
+    "noel", "noël", "angelo", "salvatore", "reine",
+})
+
+
+def _is_single_word_dict_noise(word: str) -> bool:
+    """Return True if a single word is a common-noun false positive.
+
+    Checks the multilingual language dictionaries (same infrastructure
+    as the ORG filter) and returns True if the word is found — meaning
+    it's a regular vocabulary word, not a proper name.
+
+    First-name whitelist entries are exempted to avoid filtering real
+    person names that happen to also be dictionary words.
+    """
+    _get_common_words()
+    clean = word.strip()
+    if not clean or len(clean) <= 2:
+        return False
+    low = clean.lower().rstrip("'\u2019")
+    # Exempt known first names
+    if low in _PERSON_FIRST_NAME_WHITELIST:
+        return False
+    # Use the same _in_dict logic as the ORG filter
+    if low in _common_words:
+        return True
+    # Try PDF encoding fix
+    fixed = _fix_pdf_encoding(low)
+    if fixed != low and fixed in _common_words:
+        return True
+    # Try accent removal
+    noaccent = _remove_accents(low)
+    if noaccent != low and noaccent in _common_words:
+        return True
+    # Snowball stemming across all languages
+    for stem in _stem_word(low):
+        if stem in _common_words:
+            return True
+    # Handle contractions (l'Emprunteur → Emprunteur → emprunteur)
+    if "'" in low or "\u2019" in low:
+        parts = _re.split(r"['\u2019]", low)
+        main_parts = [p for p in parts if len(p) > 2]
+        if main_parts and all(_is_single_word_dict_noise(p) for p in main_parts):
+            return True
+    return False
+
+
 def _is_person_pipeline_noise(text: str) -> bool:
     """Return True if *text* looks like a noisy PERSON false-positive."""
     clean = text.strip()
@@ -1083,20 +1299,32 @@ def _is_person_pipeline_noise(text: str) -> bool:
             return True
 
     stripped = _re.sub(
-        r"^(?:[Ll][ea]s?|[Dd][ue]s?|[Uu]n[e]?|[Ll]['']|[Dd]['']"  # FR
+        r"^(?:[Ll][ea]s?|[Dd][ue]s?|[Uu]n[e]?|[Ll][''\u2019]|[Dd][''\u2019]"  # FR
         r"|[Ee]l|[Ll]os|[Ll]as"  # ES
         r"|[Ii]l|[Gg]li|[Ll][oae]|[Uu]n[oa]?"  # IT
         r"|[Dd](?:er|ie|as|en|em|es)|[Ee]in[e]?"  # DE
         r"|[Hh]et|[Dd]e|[Ee]en"  # NL
         r"|[Oo]s?|[Aa]s?"  # PT
+        r"|[Ll][Ee]|[Ll][Aa]"  # FR capitalised Le/La
         r")\s+", "", clean)
     if stripped and stripped.lower() in _PERSON_PIPELINE_NOISE:
+        return True
+    # After stripping article, check dictionary too — catches
+    # "La compagnie", "Le Producteur", "L'Emprunteur" where the
+    # remaining word is a common noun in any supported language.
+    if stripped and _is_single_word_dict_noise(stripped):
         return True
     if len(clean) <= 2:
         return True
     if clean.isdigit():
         return True
     if clean and clean[0].isdigit():
+        return True
+    # URL / hostname patterns → never a person name
+    if _re.search(r'(?:www\.|https?://|[a-z0-9]+\.[a-z]{2,})', low):
+        return True
+    # Trailing colon → form label ("ADDITIONNELLE :", "Signature :")
+    if clean.rstrip().endswith(':'):
         return True
     if _re.fullmatch(r'[A-ZÀ-Ü](?:\.[A-ZÀ-Ü])+\.?', clean):
         return True
@@ -1109,12 +1337,43 @@ def _is_person_pipeline_noise(text: str) -> bool:
         return True
     if len(words) == 1 and clean.isupper():
         return True
+    # ── Single-word dictionary check ──────────────────────────────
+    # A single word that appears in any of the 7 language dictionaries
+    # is a common noun/verb/adjective, not a person name.  Real person
+    # names are proper nouns absent from standard dictionaries.
+    # Uses the same _in_dict() infrastructure as the ORG filter —
+    # handles accents, PDF encoding, stemming, contractions.
+    #
+    # Safety:  Multi-language first-name whitelist ← any name in there
+    # is NOT filtered (Pierre, Simon, Louis, etc.).  Names that don't
+    # appear in dictionaries (Amine, Dagmar, Vymetalova) pass through
+    # naturally.
+    if len(words) == 1:
+        if _is_single_word_dict_noise(clean):
+            return True
     if len(words) >= 2 and all(
         w.lower() in _PERSON_PIPELINE_NOISE
+        or w.isdigit()
         or all(c in "-\u2013\u2014/." for c in w)
         for w in words
     ):
         return True
+    # ── Multi-word: article + common noun from dictionary ─────────
+    # "Mon entreprise", "Le Producteur" — article + single dict word.
+    if len(words) == 2 and not has_legal_suffix(clean):
+        first_low = words[0].lower().rstrip("'\u2019")
+        _LEADING_ARTICLES = {
+            "le", "la", "les", "un", "une", "mon", "ma", "mes",
+            "ton", "ta", "tes", "son", "sa", "ses", "ce", "cette",
+            "el", "los", "las", "un", "una", "mi", "tu", "su",
+            "il", "lo", "gli", "un", "una", "mio", "mia",
+            "der", "die", "das", "den", "dem", "des", "ein", "eine", "mein", "sein",
+            "de", "het", "een", "mijn", "zijn",
+            "o", "a", "os", "as", "um", "uma", "meu", "seu",
+            "the", "my", "his", "her", "our", "this", "that",
+        }
+        if first_low in _LEADING_ARTICLES and _is_single_word_dict_noise(words[1]):
+            return True
     # German compound nouns misidentified as PERSON (e.g. Hauptmieters)
     if len(words) == 1 and len(clean) >= 8 and _is_german_compound_noun(clean):
         return True

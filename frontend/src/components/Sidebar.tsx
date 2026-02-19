@@ -14,6 +14,7 @@ import {
   Search,
   ArrowUpDown,
   X,
+  AlertTriangle,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useDocumentStore, useRegionStore, useUIStore, useConnectionStore, useSidebarStore, useUploadStore, useAppStore } from "../store";
@@ -54,6 +55,7 @@ export default function Sidebar() {
   const isResizingFileList = useRef(false);
   const fileListStartY = useRef(0);
   const fileListStartH = useRef(280);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -132,6 +134,20 @@ export default function Sidebar() {
     setActiveDocId(docId);
     setCurrentView("viewer");
     setShowFilesDialog(false);
+  };
+
+  const handleDeleteAll = async () => {
+    try {
+      await Promise.all(documents.map((d) => deleteDocument(d.doc_id)));
+      setDocuments([]);
+      setActiveDocId(null);
+      setRegions([]);
+      setCurrentView("upload");
+      setShowFilesDialog(false);
+      setConfirmDeleteAll(false);
+    } catch (err) {
+      console.error("Failed to delete all documents:", err);
+    }
   };
 
   // Upload handler — shared hook (M5)
@@ -444,8 +460,7 @@ export default function Sidebar() {
               borderRadius: 10,
               width: 600,
               maxWidth: "90vw",
-              minHeight: 350,
-              maxHeight: "80vh",
+              height: "70vh",
               display: "flex",
               flexDirection: "column",
               boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
@@ -457,6 +472,18 @@ export default function Sidebar() {
             <div style={{ display: "flex", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid var(--border-color)", gap: 10 }}>
               <FolderOpen size={18} style={{ color: "var(--accent-primary)" }} />
               <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>All Documents</span>
+              {documents.length > 0 && (
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={() => setConfirmDeleteAll(true)}
+                  style={{ padding: "4px 8px", fontSize: 11, display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)" }}
+                  title="Delete all documents"
+                  onMouseEnter={(e) => { e.currentTarget.style.color = "#f44336"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+                >
+                  <Trash2 size={13} /> Delete All
+                </button>
+              )}
               <button
                 className="btn-ghost btn-sm"
                 onClick={() => setShowFilesDialog(false)}
@@ -496,6 +523,37 @@ export default function Sidebar() {
                 )}
               </div>
             </div>
+
+            {/* Delete All confirmation banner */}
+            {confirmDeleteAll && (
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "10px 16px",
+                background: "rgba(244, 67, 54, 0.1)",
+                borderBottom: "1px solid rgba(244, 67, 54, 0.3)",
+                fontSize: 12,
+                color: "#f44336",
+              }}>
+                <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+                <span style={{ flex: 1 }}>Delete all {documents.length} documents? This cannot be undone.</span>
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={handleDeleteAll}
+                  style={{ padding: "4px 10px", fontSize: 11, color: "#f44336", fontWeight: 600, border: "1px solid rgba(244, 67, 54, 0.4)", borderRadius: 4 }}
+                >
+                  Confirm
+                </button>
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={() => setConfirmDeleteAll(false)}
+                  style={{ padding: "4px 8px", fontSize: 11 }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
 
             {/* Column headers */}
             <div style={{ display: "flex", alignItems: "center", padding: "6px 16px", gap: 8, borderBottom: "1px solid var(--border-color)", fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5 }}>

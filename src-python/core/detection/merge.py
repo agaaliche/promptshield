@@ -434,10 +434,52 @@ def _merge_detections(
                 item["confidence"], _is_org_pipeline_noise(item["text"]),
             )
 
+    # Pre-compile ISO date pattern for PHONE false-positive rejection.
+    _ISO_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
     def _is_candidate_noise(item: dict) -> bool:
         """Combined noise + structured filter (M2: single pass)."""
         ptype = item["pii_type"]
         txt = item["text"]
+        stripped = txt.strip()
+
+        # ── Structural minimum-content gates ──────────────────────────
+        # These apply regardless of source or visual boost — a detection
+        # that doesn't meet basic structural requirements for its type
+        # is always noise.
+
+        # EMAIL must contain '@' — anything without it is a GLiNER/NER
+        # hallucination (e.g. "160", "GASPÉ", "SADC").
+        if ptype == PIIType.EMAIL and '@' not in stripped:
+            return True
+
+        # CREDIT_CARD must have at least 13 digits (shortest valid card).
+        # Financial figures like "16 522" or text like "TVQ" are FPs.
+        if ptype == PIIType.CREDIT_CARD:
+            cc_digits = sum(c.isdigit() for c in stripped)
+            if cc_digits < 13:
+                return True
+
+        # PASSPORT must be at least 5 non-whitespace chars.
+        # Fragments like "JR", "D", "11" are never passports.
+        if ptype == PIIType.PASSPORT and len(stripped.replace(' ', '')) < 5:
+            return True
+
+        # PHONE: reject ISO dates (YYYY-MM-DD) misdetected as phone
+        # numbers.  The pattern "2026-08-03" has 8 digits and can slip
+        # past digit-count filters but is structurally a date, not a phone.
+        if ptype == PIIType.PHONE and _ISO_DATE_RE.match(stripped):
+            return True
+
+        # ORG / PERSON must have at least 3 alphabetic characters.
+        # Ultra-short fragments like "de l", "à l", "JR" (2 alpha) are
+        # never real entity names, even with visual-boost indicators.
+        if ptype in (PIIType.ORG, PIIType.PERSON):
+            alpha_count = sum(c.isalpha() for c in stripped)
+            if alpha_count < 3:
+                return True
+
+        # ── Type-specific noise filters ───────────────────────────────
 
         # ORG noise — skip if candidate has visual indicators (bold, italic,
         # centered, quoted) since those are strong signals of intentional
@@ -592,6 +634,11 @@ def _merge_detections(
             continue
         txt = item["text"]
         if "\n" not in txt:
+            continue
+        # ORG with a legal suffix is a validated company name that
+        # legitimately spans multiple lines — don't split it; the
+        # linked-group logic downstream will create per-line siblings.
+        if item["pii_type"] == PIIType.ORG and has_legal_suffix(txt):
             continue
         # Split into per-line segments
         segments: list[dict] = []
@@ -840,9 +887,26 @@ def _merge_detections(
     _before_final = len(regions)
 
     def _is_region_noise(r: PIIRegion) -> bool:
+        stripped = r.text.strip()
+
+        # ── Structural gates (mirrored from _is_candidate_noise) ─────
+        if r.pii_type == PIIType.EMAIL and '@' not in stripped:
+            return True
+        if r.pii_type == PIIType.CREDIT_CARD:
+            if sum(c.isdigit() for c in stripped) < 13:
+                return True
+        if r.pii_type == PIIType.PASSPORT and len(stripped.replace(' ', '')) < 5:
+            return True
+        if r.pii_type == PIIType.PHONE and _ISO_DATE_RE.match(stripped):
+            return True
+        if r.pii_type in (PIIType.ORG, PIIType.PERSON):
+            if sum(c.isalpha() for c in stripped) < 3:
+                return True
+
+        # ── Type-specific noise filters ──────────────────────────────
         if r.pii_type == PIIType.ORG and (
-            len(r.text.strip()) <= 2
-            or r.text.strip().isdigit()
+            len(stripped) <= 2
+            or stripped.isdigit()
             or _is_org_pipeline_noise(r.text)
         ):
             return True

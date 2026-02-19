@@ -639,7 +639,8 @@ _FR_ORG_STOPWORDS: set[str] = {
     "statuts", "statut", "nature", "activités", "activites", "activité", "activite",
     "éléments", "elements", "élément", "element",
     "société", "societe", "sociétés", "societes",
-    "elles", "ils", "elle", "il",  # pronouns sometimes tagged as ORG
+    "elles", "ils", "elle", "il", "nous", "vous",  # pronouns sometimes tagged as ORG
+    "je", "tu", "on",
     # French accounting / financial terms
     "excédent", "excedent", "clos", "clôt",
     "taux", "location", "acquisition", "acquisitions",
@@ -676,7 +677,20 @@ def _is_false_positive_person_fr(text: str) -> bool:
 
 def _is_false_positive_org_fr(text: str) -> bool:
     """Return True if a French ORG entity is likely a false positive."""
-    return _is_false_positive_org_generic(text, _FR_ORG_STOPWORDS, _GENERIC_STOPWORDS)
+    if _is_false_positive_org_generic(text, _FR_ORG_STOPWORDS, _GENERIC_STOPWORDS):
+        return True
+    # French pronoun (+ optional contraction) + verb → never an org name.
+    # Catches: "Nous n'avons", "nous n'exprimons", "Il est", etc.
+    clean = text.strip()
+    words = clean.split()
+    if len(words) >= 2:
+        first = words[0].lower().rstrip("'\u2019")
+        if first in {
+            "je", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles",
+            "ce", "c", "ça", "cela", "ceci",
+        }:
+            return True
+    return False
 
 
 _FR_CONFIG = _LangNERConfig(

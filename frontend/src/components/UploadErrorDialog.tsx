@@ -1,12 +1,13 @@
 /** Dialog shown when one or more file uploads fail. */
 
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, RefreshCw, X } from "lucide-react";
 import { useAppStore } from "../store";
+import { getFailedFiles, clearFailedFileRefs } from "../hooks/useDocumentUpload";
 import { Z_MODAL } from "../zIndex";
 
 const DISMISS_ANIMATION_MS = 400;
 
-export default function UploadErrorDialog() {
+export default function UploadErrorDialog({ onRetry }: { onRetry?: (files: File[]) => void }) {
   const show = useAppStore((s) => s.showUploadErrorDialog);
   const uploadQueue = useAppStore((s) => s.uploadQueue);
   const setShowUploadErrorDialog = useAppStore((s) => s.setShowUploadErrorDialog);
@@ -20,12 +21,24 @@ export default function UploadErrorDialog() {
 
   const handleClose = () => {
     setShowUploadErrorDialog(false);
+    clearFailedFileRefs();
     // Trigger fade-out animation on sidebar error items
     setDismissingErrorUploads(true);
     setTimeout(() => {
       removeErrorUploads();
       setDismissingErrorUploads(false);
     }, DISMISS_ANIMATION_MS);
+  };
+
+  const handleRetry = () => {
+    const files = getFailedFiles();
+    clearFailedFileRefs();
+    setShowUploadErrorDialog(false);
+    // Remove error items from queue before re-queuing
+    removeErrorUploads();
+    if (files.length > 0 && onRetry) {
+      onRetry(files);
+    }
   };
 
   return (
@@ -61,8 +74,14 @@ export default function UploadErrorDialog() {
 
         {/* Footer */}
         <div style={styles.footer}>
+          {onRetry && (
+            <button style={styles.retryBtn} onClick={handleRetry}>
+              <RefreshCw size={13} style={{ marginRight: 6 }} />
+              Retry {errorItems.length === 1 ? "" : `(${errorItems.length})`}
+            </button>
+          )}
           <button style={styles.okBtn} onClick={handleClose}>
-            OK
+            Dismiss
           </button>
         </div>
       </div>
@@ -145,6 +164,19 @@ const styles: Record<string, React.CSSProperties> = {
   footer: {
     display: "flex",
     justifyContent: "flex-end",
+    gap: 8,
+  },
+  retryBtn: {
+    background: "transparent",
+    color: "var(--accent-primary)",
+    border: "1px solid var(--accent-primary)",
+    borderRadius: 6,
+    padding: "6px 16px",
+    fontSize: 13,
+    fontWeight: 500,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
   },
   okBtn: {
     background: "var(--accent-primary)",

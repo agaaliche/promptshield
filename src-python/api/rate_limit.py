@@ -48,6 +48,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/api/llm/status",
         "/api/vault/status",
         "/api/settings",
+        "/api/documents",  # uploads, progress polling, metadata — no reason to throttle local
     )
     # Also exempt high-frequency polling suffixes checked per-path
     _EXEMPT_SUFFIXES = (

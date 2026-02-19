@@ -575,7 +575,8 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     (r"\bB-?\s*\d{4}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
      PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
     # Dutch postal code: "1234 AB" — must be uppercase (case-sensitive)
-    (r"\b\d{4}\s?[A-Z]{2}\b", PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
+    # Restricted to NL-only to avoid FPs like "2026 ET" in French docs.
+    (r"\b\d{4}\s?[A-Z]{2}\b", PIIType.ADDRESS, 0.75, _NOFLAGS, _NL),
     # Swiss postal code + city
     (r"\bCH-?\s*\d{4}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
      PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
@@ -807,7 +808,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r"\b[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"  # First word: must start with capital
         r"(?:"  # Then repeat 1-5 times:
         r"\s+[A-ZÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"  # Capitalized word
-        r"|\s+(?:"  # OR connecting word followed by any word
+        r"|\s+(?i:"  # OR connecting word followed by any word (case-insensitive)
         # FR: de, du, des, la, le, les, l', d', et, en, aux, au, à
         r"de|du|des|la|le|les|l'|d'|et|en|aux|au|à"
         # ES: de, del, los, las, la, el, y, e, para
@@ -823,7 +824,7 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
         r")"
         r"\s+[a-zA-ZÀ-üÀ-Ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"  # After connecting word, allow lowercase start
         r"|\s+[a-zà-ü][a-zA-Zà-üÀ-Ü.\-']{1,25}"  # OR plain lowercase word (body text)
-        r"){1,3}"
+        r"){1,5}"
         r"\s+(?:(?i:"  # Make suffix case-insensitive (SA/SE/AS are case-sensitive outside)
         r"Lt[ée]e|Limit[ée]e|Inc|Corp|LLC|Ltd|LLP|PLC|Co|LP|SAS"
         r"|SARL|EURL|SCI|SNC|SENC|S\.?E\.?N\.?C\.?"

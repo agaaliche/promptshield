@@ -68,6 +68,7 @@ import AuthScreen from "./components/AuthScreen";
 import RevalidationDialog from "./components/RevalidationDialog";
 import UploadErrorDialog from "./components/UploadErrorDialog";
 import UploadDialog from "./components/UploadDialog";
+import { useDocumentUpload } from "./hooks/useDocumentUpload";
 
 function App() {
   const { currentView, setCurrentView } = useUIStore();
@@ -82,6 +83,9 @@ function App() {
 
   const [showRevalidation, setShowRevalidation] = useState(false);
   const [backendStarting, setBackendStarting] = useState(false);
+
+  // Upload hook for retry-from-error-dialog support
+  const { handleFiles: retryFiles } = useDocumentUpload();
 
   // ── Step 1: Check local license on mount ────────────────────
   useEffect(() => {
@@ -297,7 +301,7 @@ function App() {
   return (
     <div style={{ display: "flex", height: "100vh", width: "100vw" }}>
       <Snackbar />
-      <UploadErrorDialog />
+      <UploadErrorDialog onRetry={retryFiles} />
       <UploadDialog />
       {showRevalidation && (
         <RevalidationDialog

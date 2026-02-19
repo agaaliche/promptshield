@@ -202,8 +202,9 @@ def propagate_regions_across_pages(
             if r.pii_type == PIIType.SSN and any(c in key for c in '$€£'):
                 continue
         # Accent-agnostic, case-insensitive, whitespace-normalised keying
-        # Also strip quotation marks so „Foo Bar" keys the same as Foo Bar
-        norm_key = _ws_collapse(_strip_accents(_strip_quotes(key))).lower()
+        # Also neutralise quotation marks (→ spaces) so L'ESPRIT keys
+        # consistently with the per-page search which also neutralises quotes.
+        norm_key = _ws_collapse(_strip_accents(_neutralise_quotes(key))).lower()
         existing = text_to_template.get(norm_key)
         if existing is None or r.confidence > existing.confidence:
             text_to_template[norm_key] = r
@@ -359,7 +360,7 @@ def propagate_partial_org_names(
         words = key.split()
         if len(words) < 3:
             continue
-        norm_key = _ws_collapse(_strip_accents(_strip_quotes(key))).lower()
+        norm_key = _ws_collapse(_strip_accents(_neutralise_quotes(key))).lower()
         existing = org_texts.get(norm_key)
         if existing is None or r.confidence > existing.confidence:
             org_texts[norm_key] = r
@@ -411,7 +412,7 @@ def propagate_partial_org_names(
 
     # Remove sub-phrases that are already exact-match regions (any type)
     existing_texts: set[str] = {
-        _ws_collapse(_strip_accents(_strip_quotes(r.text.strip()))).lower()
+        _ws_collapse(_strip_accents(_neutralise_quotes(r.text.strip()))).lower()
         for r in regions
     }
     for txt in list(sub_to_template):
@@ -436,7 +437,7 @@ def propagate_partial_org_names(
     for i, r in enumerate(regions):
         if r.pii_type not in (PIIType.LOCATION, PIIType.PERSON):
             continue
-        r_norm = _ws_collapse(_strip_accents(_strip_quotes(r.text.strip()))).lower()
+        r_norm = _ws_collapse(_strip_accents(_neutralise_quotes(r.text.strip()))).lower()
         tpl = _retype_lookup.get(r_norm)
         if tpl is not None:
             regions[i] = r.model_copy(update={

@@ -239,6 +239,7 @@ export async function redetectPII(
     ner_types?: string[] | null;
     blacklist_terms?: string[];
     blacklist_action?: string;
+    blacklist_fuzziness?: number;
   } = {}
 ): Promise<RedetectResult> {
   return request<RedetectResult>(`/api/documents/${docId}/redetect`, {

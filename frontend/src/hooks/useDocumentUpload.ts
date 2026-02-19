@@ -6,10 +6,9 @@
  */
 
 import { useCallback } from "react";
-import { uploadDocument, getDocument, detectPII, getUploadProgress } from "../api";
-import { resolveAllOverlaps } from "../regionUtils";
+import { uploadDocument, getDocument, getUploadProgress } from "../api";
 import { toErrorMessage } from "../errorUtils";
-import { useAppStore, useDocumentStore, useRegionStore, useUIStore, useUploadStore, useDocLoadingStore } from "../store";
+import { useAppStore, useDocumentStore, useUIStore, useUploadStore, useDocLoadingStore } from "../store";
 import type { UploadItem } from "../types";
 
 /** Accepted file types for the document upload input. */
@@ -33,11 +32,10 @@ export interface UseDocumentUploadOptions {
 const MAX_EXPORT_DOCS = 50;
 
 export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
-  const { setActiveDocId, addDocument, updateDocument } = useDocumentStore();
-  const { setRegions } = useRegionStore();
+  const { setActiveDocId, addDocument } = useDocumentStore();
   const { setCurrentView, setStatusMessage } = useUIStore();
   const { addToUploadQueue, updateUploadItem, clearCompletedUploads, setShowUploadErrorDialog } = useUploadStore();
-  const { setDocDetecting, setDocLoadingMessage, setUploadProgressId, setUploadProgressDocId, setUploadProgressDocName, setUploadProgressPhase } = useDocLoadingStore();
+  const { setDocLoadingMessage, setUploadProgressId, setUploadProgressDocName, setUploadProgressPhase } = useDocLoadingStore();
 
   const documents = useAppStore((s) => s.documents);
 
@@ -137,26 +135,12 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
           const doc = await getDocument(uploadRes.doc_id);
           addDocument(doc);
 
-          setDocDetecting(true);
-          setDocLoadingMessage("Analyzing document for PII entities\u2026");
           setActiveDocId(doc.doc_id);
 
-          // Update progress dialog for detection phase
-          setUploadProgressDocId(doc.doc_id);
-          setUploadProgressPhase("detecting");
-
-          updateUploadItem(item.id, { status: "detecting", progress: 90, ocrPhase: undefined, ocrMessage: undefined });
-          const detection = await detectPII(doc.doc_id);
-          const resolved = resolveAllOverlaps(detection.regions);
-          setRegions(resolved);
-          updateDocument(doc.doc_id, { regions: resolved });
-
-          setDocDetecting(false);
-          setDocLoadingMessage("");
+          // Upload complete — detection is deferred until user uses Detect menu
           setUploadProgressPhase("done");
           updateUploadItem(item.id, { status: "done", progress: 100 });
         } catch (e: unknown) {
-          setDocDetecting(false);
           setDocLoadingMessage("");
           setUploadProgressPhase("error");
           updateUploadItem(item.id, {
@@ -184,19 +168,15 @@ export function useDocumentUpload(options: UseDocumentUploadOptions = {}) {
       verboseLoadingMessages,
       documents.length,
       setActiveDocId,
-      setRegions,
       setCurrentView,
       addDocument,
-      updateDocument,
       addToUploadQueue,
       updateUploadItem,
       clearCompletedUploads,
-      setDocDetecting,
       setDocLoadingMessage,
       setStatusMessage,
       setShowUploadErrorDialog,
       setUploadProgressId,
-      setUploadProgressDocId,
       setUploadProgressDocName,
       setUploadProgressPhase,
     ],

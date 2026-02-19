@@ -24,6 +24,7 @@ import type { PIIType } from "../types";
 import RegionOverlay from "./RegionOverlay";
 import ExportDialog from "./ExportDialog";
 import UploadProgressDialog from "./UploadProgressDialog";
+import DetectionProgressDialog from "./DetectionProgressDialog";
 import PIITypePicker from "./PIITypePicker";
 import RegionSidebar from "./RegionSidebar";
 import PageNavigator from "./PageNavigator";
@@ -261,7 +262,7 @@ export default function DocumentViewer() {
   if (!doc) {
     // When uploading the very first file, show the progress dialog even though
     // no document object exists yet.
-    const showUploadProgress = uploadProgressPhase === "uploading" || uploadProgressPhase === "detecting";
+    const showUploadProgress = uploadProgressPhase === "uploading";
     if (showUploadProgress) {
       return (
         <div style={styles.wrapper}>
@@ -280,7 +281,7 @@ export default function DocumentViewer() {
 
   // Block the viewer while loading OR detecting
   const isDocLoading = docLoading || docDetecting || !doc.pages;
-  const showUploadProgressDialog = uploadProgressPhase === "uploading" || uploadProgressPhase === "detecting";
+  const showUploadProgressDialog = uploadProgressPhase === "uploading";
 
   if (isDocLoading) {
     if (!showUploadProgressDialog) {
@@ -315,11 +316,9 @@ export default function DocumentViewer() {
 
       {/* Re-detection progress overlay */}
       {redetecting && activeDocId && (
-        <UploadProgressDialog
-          uploadProgressId={null}
+        <DetectionProgressDialog
           docId={activeDocId}
           docName={doc.original_filename}
-          phase="detecting"
           visible
         />
       )}

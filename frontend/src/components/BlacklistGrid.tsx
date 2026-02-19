@@ -32,6 +32,10 @@ export interface BlacklistGridProps {
   action: BlacklistAction;
   /** Called when action changes. */
   onActionChange: (action: BlacklistAction) => void;
+  /** Expression fuzziness (1.0 = exact, lower = more tolerant). */
+  fuzziness: number;
+  /** Called when fuzziness changes. */
+  onFuzzinessChange: (value: number) => void;
   /** Map of cell key "row,col" → match status. */
   matchStatus?: Map<string, "matched" | "no-match" | "exists">;
 }
@@ -41,6 +45,8 @@ export default function BlacklistGrid({
   onCellsChange,
   action,
   onActionChange,
+  fuzziness,
+  onFuzzinessChange,
   matchStatus,
 }: BlacklistGridProps) {
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
@@ -856,8 +862,26 @@ export default function BlacklistGrid({
           </button>
         </div>
 
+        {/* Fuzziness slider */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 120 }}>
+          <span style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>Fuzziness</span>
+          <input
+            type="range"
+            min={0.5}
+            max={1.0}
+            step={0.01}
+            value={fuzziness}
+            onChange={(e) => onFuzzinessChange(parseFloat(e.target.value))}
+            style={{ flex: 1, accentColor: "var(--accent-primary)", cursor: "pointer" }}
+            title={`Fuzziness: ${fuzziness.toFixed(2)} — ${fuzziness >= 0.98 ? "Exact match" : fuzziness >= 0.85 ? "Minor typos tolerated" : "More variations allowed"}`}
+          />
+          <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-primary)", minWidth: 28, textAlign: "right" }}>
+            {fuzziness >= 0.98 ? "Exact" : fuzziness.toFixed(2)}
+          </span>
+        </div>
+
         {/* Term count */}
-        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+        <span style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
           {filledCellCount} term{filledCellCount !== 1 ? "s" : ""}
         </span>
       </div>

@@ -1,30 +1,27 @@
 /**
  * UploadProgressDialog — unified progress dialog for document upload pipeline.
  *
- * Shows three sequential phases:
+ * Shows two sequential phases:
  *   1. Extraction (page rendering via PDFium)
  *   2. OCR (Tesseract per-page, if needed)
- *   3. Detection (PII entity analysis per-page)
  *
- * Polls both getUploadProgress and getDetectionProgress from the backend.
+ * Detection is deferred until the user explicitly uses the Detect menu.
+ *
+ * Polls getUploadProgress from the backend.
  */
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Loader2,
   CheckCircle2,
   AlertCircle,
   FileText,
   Clock,
-  Shield,
   ScanSearch,
-  Eye,
 } from "lucide-react";
-import { getUploadProgress, getDetectionProgress } from "../api";
+import { getUploadProgress } from "../api";
 import type { UploadProgressInfo } from "../api";
-import type { DetectionProgressData } from "../types";
 import { Z_MODAL } from "../zIndex";
-import { useDetectionStore } from "../store";
 
 interface Props {
   /** Upload progress tracking ID (passed to uploadDocument). */
@@ -34,7 +31,7 @@ interface Props {
   /** Document name for display. */
   docName: string;
   /** Current pipeline phase from the hook. */
-  phase: "uploading" | "detecting" | "done" | "error";
+  phase: "uploading" | "done" | "error";
   /** Whether visible. */
   visible: boolean;
 }
@@ -46,11 +43,10 @@ function formatElapsed(seconds: number): string {
   return `${m}m ${s.toString().padStart(2, "0")}s`;
 }
 
-/** Phase config for the three-step indicator. */
+/** Phase config for the two-step indicator. */
 const PHASES = [
   { key: "extracting", label: "Extract", icon: FileText },
   { key: "ocr", label: "OCR", icon: ScanSearch },
-  { key: "detecting", label: "Detect", icon: Eye },
 ] as const;
 
 export default function UploadProgressDialog({
@@ -60,11 +56,8 @@ export default function UploadProgressDialog({
   phase,
   visible,
 }: Props) {
-  const { detectionSettings } = useDetectionStore();
   const [uploadInfo, setUploadInfo] = useState<UploadProgressInfo | null>(null);
-  const [detectionInfo, setDetectionInfo] = useState<DetectionProgressData | null>(null);
   const uploadPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const detectionPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef(Date.now());
 
   // Track elapsed locally
@@ -96,55 +89,31 @@ export default function UploadProgressDialog({
     };
   }, [visible, uploadProgressId, phase]);
 
-  // Poll detection progress
-  useEffect(() => {
-    if (!visible || !docId || phase !== "detecting") {
-      return;
-    }
-    const poll = async () => {
-      try {
-        const info = await getDetectionProgress(docId);
-        setDetectionInfo(info);
-      } catch {
-        // ignore
-      }
-    };
-    poll();
-    detectionPollRef.current = setInterval(poll, 800);
-    return () => {
-      if (detectionPollRef.current) clearInterval(detectionPollRef.current);
-    };
-  }, [visible, docId, phase]);
-
   // Reset state when dialog opens for a new file
   useEffect(() => {
     if (visible) {
       setUploadInfo(null);
-      setDetectionInfo(null);
     }
   }, [visible, uploadProgressId]);
 
   if (!visible) return null;
 
-  // Determine which of the 3 phases is active
+  // Determine which of the 2 phases is active
   const uploadPhase = uploadInfo?.phase ?? "starting";
   const isUploading = phase === "uploading";
-  const isDetecting = phase === "detecting";
   const isDone = phase === "done";
   const isError = phase === "error";
 
-  // Compute active phase index (0=extracting, 1=ocr, 2=detecting)
+  // Compute active phase index (0=extracting, 1=ocr)
   let activePhaseIdx = 0;
   if (isUploading) {
     if (uploadPhase === "ocr") activePhaseIdx = 1;
-    else if (uploadPhase === "extracting") activePhaseIdx = 0;
-    else if (uploadPhase === "complete") activePhaseIdx = 2; // Upload done, about to detect
     else activePhaseIdx = 0;
-  } else if (isDetecting || isDone) {
-    activePhaseIdx = 2;
+  } else if (isDone) {
+    activePhaseIdx = PHASES.length; // all done
   }
 
-  // Overall percentage (0-100 across all 3 phases: each gets ~33%)
+  // Overall percentage (0-100 across 2 phases: each gets ~50%)
   let overallPct = 0;
   if (isUploading) {
     if (uploadPhase === "starting") {
@@ -153,20 +122,15 @@ export default function UploadProgressDialog({
       const pagePct = uploadInfo && uploadInfo.total_pages > 0
         ? uploadInfo.current_page / uploadInfo.total_pages
         : 0;
-      overallPct = Math.round(2 + pagePct * 28); // 2-30%
+      overallPct = Math.round(2 + pagePct * 46); // 2-48%
     } else if (uploadPhase === "ocr") {
       const ocrPct = uploadInfo && uploadInfo.ocr_pages_total > 0
         ? uploadInfo.ocr_pages_done / uploadInfo.ocr_pages_total
         : 0;
-      overallPct = Math.round(30 + ocrPct * 30); // 30-60%
+      overallPct = Math.round(50 + ocrPct * 45); // 50-95%
     } else if (uploadPhase === "complete") {
-      overallPct = 60;
+      overallPct = 98;
     }
-  } else if (isDetecting) {
-    const detPct = detectionInfo && detectionInfo.total_pages > 0
-      ? detectionInfo.pages_done / detectionInfo.total_pages
-      : 0;
-    overallPct = Math.round(60 + detPct * 38); // 60-98%
   } else if (isDone) {
     overallPct = 100;
   }
@@ -175,29 +139,13 @@ export default function UploadProgressDialog({
   let message = "Preparing…";
   if (isUploading) {
     message = uploadInfo?.message || "Processing document…";
-  } else if (isDetecting) {
-    const dp = detectionInfo;
-    if (dp && dp.total_pages > 0) {
-      message = `Analyzing page ${dp.current_page} of ${dp.total_pages}`;
-    } else {
-      message = "Analyzing document for PII entities…";
-    }
   } else if (isDone) {
-    message = "Processing complete";
+    message = "Extraction complete — ready for detection";
   } else if (isError) {
     message = "Processing failed";
   }
 
-  const regionsFound = detectionInfo?.regions_found ?? 0;
-  const detPageStatuses = detectionInfo?.page_statuses ?? [];
-  const totalPages = uploadInfo?.total_pages || detectionInfo?.total_pages || 0;
-
-  // Build active pipeline label
-  const pipelineSteps: string[] = [];
-  if (detectionSettings.regex_enabled) pipelineSteps.push("Regex");
-  if (detectionSettings.ner_enabled) pipelineSteps.push("NER");
-  if (detectionSettings.llm_detection_enabled) pipelineSteps.push("LLM");
-  const pipelineLabel = pipelineSteps.join(" → ");
+  const totalPages = uploadInfo?.total_pages || 0;
 
   return (
     <div
@@ -275,18 +223,6 @@ export default function UploadProgressDialog({
             >
               {docName}
             </span>
-            {(isDetecting || isDone) && pipelineLabel && (
-              <span
-                style={{
-                  fontSize: 11,
-                  color: "var(--text-muted)",
-                  whiteSpace: "nowrap",
-                  flexShrink: 0,
-                }}
-              >
-                {pipelineLabel}
-              </span>
-            )}
           </div>
 
           {/* Phase steps indicator */}
@@ -401,78 +337,6 @@ export default function UploadProgressDialog({
             />
           </div>
 
-          {/* Per-page status list (during detection) */}
-          {isDetecting && detPageStatuses.length > 0 && (
-            <div
-              style={{
-                maxHeight: 150,
-                overflowY: "auto",
-                border: "1px solid var(--border-color)",
-                borderRadius: 6,
-                marginBottom: 16,
-              }}
-            >
-              {detPageStatuses.map((ps) => (
-                <div
-                  key={ps.page}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "5px 12px",
-                    borderBottom:
-                      ps.page < detPageStatuses.length ? "1px solid var(--border-color)" : "none",
-                    background: ps.status === "running" ? "rgba(33,150,243,0.06)" : "transparent",
-                  }}
-                >
-                  <div style={{ width: 14, display: "flex", justifyContent: "center", flexShrink: 0 }}>
-                    {ps.status === "done" ? (
-                      <CheckCircle2 size={12} color="#4caf50" />
-                    ) : ps.status === "running" ? (
-                      <Loader2
-                        size={12}
-                        color="var(--accent-primary)"
-                        style={{ animation: "spin 1s linear infinite" }}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          width: 7,
-                          height: 7,
-                          borderRadius: "50%",
-                          background: "var(--bg-tertiary)",
-                          border: "1px solid var(--text-muted)",
-                        }}
-                      />
-                    )}
-                  </div>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      color:
-                        ps.status === "done"
-                          ? "var(--text-primary)"
-                          : ps.status === "running"
-                            ? "var(--accent-primary)"
-                            : "var(--text-muted)",
-                      fontWeight: ps.status === "running" ? 600 : 400,
-                      flex: 1,
-                    }}
-                  >
-                    Page {ps.page}
-                  </span>
-                  <span style={{ fontSize: 10, color: "var(--text-secondary)", minWidth: 48, textAlign: "right" }}>
-                    {ps.status === "done"
-                      ? `${ps.regions} region${ps.regions !== 1 ? "s" : ""}`
-                      : ps.status === "running"
-                        ? "Analyzing…"
-                        : "Pending"}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-
           {/* Extraction/OCR page progress (during upload) */}
           {isUploading && totalPages > 0 && (
             <div
@@ -524,14 +388,6 @@ export default function UploadProgressDialog({
 
           {/* Footer stats */}
           <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--text-secondary)" }}>
-            {(isDetecting || isDone) && (
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <Shield size={12} />
-                <span>
-                  {regionsFound} region{regionsFound !== 1 ? "s" : ""} found
-                </span>
-              </div>
-            )}
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <Clock size={12} />
               <span>{formatElapsed(elapsed)}</span>

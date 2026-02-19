@@ -19,6 +19,7 @@ interface DetectionTemplate {
   llmEnabled: boolean;
   blCells: string[][];
   blAction: BlacklistAction;
+  blFuzziness: number;
   customToggles?: Record<string, boolean>;
 }
 
@@ -67,6 +68,7 @@ interface FilterConfig {
   llmEnabled: boolean;
   blCells: string[][];
   blAction: BlacklistAction;
+  blFuzziness: number;
 }
 
 const DEFAULT_REGEX_TYPES: Record<string, boolean> = {
@@ -104,6 +106,7 @@ interface AutodetectPanelProps {
     nerTypes: string[];
     blacklistTerms: string[];
     blacklistAction: BlacklistAction;
+    blacklistFuzziness: number;
   }) => void;
   onReset: () => void;
   onResetPage: (page: number) => void;
@@ -160,6 +163,7 @@ export default function AutodetectPanel({
   // Blacklist state
   const [blCells, setBlCells] = useState(() => savedFilterConfig.current?.blCells ?? createEmptyGrid());
   const [blAction, setBlAction] = useState<BlacklistAction>(savedFilterConfig.current?.blAction ?? "none");
+  const [blFuzziness, setBlFuzziness] = useState(savedFilterConfig.current?.blFuzziness ?? 1.0);
 
   // Custom patterns from settings
   const [customPatterns, setCustomPatterns] = useState<CustomPattern[]>([]);
@@ -221,6 +225,7 @@ export default function AutodetectPanel({
     setLlmEnabled(tpl.llmEnabled);
     setBlCells(tpl.blCells);
     setBlAction(tpl.blAction);
+    setBlFuzziness(tpl.blFuzziness ?? 1.0);
     if (tpl.customToggles) { setCustomToggles(tpl.customToggles); saveCustomTogglesLS(tpl.customToggles); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // mount-only
@@ -241,6 +246,7 @@ export default function AutodetectPanel({
       llmEnabled,
       blCells: blCells.map(r => [...r]),
       blAction,
+      blFuzziness,
       customToggles: { ...customToggles },
     };
     setTemplates(prev => {
@@ -248,13 +254,13 @@ export default function AutodetectPanel({
       saveTemplates(updated);
       return updated;
     });
-  }, [selectedTemplate, fuzziness, regexTypes, nerTypes, llmEnabled, blCells, blAction, customToggles]);
+  }, [selectedTemplate, fuzziness, regexTypes, nerTypes, llmEnabled, blCells, blAction, blFuzziness, customToggles]);
 
   // Persist filter config to localStorage when no template is selected
   useEffect(() => {
     if (selectedTemplate) return;
-    saveFilterConfig({ fuzziness, regexTypes, nerTypes, llmEnabled, blCells, blAction });
-  }, [selectedTemplate, fuzziness, regexTypes, nerTypes, llmEnabled, blCells, blAction]);
+    saveFilterConfig({ fuzziness, regexTypes, nerTypes, llmEnabled, blCells, blAction, blFuzziness });
+  }, [selectedTemplate, fuzziness, regexTypes, nerTypes, llmEnabled, blCells, blAction, blFuzziness]);
 
   // Resize state
   const [panelSize, setPanelSize] = useState({ w: DEFAULT_PANEL_W, h: DEFAULT_PANEL_H });
@@ -343,6 +349,7 @@ export default function AutodetectPanel({
       nerTypes: nerEnabled ? activeNerTypes : [],
       blacklistTerms,
       blacklistAction: blAction,
+      blacklistFuzziness: blFuzziness,
     });
     onClose();
   };
@@ -582,6 +589,7 @@ export default function AutodetectPanel({
               setLlmEnabled(tpl.llmEnabled);
               setBlCells(tpl.blCells);
               setBlAction(tpl.blAction);
+              setBlFuzziness(tpl.blFuzziness ?? 1.0);
               if (tpl.customToggles) { setCustomToggles(tpl.customToggles); saveCustomTogglesLS(tpl.customToggles); }
               if (!showTabs) setShowTabs(true);
             }}
@@ -967,6 +975,8 @@ export default function AutodetectPanel({
                 onCellsChange={setBlCells}
                 action={blAction}
                 onActionChange={setBlAction}
+                fuzziness={blFuzziness}
+                onFuzzinessChange={setBlFuzziness}
                 matchStatus={blMatchStatus}
               />
             </div>

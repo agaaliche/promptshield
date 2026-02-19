@@ -272,6 +272,7 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
       nerTypes: string[];
       blacklistTerms: string[];
       blacklistAction: string;
+      blacklistFuzziness: number;
     }) => {
       if (!activeDocId) return;
       setIsProcessing(true);
@@ -289,6 +290,7 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
           ner_types: autodetectOpts.nerEnabled ? autodetectOpts.nerTypes : null,
           blacklist_terms: autodetectOpts.blacklistTerms.length > 0 ? autodetectOpts.blacklistTerms : undefined,
           blacklist_action: autodetectOpts.blacklistTerms.length > 0 ? autodetectOpts.blacklistAction : undefined,
+          blacklist_fuzziness: autodetectOpts.blacklistTerms.length > 0 ? autodetectOpts.blacklistFuzziness : undefined,
         });
         setRegions(resolveAllOverlaps(result.regions));
         setStatusMessage(

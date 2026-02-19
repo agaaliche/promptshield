@@ -259,7 +259,6 @@ export default function Sidebar() {
                           : item.status === "uploading" && item.ocrPhase === "extracting" ? "Extracting"
                           : item.status === "uploading" && item.ocrPhase === "ocr" ? "OCR"
                           : item.status === "uploading" ? "Uploading"
-                          : item.status === "detecting" ? "Detecting"
                           : item.status === "done" ? "Done" : "Error"}
                       </span>
                     </div>

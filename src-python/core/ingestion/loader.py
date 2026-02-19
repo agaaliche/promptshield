@@ -1036,7 +1036,7 @@ async def ingest_document(
         doc.pages = await asyncio.to_thread(_do_ingest)
 
         doc.page_count = len(doc.pages)
-        doc.status = DocumentStatus.DETECTING
+        doc.status = DocumentStatus.EXTRACTED
         logger.info(f"Ingested {doc.page_count} pages from '{original_filename}'")
 
     except Exception as e:

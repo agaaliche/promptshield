@@ -146,6 +146,7 @@ def detect_pii_on_page(
     llm_engine: Optional[object] = None,
     *,
     predetected_language: str | None = None,
+    progress_callback: Optional[object] = None,
 ) -> list[PIIRegion]:
     """Run the full hybrid PII detection pipeline on a single page.
 
@@ -154,10 +155,18 @@ def detect_pii_on_page(
         llm_engine: Optional LLMEngine for Layer 3 detection.
         predetected_language: If provided, skip per-page language detection
             and use this language code instead (performance optimisation).
+        progress_callback: Optional callable(step: str) invoked at the
+            start of each pipeline step ("regex", "ner", "gliner", "llm", "merge").
 
     Returns:
         List of PIIRegion instances ready for UI display.
     """
+    def _report(step: str) -> None:
+        if progress_callback is not None:
+            try:
+                progress_callback(step)
+            except Exception:
+                pass
     text = page_data.full_text
     stripped = text.strip()
     if not stripped:
@@ -185,6 +194,7 @@ def detect_pii_on_page(
     # Layer 1: Regex
     regex_matches: list[RegexMatch] = []
     if config.regex_enabled:
+        _report("regex")
         t0 = time.perf_counter()
         effective_regex_types = None
         if config.regex_types is not None:
@@ -224,6 +234,7 @@ def detect_pii_on_page(
     # Layer 2: NER (spaCy / BERT / auto)
     ner_matches: list[NERMatch] = []
     if config.ner_enabled:
+        _report("ner")
         t0 = time.perf_counter()
 
         if config.ner_backend == "auto" and is_bert_ner_available():
@@ -290,6 +301,7 @@ def detect_pii_on_page(
     # Layer 2b: GLiNER
     gliner_matches: list[GLiNERMatch] = []
     if config.ner_enabled and is_gliner_available():
+        _report("gliner")
         t0 = time.perf_counter()
         try:
             gliner_matches = detect_gliner(text)
@@ -304,6 +316,7 @@ def detect_pii_on_page(
     # Layer 3: LLM
     llm_matches: list[LLMMatch] = []
     if config.llm_detection_enabled and llm_engine is not None:
+        _report("llm")
         t0 = time.perf_counter()
         llm_matches = detect_llm(text, llm_engine)
         timings["llm"] = (time.perf_counter() - t0) * 1000
@@ -332,6 +345,7 @@ def detect_pii_on_page(
             llm_matches = [m for m in llm_matches if _not_excluded(m)]
 
     # Merge all layers
+    _report("merge")
     t0 = time.perf_counter()
     regions = _merge_detections(
         regex_matches, ner_matches, llm_matches, page_data,
@@ -454,6 +468,6 @@ def reanalyze_bbox(
     return {
         "text": text,
         "pii_type": best_type,
-        "confidence": best_confidence,
+        "confidence": float(best_confidence),
         "source": best_source,
     }

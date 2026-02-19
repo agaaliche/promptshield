@@ -184,7 +184,11 @@ async def reanalyze_region(doc_id: str, region_id: str) -> dict[str, Any]:
 
     engine = llm_engine if llm_engine.is_loaded() else None
     # H5: reanalyze_bbox is CPU-bound; run in a thread to avoid blocking the event loop
-    result = await asyncio.to_thread(reanalyze_bbox, page_data, region.bbox, llm_engine=engine)
+    try:
+        result = await asyncio.to_thread(reanalyze_bbox, page_data, region.bbox, llm_engine=engine)
+    except Exception as e:
+        logger.exception("reanalyze_bbox failed for region %s", region_id)
+        raise HTTPException(500, f"Reanalysis failed: {e}")
 
     region.text = result["text"] or region.text
     if result["confidence"] > 0:
@@ -198,7 +202,7 @@ async def reanalyze_region(doc_id: str, region_id: str) -> dict[str, Any]:
         "region_id": region_id,
         "text": region.text,
         "pii_type": region.pii_type if isinstance(region.pii_type, str) else region.pii_type.value,
-        "confidence": region.confidence,
+        "confidence": float(region.confidence),
         "source": region.source if isinstance(region.source, str) else region.source.value,
     }
 

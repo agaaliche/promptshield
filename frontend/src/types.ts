@@ -10,7 +10,7 @@ export type PIIType =
 export type DetectionSource = "REGEX" | "NER" | "GLINER" | "LLM" | "MANUAL";
 export type RegionAction = "PENDING" | "CANCEL" | "REMOVE" | "TOKENIZE";
 export type DocumentStatus =
-  | "UPLOADING" | "PROCESSING" | "DETECTING"
+  | "UPLOADING" | "PROCESSING" | "EXTRACTED" | "DETECTING"
   | "REVIEWING" | "ANONYMIZING" | "COMPLETED" | "ERROR";
 
 export interface BBox {
@@ -106,6 +106,7 @@ export interface DetectionProgressPageStatus {
   page: number;
   status: "pending" | "running" | "done";
   regions: number;
+  pipeline_step?: string;
 }
 
 export interface DetectionProgressData {
@@ -116,6 +117,7 @@ export interface DetectionProgressData {
   pages_done: number;
   regions_found: number;
   elapsed_seconds: number;
+  pipeline_steps?: string[];
   page_statuses: DetectionProgressPageStatus[];
   error?: string;
 }
@@ -261,7 +263,7 @@ export interface UploadItem {
   id: string;
   name: string;
   parentPath: string;
-  status: "queued" | "uploading" | "detecting" | "done" | "error";
+  status: "queued" | "uploading" | "done" | "error";
   progress: number;
   error?: string;
   /** Current OCR phase label (e.g. "extracting", "ocr"). */

@@ -577,6 +577,60 @@ def _merge_detections(
                 page_data.page_number, _spatial_trimmed,
             )
 
+    # ── ORG / PERSON newline splitting ──────────────────────────────
+    # Auto-detectors (especially GLiNER) sometimes return spans that
+    # start with a valid entity name but bleed into subsequent lines
+    # containing descriptive text, e.g.:
+    #   "L'ÉQUIPE\nL'ESPRIT DU REPRENEURIAT\n(série documentaire…)"
+    # Entity names never legitimately span multiple visual lines.
+    # Split at newlines, keeping each line that looks like an entity
+    # (starts with an uppercase letter and is at least 2 chars long).
+    _NL_TRIM_TYPES = {PIIType.ORG, PIIType.PERSON}
+    _nl_split_replacements: list[tuple[int, list[dict]]] = []
+    for idx, item in enumerate(merged):
+        if item["pii_type"] not in _NL_TRIM_TYPES:
+            continue
+        txt = item["text"]
+        if "\n" not in txt:
+            continue
+        # Split into per-line segments
+        segments: list[dict] = []
+        offset = 0
+        for line in txt.split("\n"):
+            stripped = line.strip()
+            line_start = item["start"] + offset
+            line_end = line_start + len(line)
+            # Keep lines that look like entity names:
+            # - at least 2 chars after stripping
+            # - starts with uppercase letter (not parenthesis, digit, etc.)
+            if len(stripped) >= 2 and stripped[0].isupper():
+                seg = dict(item)  # shallow copy
+                seg["text"] = stripped
+                seg["start"] = line_start + (len(line) - len(line.lstrip()))
+                seg["end"] = seg["start"] + len(stripped)
+                segments.append(seg)
+            offset += len(line) + 1  # +1 for the \n
+        if segments:
+            _nl_split_replacements.append((idx, segments))
+
+    if _nl_split_replacements:
+        # Rebuild merged list with split segments replacing originals
+        new_merged: list[dict] = []
+        replaced_indices = {idx for idx, _ in _nl_split_replacements}
+        replace_map = {idx: segs for idx, segs in _nl_split_replacements}
+        for idx, item in enumerate(merged):
+            if idx in replaced_indices:
+                new_merged.extend(replace_map[idx])
+            else:
+                new_merged.append(item)
+        merged = new_merged
+        logger.info(
+            "Page %d: split %d multi-line ORG/PERSON candidate(s) into %d segment(s)",
+            page_data.page_number,
+            len(_nl_split_replacements),
+            sum(len(segs) for _, segs in _nl_split_replacements),
+        )
+
     # ── Merge adjacent ADDRESS fragments ──────────────────────────────
     _addr_merged: list[dict] = []
     for item in merged:

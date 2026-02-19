@@ -53,6 +53,7 @@ class RegionAction(str, enum.Enum):
 class DocumentStatus(str, enum.Enum):
     UPLOADING = "UPLOADING"
     PROCESSING = "PROCESSING"
+    EXTRACTED = "EXTRACTED"
     DETECTING = "DETECTING"
     REVIEWING = "REVIEWING"
     ANONYMIZING = "ANONYMIZING"

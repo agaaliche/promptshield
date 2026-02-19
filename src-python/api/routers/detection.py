@@ -95,6 +95,19 @@ async def detect_pii(doc_id: str) -> dict[str, Any]:
             doc_language = config.detection_language
 
         # Initialize progress tracker
+        # Build the list of pipeline steps that will run for progress display
+        _pipeline_steps: list[str] = []
+        if config.regex_enabled:
+            _pipeline_steps.append("regex")
+        if config.ner_enabled:
+            _pipeline_steps.append("ner")
+            from core.detection.gliner_detector import is_gliner_available as _is_gli
+            if _is_gli():
+                _pipeline_steps.append("gliner")
+        if config.llm_detection_enabled and engine is not None:
+            _pipeline_steps.append("llm")
+        _pipeline_steps.append("merge")
+
         detection_progress[doc_id] = {
             "doc_id": doc_id,
             "status": "running",
@@ -103,8 +116,9 @@ async def detect_pii(doc_id: str) -> dict[str, Any]:
             "pages_done": 0,
             "regions_found": 0,
             "elapsed_seconds": 0.0,
+            "pipeline_steps": _pipeline_steps,
             "page_statuses": [
-                {"page": i + 1, "status": "pending", "regions": 0}
+                {"page": i + 1, "status": "pending", "regions": 0, "pipeline_step": ""}
                 for i in range(total_pages)
             ],
             "_started_at": _time.time(),
@@ -119,9 +133,12 @@ async def detect_pii(doc_id: str) -> dict[str, Any]:
 
             def _detect_one(idx: int, page):
                 progress["page_statuses"][idx]["status"] = "running"
+                def _step_cb(step: str) -> None:
+                    progress["page_statuses"][idx]["pipeline_step"] = step
                 regions = detect_pii_on_page(
                     page, llm_engine=engine,
                     predetected_language=doc_language,
+                    progress_callback=_step_cb,
                 )
                 progress["page_statuses"][idx]["status"] = "done"
                 progress["page_statuses"][idx]["regions"] = len(regions)
@@ -219,6 +236,7 @@ class RedetectRequest(_PydanticBaseModel):
     ner_types: Optional[list[str]] = None     # None = all types; e.g. ["PERSON", "ORG"]
     blacklist_terms: Optional[list[str]] = None  # terms to search for (highest priority)
     blacklist_action: str = "none"               # "none" | "tokenize" | "remove"
+    blacklist_fuzziness: float = Field(default=1.0, ge=0.5, le=1.0)  # 1.0 = exact, lower = fuzzy
 
 
 @router.post("/documents/{doc_id}/redetect")
@@ -273,6 +291,19 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
             if config.detection_language and config.detection_language != "auto":
                 _redetect_lang = config.detection_language
 
+            # Build the list of pipeline steps for progress display
+            _redet_pipeline_steps: list[str] = []
+            if config.regex_enabled:
+                _redet_pipeline_steps.append("regex")
+            if config.ner_enabled:
+                _redet_pipeline_steps.append("ner")
+                from core.detection.gliner_detector import is_gliner_available as _is_gli_r
+                if _is_gli_r():
+                    _redet_pipeline_steps.append("gliner")
+            if config.llm_detection_enabled and engine is not None:
+                _redet_pipeline_steps.append("llm")
+            _redet_pipeline_steps.append("merge")
+
             # Initialize progress tracker (same format as initial detect)
             detection_progress[doc_id] = {
                 "doc_id": doc_id,
@@ -282,8 +313,9 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
                 "pages_done": 0,
                 "regions_found": 0,
                 "elapsed_seconds": 0.0,
+                "pipeline_steps": _redet_pipeline_steps,
                 "page_statuses": [
-                    {"page": p.page_number, "status": "pending", "regions": 0}
+                    {"page": p.page_number, "status": "pending", "regions": 0, "pipeline_step": ""}
                     for p in pages_to_scan
                 ],
                 "_started_at": _time.time(),
@@ -298,9 +330,12 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
 
                 def _detect_one(idx: int, page):
                     progress["page_statuses"][idx]["status"] = "running"
+                    def _step_cb(step: str) -> None:
+                        progress["page_statuses"][idx]["pipeline_step"] = step
                     detected = detect_pii_on_page(
                         page, llm_engine=engine,
                         predetected_language=_redetect_lang,
+                        progress_callback=_step_cb,
                     )
                     progress["page_statuses"][idx]["status"] = "done"
                     progress["page_statuses"][idx]["regions"] = len(detected)
@@ -326,6 +361,25 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
 
             new_regions = await asyncio.to_thread(_run_redetection)
 
+        # ── Normalise apostrophe / quote variants to ASCII ──
+        # So that user input with smart-quotes matches OCR text.
+        import unicodedata as _ud
+        _QUOTE_MAP = str.maketrans({
+            0x2018: "'",  # LEFT SINGLE QUOTATION MARK
+            0x2019: "'",  # RIGHT SINGLE QUOTATION MARK
+            0x201A: "'",  # SINGLE LOW-9 QUOTATION MARK
+            0x02BC: "'",  # MODIFIER LETTER APOSTROPHE
+            0x02BB: "'",  # MODIFIER LETTER TURNED COMMA
+            0xFF07: "'",  # FULLWIDTH APOSTROPHE
+            0x201C: '"',  # LEFT DOUBLE QUOTATION MARK
+            0x201D: '"',  # RIGHT DOUBLE QUOTATION MARK
+            0x201E: '"',  # DOUBLE LOW-9 QUOTATION MARK
+            0xFF02: '"',  # FULLWIDTH QUOTATION MARK
+        })
+
+        def _norm_quotes(s: str) -> str:
+            return s.translate(_QUOTE_MAP)
+
         # ── Blacklist: text-search for user-specified terms (highest priority) ──
         blacklist_created = 0
         if body.blacklist_terms:
@@ -347,15 +401,15 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
                     bl_terms.append(tc)
 
             bl_regions: list[PIIRegion] = []
+
             for page in pages_to_scan:
                 ft = page.full_text
                 if not ft:
                     continue
                 block_offsets = _compute_block_offsets(page.text_blocks, ft)
 
-                # Build accent-stripped lowercase text with index mapping
-                import unicodedata as _ud
-                _nfd = _ud.normalize("NFD", ft.lower())
+                # Build accent-stripped, quote-normalised lowercase text with index mapping
+                _nfd = _ud.normalize("NFD", _norm_quotes(ft.lower()))
                 _norm_chars: list[str] = []
                 _n2o: list[int] = []
                 _seen_nfd = 0
@@ -371,50 +425,164 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
 
                 for needle in bl_terms:
                     nl = "".join(
-                        c for c in _ud.normalize("NFD", needle.lower())
+                        c for c in _ud.normalize("NFD", _norm_quotes(needle.lower()))
                         if _ud.category(c) != "Mn"
                     )
                     nlen = len(nl)
                     if nlen == 0:
                         continue
-                    pos = 0
-                    while True:
-                        ni = ft_norm.find(nl, pos)
-                        if ni == -1:
-                            break
-                        pos = ni + 1
-                        idx = _n2o[ni]
-                        m_end = _n2o[min(ni + nlen, len(_n2o) - 1)]
 
-                        # Map char range → bbox
-                        hits = [blk for cs, ce, blk in block_offsets if ce > idx and cs < m_end]
-                        if not hits:
-                            continue
-                        bx0 = max(0.0, min(b.bbox.x0 for b in hits))
-                        by0 = max(0.0, min(b.bbox.y0 for b in hits))
-                        bx1 = min(page.width, max(b.bbox.x1 for b in hits))
-                        by1 = min(page.height, max(b.bbox.y1 for b in hits))
+                    # Determine fuzzy vs exact matching
+                    _bl_fuzz = body.blacklist_fuzziness
+                    _use_fuzzy = _bl_fuzz < 0.98
 
-                        r = PIIRegion(
-                            page_number=page.page_number,
-                            bbox=BBox(x0=round(bx0, 2), y0=round(by0, 2),
-                                      x1=round(bx1, 2), y1=round(by1, 2)),
-                            text=ft[idx:m_end],
-                            pii_type=_PIIType.CUSTOM,
-                            confidence=1.0,
-                            source=_DetSource.MANUAL,
-                            action=bl_target_action if bl_target_action else _RAct.PENDING,
-                            char_start=idx,
-                            char_end=m_end,
+                    if _use_fuzzy:
+                        # Fuzzy matching via the 'regex' module's {e<=N} syntax
+                        import regex as _rx
+                        max_errors = max(1, round(nlen * (1.0 - _bl_fuzz)))
+                        # Escape the needle for regex, then wrap with fuzzy spec
+                        _escaped = _rx.escape(nl)
+                        _fpat = _rx.compile(
+                            rf"(?b)({_escaped}){{e<={max_errors}}}",
+                            _rx.IGNORECASE,
                         )
-                        r.id = _uuid.uuid4().hex[:12]
-                        bl_regions.append(r)
+                        for _fm in _fpat.finditer(ft_norm, overlapped=False):
+                            ni = _fm.start()
+                            ni_end = _fm.end()
+                            idx = _n2o[ni]
+                            m_end = _n2o[min(ni_end, len(_n2o) - 1)]
+
+                            # Map char range → bbox
+                            hits = [blk for cs, ce, blk in block_offsets if ce > idx and cs < m_end]
+                            if not hits:
+                                continue
+                            bx0 = max(0.0, min(b.bbox.x0 for b in hits))
+                            by0 = max(0.0, min(b.bbox.y0 for b in hits))
+                            bx1 = min(page.width, max(b.bbox.x1 for b in hits))
+                            by1 = min(page.height, max(b.bbox.y1 for b in hits))
+
+                            r = PIIRegion(
+                                page_number=page.page_number,
+                                bbox=BBox(x0=round(bx0, 2), y0=round(by0, 2),
+                                          x1=round(bx1, 2), y1=round(by1, 2)),
+                                text=ft[idx:m_end],
+                                pii_type=_PIIType.CUSTOM,
+                                confidence=1.0,
+                                source=_DetSource.MANUAL,
+                                action=bl_target_action if bl_target_action else _RAct.PENDING,
+                                char_start=idx,
+                                char_end=m_end,
+                            )
+                            r.id = _uuid.uuid4().hex[:12]
+                            bl_regions.append(r)
+                    else:
+                        # Exact matching (current behaviour)
+                        pos = 0
+                        while True:
+                            ni = ft_norm.find(nl, pos)
+                            if ni == -1:
+                                break
+                            pos = ni + 1
+                            idx = _n2o[ni]
+                            m_end = _n2o[min(ni + nlen, len(_n2o) - 1)]
+
+                            # Map char range → bbox
+                            hits = [blk for cs, ce, blk in block_offsets if ce > idx and cs < m_end]
+                            if not hits:
+                                continue
+                            bx0 = max(0.0, min(b.bbox.x0 for b in hits))
+                            by0 = max(0.0, min(b.bbox.y0 for b in hits))
+                            bx1 = min(page.width, max(b.bbox.x1 for b in hits))
+                            by1 = min(page.height, max(b.bbox.y1 for b in hits))
+
+                            r = PIIRegion(
+                                page_number=page.page_number,
+                                bbox=BBox(x0=round(bx0, 2), y0=round(by0, 2),
+                                          x1=round(bx1, 2), y1=round(by1, 2)),
+                                text=ft[idx:m_end],
+                                pii_type=_PIIType.CUSTOM,
+                                confidence=1.0,
+                                source=_DetSource.MANUAL,
+                                action=bl_target_action if bl_target_action else _RAct.PENDING,
+                                char_start=idx,
+                                char_end=m_end,
+                            )
+                            r.id = _uuid.uuid4().hex[:12]
+                            bl_regions.append(r)
 
             blacklist_created = len(bl_regions)
             # Prepend blacklist regions so they get highest priority in merge
             new_regions = bl_regions + new_regions
             if blacklist_created:
                 logger.info("Blacklist: %d regions from %d terms", blacklist_created, len(bl_terms))
+
+        # ── Trim auto-detected regions to match user expressions ──
+        # When the user specifies exact expressions (blacklist terms or
+        # manual regions), auto-detectors like GLiNER may return a span
+        # that starts with the expression but extends beyond it (e.g.
+        # "L'ESPRIT DU REPRENEURIAT\n(série documentaire…)").  The user's
+        # expression should always win — trim the auto-detected region.
+        from models.schemas import DetectionSource as _DetSrcTrim
+        from core.detection.pipeline import _compute_block_offsets as _cbo_trim
+        from core.text_utils import normalize_for_matching as _nfm
+
+        _trim_exprs: list[str] = []
+        if body.blacklist_terms:
+            _trim_exprs.extend(t.strip() for t in bl_terms if t.strip())
+        # Also include existing MANUAL region texts as user expressions
+        for _er in doc.regions:
+            if _er.source == _DetSrcTrim.MANUAL and _er.text.strip():
+                _trim_exprs.append(_er.text.strip())
+        if _trim_exprs:
+            _expr_norms = list({_nfm(e): e for e in _trim_exprs}.items())  # dedupe by normalised form
+            _trimmed_count = 0
+            for nr in new_regions:
+                if nr.source == _DetSrcTrim.MANUAL:
+                    continue
+                nr_norm = _nfm(nr.text)
+                for expr_norm, expr_raw in _expr_norms:
+                    if not expr_norm or len(nr_norm) <= len(expr_norm):
+                        continue
+                    if not nr_norm.startswith(expr_norm):
+                        continue
+                    # Extra text beyond the expression — only trim if
+                    # the boundary is a non-alpha char (space, newline, paren).
+                    extra_char = nr_norm[len(expr_norm)]
+                    if extra_char.isalpha():
+                        continue
+                    # Find the trim point in the original region text.
+                    # Walk the original text to find where the expression ends
+                    # by matching normalised character counts.
+                    orig_pos = 0
+                    norm_consumed = 0
+                    while orig_pos < len(nr.text) and norm_consumed < len(expr_norm):
+                        ch_norm = _nfm(nr.text[orig_pos])
+                        norm_consumed += len(ch_norm)
+                        orig_pos += 1
+                    if orig_pos > 0 and orig_pos < len(nr.text):
+                        old_text = nr.text
+                        nr.text = nr.text[:orig_pos].rstrip()
+                        nr.char_end = nr.char_start + len(nr.text)
+                        # Recompute bbox from the trimmed char range
+                        page = next((p for p in pages_to_scan if p.page_number == nr.page_number), None)
+                        if page:
+                            _bo = _cbo_trim(page.text_blocks, page.full_text)
+                            _hits = [blk for cs, ce, blk in _bo if ce > nr.char_start and cs < nr.char_end]
+                            if _hits:
+                                nr.bbox = BBox(
+                                    x0=round(max(0.0, min(b.bbox.x0 for b in _hits)), 2),
+                                    y0=round(max(0.0, min(b.bbox.y0 for b in _hits)), 2),
+                                    x1=round(min(page.width, max(b.bbox.x1 for b in _hits)), 2),
+                                    y1=round(min(page.height, max(b.bbox.y1 for b in _hits)), 2),
+                                )
+                        _trimmed_count += 1
+                        logger.debug(
+                            "Trimmed auto-detected region to user expression: %r -> %r",
+                            old_text[:60], nr.text[:60],
+                        )
+                        break  # one trim per region
+            if _trimmed_count:
+                logger.info("Trimmed %d auto-detected region(s) to match user expressions", _trimmed_count)
 
         # ── Merge new detections into existing regions ──
         scanned_pages = {p.page_number for p in pages_to_scan}
@@ -424,14 +592,14 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
         # Remove stale blacklist (MANUAL+CUSTOM+PENDING) regions on scanned
         # pages so that deleted blacklist terms don't persist across runs.
         from models.schemas import DetectionSource as _DetSourceFilter, RegionAction as _RActFilter
-        _bl_terms_lower = {t.lower() for t in (body.blacklist_terms or [])}
+        _bl_terms_lower = {_norm_quotes(t.lower()) for t in (body.blacklist_terms or [])} if body.blacklist_terms else set()
         existing_on_scanned = [
             r for r in existing_on_scanned
             if not (
                 r.source == _DetSourceFilter.MANUAL
                 and (r.pii_type.value if hasattr(r.pii_type, 'value') else str(r.pii_type)) == "CUSTOM"
                 and r.action == _RActFilter.PENDING
-                and (r.text or "").strip().lower() not in _bl_terms_lower
+                and _norm_quotes((r.text or "").strip().lower()) not in _bl_terms_lower
             )
         ]
 

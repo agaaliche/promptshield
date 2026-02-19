@@ -116,8 +116,8 @@ interface AppState {
   setUploadProgressDocId: (id: string | null) => void;
   uploadProgressDocName: string;
   setUploadProgressDocName: (name: string) => void;
-  uploadProgressPhase: "uploading" | "detecting" | "done" | "error";
-  setUploadProgressPhase: (phase: "uploading" | "detecting" | "done" | "error") => void;
+  uploadProgressPhase: "uploading" | "done" | "error";
+  setUploadProgressPhase: (phase: "uploading" | "done" | "error") => void;
 
   // ── UI ──
   currentView: "upload" | "viewer" | "detokenize" | "settings";

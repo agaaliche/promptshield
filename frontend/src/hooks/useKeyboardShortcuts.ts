@@ -114,6 +114,10 @@ export default function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) 
               const r = o.regions.find((reg) => reg.id === id);
               o.handleRegionAction(id, r?.action === "REMOVE" ? "PENDING" : "REMOVE");
             });
+          } else {
+            // No selection: switch to draw cursor
+            e.preventDefault();
+            o.setCursorTool("draw");
           }
           break;
         case "Delete":
@@ -159,6 +163,17 @@ export default function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) 
           if ((e.ctrlKey || e.metaKey) && o.copiedRegions.length > 0) {
             e.preventDefault();
             o.handlePasteRegions();
+          } else if (!e.ctrlKey && !e.metaKey) {
+            // Bare "v": switch to pointer cursor
+            e.preventDefault();
+            o.setCursorTool("pointer");
+          }
+          break;
+        case "s":
+          if (!e.ctrlKey && !e.metaKey) {
+            // Bare "s": switch to multi-select (lasso) cursor
+            e.preventDefault();
+            o.setCursorTool("lasso");
           }
           break;
         case "Tab": {

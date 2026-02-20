@@ -314,6 +314,7 @@ export async function addManualRegion(
   region_id: string;
   text: string;
   pii_type: string;
+  bbox: BBox;
   new_regions: PIIRegion[];
   all_ids: string[];
 }> {

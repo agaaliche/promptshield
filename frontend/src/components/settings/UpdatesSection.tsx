@@ -8,7 +8,6 @@ import {
   Upload,
   CheckCircle,
   AlertTriangle,
-  ArrowUpCircle,
   Package,
 } from "../../icons";
 import { Section, styles } from "./settingsStyles";
@@ -193,7 +192,7 @@ export default function UpdatesSection() {
   const inTauri = isTauri();
 
   return (
-    <Section title="Updates" icon={<ArrowUpCircle size={18} />}>
+    <Section>
       {/* Version info */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
         <div style={{ flex: 1 }}>

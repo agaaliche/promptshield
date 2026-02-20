@@ -3,7 +3,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Brain,
   Cpu,
   Globe,
   Zap,
@@ -100,7 +99,7 @@ export default function LLMEngineSection() {
   }, [setLLMStatus]);
 
   return (
-    <Section title="LLM Engine" icon={<Brain size={18} />}>
+    <Section>
       {/* Hardware info */}
       {hwInfo && (
         <div style={{ marginBottom: 16, padding: "10px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 6, border: "1px solid var(--border-color)", fontSize: 12, lineHeight: 1.6 }}>

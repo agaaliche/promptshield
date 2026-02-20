@@ -281,17 +281,65 @@ async def add_manual_region(doc_id: str, region: PIIRegion) -> dict[str, Any]:
     if pd is not None:
         region.bbox = _clamp_bbox(region.bbox, pd.width, pd.height)
 
-    # Extract real text under the bbox from text blocks
+    # Extract real text under the bbox from text blocks.
+    # We require the centre of each word to fall inside the drawn region so
+    # that a wide selection across empty space doesn't capture distant words.
+    # After extraction, shrink the region bbox to tightly fit matched blocks.
     if pd is not None:
-        overlapping_parts: list[str] = []
+        matched_blocks: list[Any] = []
+        rx0, ry0, rx1, ry1 = (
+            region.bbox.x0, region.bbox.y0, region.bbox.x1, region.bbox.y1,
+        )
         for block in pd.text_blocks:
             bb = block.bbox
-            if (bb.x0 < region.bbox.x1 and bb.x1 > region.bbox.x0
-                    and bb.y0 < region.bbox.y1 and bb.y1 > region.bbox.y0):
-                overlapping_parts.append(block.text)
-        extracted = " ".join(overlapping_parts).strip()
-        if extracted:
-            region.text = extracted
+            cx = (bb.x0 + bb.x1) / 2
+            cy = (bb.y0 + bb.y1) / 2
+            if rx0 <= cx <= rx1 and ry0 <= cy <= ry1:
+                matched_blocks.append(block)
+
+        # Column detection: sort blocks by horizontal centre and find
+        # the largest gap.  If it exceeds a threshold we split into two
+        # column groups and keep the one closest to the drawn region
+        # centre.  This prevents a wide draw from merging text across
+        # columns that happen to sit at the same vertical position.
+        if matched_blocks:
+            avg_h = sum(b.bbox.y1 - b.bbox.y0 for b in matched_blocks) / len(matched_blocks)
+
+            cx_sorted = sorted(
+                matched_blocks,
+                key=lambda b: (b.bbox.x0 + b.bbox.x1) / 2,
+            )
+
+            best = cx_sorted  # default: keep all
+            if len(cx_sorted) > 1:
+                gaps: list[tuple[float, int]] = []
+                for i in range(1, len(cx_sorted)):
+                    prev_cx = (cx_sorted[i - 1].bbox.x0 + cx_sorted[i - 1].bbox.x1) / 2
+                    cur_cx = (cx_sorted[i].bbox.x0 + cx_sorted[i].bbox.x1) / 2
+                    gaps.append((cur_cx - prev_cx, i))
+
+                max_gap, split_idx = max(gaps, key=lambda t: t[0])
+
+                # Only split when the gap is substantial (> 5× avg word
+                # height).  This avoids splitting words within the same
+                # column that simply differ in x-centre.
+                if max_gap > avg_h * 5:
+                    group_a = cx_sorted[:split_idx]
+                    group_b = cx_sorted[split_idx:]
+                    draw_cx = (rx0 + rx1) / 2
+                    cx_a = sum((b.bbox.x0 + b.bbox.x1) / 2 for b in group_a) / len(group_a)
+                    cx_b = sum((b.bbox.x0 + b.bbox.x1) / 2 for b in group_b) / len(group_b)
+                    best = group_a if abs(cx_a - draw_cx) <= abs(cx_b - draw_cx) else group_b
+
+            best.sort(key=lambda b: (b.bbox.y0, b.bbox.x0))
+            region.text = " ".join(b.text for b in best).strip()
+            # Snap bbox to the union of the chosen group
+            region.bbox = BBox(
+                x0=round(min(b.bbox.x0 for b in best), 2),
+                y0=round(min(b.bbox.y0 for b in best), 2),
+                x1=round(max(b.bbox.x1 for b in best), 2),
+                y1=round(max(b.bbox.y1 for b in best), 2),
+            )
 
     doc.regions.append(region)
     save_doc(doc)
@@ -314,6 +362,7 @@ async def add_manual_region(doc_id: str, region: PIIRegion) -> dict[str, Any]:
         "region_id": region.id,
         "text": region.text,
         "pii_type": region.pii_type.value if hasattr(region.pii_type, "value") else str(region.pii_type),
+        "bbox": region.bbox.model_dump(mode="json"),
         "new_regions": new_regions_json,
         "all_ids": all_ids,
     }
@@ -591,6 +640,7 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
             continue
 
         from core.detection.pipeline import _compute_block_offsets
+        from core.detection.block_offsets import _char_offsets_to_line_bboxes, _char_offset_to_bbox
         block_offsets = _compute_block_offsets(page.text_blocks, full_text)
 
         # ---- Fuzzy sliding-window search for needle in full_text ----
@@ -692,62 +742,58 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
                             matches.append((orig_start, orig_end))
 
         for idx, match_end in matches:
-            hit_blocks = []
-            for cs, ce, blk in block_offsets:
-                if ce <= idx:
+            # Use per-line bbox splitting — same approach as propagation.py
+            line_bboxes = _char_offsets_to_line_bboxes(idx, match_end, block_offsets)
+            if not line_bboxes:
+                single = _char_offset_to_bbox(idx, match_end, block_offsets)
+                if single is None:
                     continue
-                if cs >= match_end:
-                    break
-                hit_blocks.append(blk)
-
-            if not hit_blocks:
-                continue
-
-            bx0 = min(b.bbox.x0 for b in hit_blocks)
-            by0 = min(b.bbox.y0 for b in hit_blocks)
-            bx1 = max(b.bbox.x1 for b in hit_blocks)
-            by1 = max(b.bbox.y1 for b in hit_blocks)
-
-            # Clamp to page bounds
-            bx0 = max(0.0, min(bx0, page.width))
-            by0 = max(0.0, min(by0, page.height))
-            bx1 = max(0.0, min(bx1, page.width))
-            by1 = max(0.0, min(by1, page.height))
-
-            page_existing = existing_spans.get(page.page_number, [])
-            already_covered = False
-            for ex0, ey0, ex1, ey1, etxt in page_existing:
-                ix0 = max(bx0, ex0)
-                iy0 = max(by0, ey0)
-                ix1 = min(bx1, ex1)
-                iy1 = min(by1, ey1)
-                if ix0 < ix1 and iy0 < iy1:
-                    inter_area = (ix1 - ix0) * (iy1 - iy0)
-                    new_area = max((bx1 - bx0) * (by1 - by0), 1e-6)
-                    if inter_area / new_area > _OVERLAP_COVERAGE_THRESHOLD:
-                        already_covered = True
-                        break
-            if already_covered:
-                continue
+                line_bboxes = [single]
 
             matched_text = full_text[idx:match_end]
-            region = PIIRegion(
-                page_number=page.page_number,
-                bbox=BBox(x0=round(bx0, 2), y0=round(by0, 2),
-                          x1=round(bx1, 2), y1=round(by1, 2)),
-                text=matched_text,
-                pii_type=source_region.pii_type,
-                confidence=source_region.confidence,
-                source=DetectionSource.MANUAL,
-                action=RegionAction.PENDING,
-                char_start=idx,
-                char_end=match_end,
-            )
-            new_regions.append(region)
-            doc.regions.append(region)
-            existing_spans.setdefault(page.page_number, []).append(
-                (bx0, by0, bx1, by1, needle_lower)
-            )
+
+            for lbbox in line_bboxes:
+                bx0, by0, bx1, by1 = lbbox.x0, lbbox.y0, lbbox.x1, lbbox.y1
+
+                # Clamp to page bounds
+                bx0 = max(0.0, min(bx0, page.width))
+                by0 = max(0.0, min(by0, page.height))
+                bx1 = max(0.0, min(bx1, page.width))
+                by1 = max(0.0, min(by1, page.height))
+
+                page_existing = existing_spans.get(page.page_number, [])
+                already_covered = False
+                for ex0, ey0, ex1, ey1, etxt in page_existing:
+                    ix0 = max(bx0, ex0)
+                    iy0 = max(by0, ey0)
+                    ix1 = min(bx1, ex1)
+                    iy1 = min(by1, ey1)
+                    if ix0 < ix1 and iy0 < iy1:
+                        inter_area = (ix1 - ix0) * (iy1 - iy0)
+                        new_area = max((bx1 - bx0) * (by1 - by0), 1e-6)
+                        if inter_area / new_area > _OVERLAP_COVERAGE_THRESHOLD:
+                            already_covered = True
+                            break
+                if already_covered:
+                    continue
+
+                region = PIIRegion(
+                    page_number=page.page_number,
+                    bbox=BBox(x0=round(bx0, 2), y0=round(by0, 2),
+                              x1=round(bx1, 2), y1=round(by1, 2)),
+                    text=matched_text,
+                    pii_type=source_region.pii_type,
+                    confidence=source_region.confidence,
+                    source=DetectionSource.MANUAL,
+                    action=RegionAction.PENDING,
+                    char_start=idx,
+                    char_end=match_end,
+                )
+                new_regions.append(region)
+                doc.regions.append(region)
+                existing_spans.setdefault(page.page_number, []).append(
+                    (bx0, by0, bx1, by1, needle_lower)
+                )
 
     # Collect all matching region IDs (existing + new) using fuzzy match
     all_ids = []

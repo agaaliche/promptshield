@@ -569,7 +569,7 @@ export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
         const fullRegion: PIIRegion = {
           id: resp.region_id,
           page_number: activePage,
-          bbox: adjustedBBox,
+          bbox: resp.bbox || adjustedBBox,
           text: resp.text || "[manual selection]",
           pii_type: (resp.pii_type as PIIType) || piiType,
           confidence: 1.0,

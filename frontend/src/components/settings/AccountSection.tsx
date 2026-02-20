@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { User, Globe, LogOut, Shield } from "../../icons";
+import { Globe, LogOut, Shield } from "../../icons";
 import { useLicenseStore, useSnackbarStore } from "../../store";
 import { Section } from "./settingsStyles";
 import { SUPPORTED_LANGUAGES } from "../../i18n";
@@ -52,7 +52,7 @@ export default function AccountSection() {
   };
 
   return (
-    <Section title="Account" icon={<User size={16} />}>
+    <Section>
       {payload && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

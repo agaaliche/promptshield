@@ -39,7 +39,7 @@ export default function DetectionSection() {
   const nerDropRef = useRef<HTMLDivElement>(null);
 
   return (
-    <Section title="Detection" icon={<span>🔍</span>}>
+    <Section>
       <p style={styles.hint}>
         {t("settingsDetection.description")}
       </p>

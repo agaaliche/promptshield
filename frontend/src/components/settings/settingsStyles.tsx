@@ -86,20 +86,14 @@ export const styles: Record<string, React.CSSProperties> = {
 };
 
 export function Section({
-  title,
-  icon,
   children,
 }: {
-  title: string;
-  icon: React.ReactNode;
+  title?: string;
+  icon?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div style={styles.section}>
-      <div style={styles.sectionHeader}>
-        {icon}
-        <h3 style={{ fontSize: 15, fontWeight: 600 }}>{title}</h3>
-      </div>
       <div style={styles.sectionBody}>{children}</div>
     </div>
   );

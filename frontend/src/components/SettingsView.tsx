@@ -18,6 +18,7 @@ import DetectionSection from "./settings/DetectionSection";
 import LLMEngineSection from "./settings/LLMEngineSection";
 import AccountSection from "./settings/AccountSection";
 import UpdatesSection from "./settings/UpdatesSection";
+import { ScanSearch, Brain, Lock, ArrowUpCircle, User } from "../icons";
 
 const TAB_IDS = ["detection", "ai", "vault", "updates", "general"] as const;
 
@@ -80,12 +81,12 @@ export default function SettingsView() {
       >
         {(["detection", "ai", "vault", "updates", "general"] as const).map((id) => {
           const active = activeTab === id;
-          const labels: Record<TabId, { icon: string; label: string }> = {
-            detection: { icon: "🔍", label: t("settingsView.tabDetection") },
-            ai:        { icon: "🧠", label: t("settingsView.tabAIEngine") },
-            vault:     { icon: "🔒", label: t("settingsView.tabVault") },
-            updates:   { icon: "🚀", label: t("settingsView.tabUpdates") },
-            general:   { icon: "⚙️", label: t("settingsView.tabAccount") },
+          const labels: Record<TabId, { icon: React.ReactNode; label: string }> = {
+            detection: { icon: <ScanSearch size={15} />, label: t("settingsView.tabDetection") },
+            ai:        { icon: <Brain size={15} />, label: t("settingsView.tabAIEngine") },
+            vault:     { icon: <Lock size={15} />, label: t("settingsView.tabVault") },
+            updates:   { icon: <ArrowUpCircle size={15} />, label: t("settingsView.tabUpdates") },
+            general:   { icon: <User size={15} />, label: t("settingsView.tabAccount") },
           };
           const tab = labels[id];
           return (
@@ -117,7 +118,7 @@ export default function SettingsView() {
                 if (!active) (e.currentTarget as HTMLElement).style.color = "var(--text-muted)";
               }}
             >
-              <span style={{ fontSize: 15 }}>{tab.icon}</span>
+              {tab.icon}
               {tab.label}
             </button>
           );

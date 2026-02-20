@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Lock, Unlock, Database, Download, Upload } from "../../icons";
+import { Lock, Unlock, Download, Upload } from "../../icons";
 import { useVaultStore } from "../../store";
 import { toErrorMessage } from "../../errorUtils";
 import {
@@ -47,7 +47,7 @@ export default function VaultSection({ vaultStats, setVaultStats }: VaultSection
   }, [passphrase, setVaultUnlocked, t]);
 
   return (
-    <Section title="Token Vault" icon={<Database size={18} />}>
+    <Section>
       {vaultUnlocked ? (
         <div style={styles.vaultInfo}>
           <div style={styles.badge}>

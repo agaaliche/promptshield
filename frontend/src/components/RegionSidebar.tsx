@@ -1,19 +1,21 @@
 /** Region sidebar — displays detected PII regions with actions. */
 
 import React from "react";
+import { useTranslation } from "react-i18next";
 import {
-  Shield,
+  BullseyePointer,
   ChevronLeft,
   ChevronRight,
   Key,
   Trash2,
   X,
   ReplaceAll,
+  RefreshCw,
   Search,
   Edit3,
   MoreVertical,
   ChevronDown,
-} from "lucide-react";
+} from "../icons";
 import { PII_COLORS, type PIIRegion, type RegionAction } from "../types";
 import { logError } from "../api";
 import { useSidebarStore } from "../store";
@@ -80,6 +82,7 @@ export default function RegionSidebar({
   batchDeleteRegions,
   onTypeFilterChange,
 }: RegionSidebarProps) {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = React.useState<SidebarTab>("page");
   const [typeFilterOpen, setTypeFilterOpen] = React.useState(false);
   const [enabledTypes, setEnabledTypes] = React.useState<Set<string> | null>(null); // null = all
@@ -233,9 +236,9 @@ export default function RegionSidebar({
               alignItems: 'center',
               justifyContent: 'center',
             }}
-            title="Expand sidebar"
+            title={t("regions.expandSidebar")}
           >
-            <ChevronLeft size={18} />
+            <ChevronLeft size={18} variant="light" />
           </button>
           <Shield size={20} color="var(--accent-primary)" />
           <div style={{
@@ -262,8 +265,8 @@ export default function RegionSidebar({
             borderBottom: '1px solid var(--border-color)',
             flexShrink: 0,
           }}>
-            <Shield size={18} color="var(--accent-primary)" />
-            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>Detected</span>
+            <BullseyePointer size={18} color="var(--accent-primary)" />
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>{t("regions.detected")}</span>
             <button
               onClick={() => setCollapsed(true)}
               style={{
@@ -277,9 +280,9 @@ export default function RegionSidebar({
                 justifyContent: 'center',
                 borderRadius: 4,
               }}
-              title="Collapse sidebar"
+              title={t("regions.collapseSidebar")}
             >
-              <ChevronRight size={16} />
+              <ChevronRight size={16} variant="light" />
             </button>
           </div>
           {/* Tab bar */}
@@ -292,7 +295,7 @@ export default function RegionSidebar({
             {(["page", "document"] as const).map((tab) => {
               const isActive = activeTab === tab;
               const count = tab === "page" ? pageRegions.length : allRegions.length;
-              const label = tab === "page" ? `This page (${count})` : `Document (${count})`;
+              const label = tab === "page" ? t("regions.tabThisPage", { count }) : t("regions.tabDocument", { count });
               return (
                 <button
                   key={tab}
@@ -366,10 +369,10 @@ export default function RegionSidebar({
                   textShadow: "none",
                   transition: "all 0.15s ease",
                 }}
-                title={allTokenized ? "Undo tokenize" : "Tokenize regions"}
+                title={allTokenized ? t("regions.undoTokenize") : t("regions.tokenizeRegions")}
               >
-                <Key size={13} />
-                Tokenize
+                <Key size={13} variant="light" />
+                {t("regions.tokenize")}
               </button>
               <button
                 onClick={() => {
@@ -398,10 +401,10 @@ export default function RegionSidebar({
                   textShadow: "none",
                   transition: "all 0.15s ease",
                 }}
-                title={allRemoved ? "Undo remove" : "Remove regions"}
+                title={allRemoved ? t("regions.undoRemove") : t("regions.removeRegions")}
               >
-                <Trash2 size={13} />
-                Remove
+                <Trash2 size={13} variant="light" />
+                {t("regions.remove")}
               </button>
               {/* Filter by type — ellipsis button */}
               <div ref={filterRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
@@ -421,9 +424,9 @@ export default function RegionSidebar({
                     transition: 'all 0.15s ease',
                     flexShrink: 0,
                   }}
-                  title="Filter by PII type"
+                  title={t("regions.filterByType")}
                 >
-                  <MoreVertical size={14} />
+                  <MoreVertical size={14} variant="light" />
                 </button>
                 {typeFilterOpen && (
                   <div style={{
@@ -471,7 +474,7 @@ export default function RegionSidebar({
                         }}
                         style={{ accentColor: 'var(--accent-primary)' }}
                       />
-                      Select all
+                      {t("common.selectAll")}
                     </label>
                     <div style={{ height: 1, background: 'var(--border-color)', margin: '4px 0' }} />
                     {availableTypes.map(type => {
@@ -544,10 +547,10 @@ export default function RegionSidebar({
                       }}
                       onMouseEnter={e => (e.currentTarget.style.background = 'rgba(244,67,54,0.08)')}
                       onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                      title="Clear all regions matching checked types"
+                      title={t("regions.clearCheckedTypes")}
                     >
-                      <X size={13} />
-                      Clear checked types
+                      <X size={13} variant="light" />
+                      {t("regions.clearCheckedTypes")}
                     </button>
                   </div>
                 )}
@@ -601,10 +604,10 @@ export default function RegionSidebar({
                 e.stopPropagation();
                 onClear(r.id);
               }}
-              title="Clear — remove from document"
+              title={t("regions.clearFromDocument")}
               style={styles.sidebarCloseBtn}
             >
-              <X size={14} />
+              <X size={14} variant="light" />
             </button>
             <div style={styles.regionHeader}>
               <span
@@ -632,10 +635,10 @@ export default function RegionSidebar({
                   e.stopPropagation();
                   onHighlightAll(r.id);
                 }}
-                title="Replace all matching"
+                title={t("regions.replaceAllMatching")}
                 style={styles.sidebarBtn}
               >
-                <ReplaceAll size={13} />
+                <ReplaceAll size={13} variant="light" />
               </button>
               {/* Detect */}
               <button
@@ -644,10 +647,10 @@ export default function RegionSidebar({
                   e.stopPropagation();
                   onRefresh(r.id);
                 }}
-                title="Detect — re-analyze"
+                title={t("regions.redetect")}
                 style={styles.sidebarBtn}
               >
-                <Search size={13} />
+                <RefreshCw size={13} variant="light" />
               </button>
               {/* Edit */}
               <button
@@ -656,10 +659,10 @@ export default function RegionSidebar({
                   e.stopPropagation();
                   onSelect([r.id]);
                 }}
-                title="Edit label/content"
+                title={t("regions.editLabelContent")}
                 style={styles.sidebarBtn}
               >
-                <Edit3 size={13} />
+                <Edit3 size={13} variant="light" />
               </button>
               {/* Separator */}
               <div style={{ width: 1, height: 18, background: "rgba(255,255,255,0.15)", margin: "0 2px" }} />
@@ -671,7 +674,7 @@ export default function RegionSidebar({
                   e.stopPropagation();
                   onRegionAction(r.id, r.action === "TOKENIZE" ? "PENDING" : "TOKENIZE");
                 }}
-                title={r.action === "TOKENIZE" ? "Undo tokenize" : "Tokenize"}
+                title={r.action === "TOKENIZE" ? t("regions.undoTokenize") : t("regions.tokenize")}
                 style={{
                   ...styles.sidebarBtn,
                   border: r.action === "TOKENIZE" ? "1px solid #9c27b0" : "1px solid transparent",
@@ -682,7 +685,7 @@ export default function RegionSidebar({
                   transition: "all 0.2s ease",
                 }}
               >
-                <Key size={13} />
+                <Key size={13} variant="light" />
                 <span style={{
                   fontSize: 11,
                   fontWeight: 600,
@@ -691,7 +694,7 @@ export default function RegionSidebar({
                   opacity: r.action === "TOKENIZE" ? 1 : 0,
                   transition: "max-width 0.2s ease, opacity 0.15s ease",
                   whiteSpace: "nowrap",
-                }}>Tokenize</span>
+                }}>{t("regions.tokenize")}</span>
               </button>
               {/* Remove */}
               <button
@@ -700,7 +703,7 @@ export default function RegionSidebar({
                   e.stopPropagation();
                   onRegionAction(r.id, r.action === "REMOVE" ? "PENDING" : "REMOVE");
                 }}
-                title={r.action === "REMOVE" ? "Undo remove" : "Remove"}
+                title={r.action === "REMOVE" ? t("regions.undoRemove") : t("regions.remove")}
                 style={{
                   ...styles.sidebarBtn,
                   border: r.action === "REMOVE" ? "1px solid #f44336" : "1px solid transparent",
@@ -711,7 +714,7 @@ export default function RegionSidebar({
                   transition: "all 0.2s ease",
                 }}
               >
-                <Trash2 size={13} />
+                <Trash2 size={13} variant="light" />
                 <span style={{
                   fontSize: 11,
                   fontWeight: 600,
@@ -720,7 +723,7 @@ export default function RegionSidebar({
                   opacity: r.action === "REMOVE" ? 1 : 0,
                   transition: "max-width 0.2s ease, opacity 0.15s ease",
                   whiteSpace: "nowrap",
-                }}>Remove</span>
+                }}>{t("regions.remove")}</span>
               </button>
             </div>
             {activeTab === "document" && (
@@ -732,7 +735,7 @@ export default function RegionSidebar({
                 color: "var(--text-muted)",
                 opacity: 0.7,
               }}>
-                page {r.page_number}
+                {t("regions.pageN", { n: r.page_number })}
               </div>
             )}
           </div>
@@ -747,14 +750,13 @@ export default function RegionSidebar({
               borderRadius: 6, cursor: "pointer", width: "calc(100% - 16px)",
             }}
           >
-            <ChevronDown size={14} />
-            Show {Math.min(LOAD_MORE_STEP, displayedRegions.length - maxVisible)} more
-            ({displayedRegions.length - maxVisible} remaining)
+            <ChevronDown size={14} variant="light" />
+            {t("regions.showMore", { count: Math.min(LOAD_MORE_STEP, displayedRegions.length - maxVisible), remaining: displayedRegions.length - maxVisible })}
           </button>
         )}
         {displayedRegions.length === 0 && (
           <p style={{ color: "var(--text-muted)", padding: 12, fontSize: 13 }}>
-            {activeTab === "page" ? "No PII detected on this page." : "No PII detected in this document."}
+            {activeTab === "page" ? t("regions.noDetectedThisPage") : t("regions.noDetectedDocument")}
           </p>
         )}
           </div>
@@ -768,13 +770,13 @@ export default function RegionSidebar({
             background: "rgba(0,0,0,0.15)",
           }}>
             <span style={{ ...styles.statBadge, fontSize: 11, background: "transparent" }}>
-              {pendingCount} pending
+              {t("regions.pendingCount", { count: pendingCount })}
             </span>
             <span style={{ ...styles.statBadge, fontSize: 11, color: "#f44336", background: "transparent" }}>
-              {removeCount} remove
+              {t("regions.removeCount", { count: removeCount })}
             </span>
             <span style={{ ...styles.statBadge, fontSize: 11, color: "#9c27b0", background: "transparent" }}>
-              {tokenizeCount} tokenize
+              {t("regions.tokenizeCount", { count: tokenizeCount })}
             </span>
           </div>
         </>
@@ -801,10 +803,10 @@ export default function RegionSidebar({
             boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
           }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>
-              Clear all regions?
+              {t("regions.clearAllTitle")}
             </div>
             <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.5 }}>
-              This will remove {clearConfirmRef.current.ids.length} region{clearConfirmRef.current.ids.length !== 1 ? 's' : ''} from the list. You can still <strong>undo</strong> this action.
+              {t("regions.clearAllMessage", { count: clearConfirmRef.current.ids.length })}
             </p>
             <label style={{
               display: 'flex',
@@ -821,7 +823,7 @@ export default function RegionSidebar({
                 onChange={e => setClearNeverAsk(e.target.checked)}
                 style={{ accentColor: 'var(--accent-primary)' }}
               />
-              Never show this message again
+              {t("regions.neverShowAgain")}
             </label>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button
@@ -837,7 +839,7 @@ export default function RegionSidebar({
                   cursor: 'pointer',
                 }}
               >
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 onClick={() => {
@@ -863,7 +865,7 @@ export default function RegionSidebar({
                   cursor: 'pointer',
                 }}
               >
-                Clear
+                {t("regions.clear")}
               </button>
             </div>
           </div>

@@ -37,7 +37,15 @@
     ],
     "externalBin": [
       "binaries/doc-anonymizer-sidecar"
-    ]
+    ],
+    "windows": {
+      "certificateThumbprint": "",
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com"
+    },
+    "macOS": {
+      "signingIdentity": "-"
+    }
   },
   "plugins": {}
 }

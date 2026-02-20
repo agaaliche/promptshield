@@ -5,6 +5,7 @@
  */
 
 import { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useSnackbarStore, useLicenseStore } from "../store";
 import { toErrorMessage } from "../errorUtils";
 import { revalidateLicense } from "../licenseApi";
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) {
+  const { t } = useTranslation();
   const { addSnackbar } = useSnackbarStore();
   const { setLicenseStatus } = useLicenseStore();
   const [loading, setLoading] = useState(false);
@@ -29,28 +31,28 @@ export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) 
       const status = await revalidateLicense();
       if (status.valid) {
         setLicenseStatus(status);
-        addSnackbar("License revalidated successfully!", "success");
+        addSnackbar(t("revalidation.revalidatedSuccess"), "success");
         onDismiss();
       } else {
-        setError(status.error ?? "Revalidation failed");
+        setError(status.error ?? t("revalidation.revalidationFailed"));
       }
     } catch (e: unknown) {
-      setError(toErrorMessage(e) ?? "Revalidation failed. Check your internet connection.");
+      setError(toErrorMessage(e) ?? t("revalidation.revalidationFailedNetwork"));
     } finally {
       setLoading(false);
     }
   }, [setLicenseStatus, addSnackbar, onDismiss]);
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="License revalidation" style={styles.overlay}>
+    <div role="dialog" aria-modal="true" aria-label={t("revalidation.titleRenewal")} style={styles.overlay}>
       <div style={styles.dialog}>
         <h2 style={styles.title}>
-          {expired ? "License Expired" : "License Renewal Required"}
+          {expired ? t("revalidation.titleExpired") : t("revalidation.titleRenewal")}
         </h2>
         <p style={styles.message}>
           {expired
-            ? "Your license has expired. Please revalidate online or paste a new license key to continue using promptShield."
-            : `Your license expires in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}. Please revalidate online to avoid interruption.`}
+            ? t("revalidation.expiredMessage")
+            : t("revalidation.expiringMessage", { count: daysRemaining })}
         </p>
 
         {error && <div style={styles.error}>{error}</div>}
@@ -61,11 +63,11 @@ export default function RevalidationDialog({ daysRemaining, onDismiss }: Props) 
             disabled={loading}
             style={{ ...styles.button, ...styles.buttonPrimary }}
           >
-            {loading ? "Revalidating..." : "Revalidate Now"}
+            {loading ? t("revalidation.revalidating") : t("revalidation.revalidateNow")}
           </button>
           {!expired && (
             <button onClick={onDismiss} style={styles.button}>
-              Remind Me Later
+              {t("revalidation.remindMeLater")}
             </button>
           )}
         </div>

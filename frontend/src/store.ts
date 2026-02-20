@@ -341,20 +341,29 @@ export const useAppStore = create<AppState>()(devtools((set, get) => ({
   llmStatus: null,
   setLLMStatus: (s) => set({ llmStatus: s }),
 
-  // Detection settings
-  detectionSettings: {
-    regex_enabled: true,
-    custom_patterns_enabled: true,
-    ner_enabled: true,
-    llm_detection_enabled: true,
-    ner_backend: "spacy",
-    detection_fuzziness: 0.5,
-    detection_language: "auto",
-  },
+  // Detection settings — persisted to localStorage
+  detectionSettings: (() => {
+    const defaults = {
+      regex_enabled: true,
+      custom_patterns_enabled: true,
+      ner_enabled: true,
+      llm_detection_enabled: true,
+      ner_backend: "spacy",
+      detection_fuzziness: 0.5,
+      detection_language: "auto",
+    };
+    try {
+      const saved = localStorage.getItem("detectionSettings");
+      if (saved) return { ...defaults, ...JSON.parse(saved) };
+    } catch { /* ignore */ }
+    return defaults;
+  })(),
   setDetectionSettings: (s) =>
-    set((state) => ({
-      detectionSettings: { ...state.detectionSettings, ...s },
-    })),
+    set((state) => {
+      const next = { ...state.detectionSettings, ...s };
+      try { localStorage.setItem("detectionSettings", JSON.stringify(next)); } catch { /* ignore */ }
+      return { detectionSettings: next };
+    }),
 
   // Draw mode
   drawMode: false,

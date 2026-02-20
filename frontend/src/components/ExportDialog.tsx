@@ -4,7 +4,8 @@
  */
 
 import { useState, useMemo, useCallback } from "react";
-import { Shield, X, Search, FileText, Download, Package, Lock } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Shield, X, Search, FileText, Download, Package, Lock } from "../icons";
 import { useAppStore } from "../store";
 import { toErrorMessage } from "../errorUtils";
 import { exportToDownloads, syncRegions, unlockVault } from "../api";
@@ -19,6 +20,7 @@ interface Props {
 }
 
 export default function ExportDialog({ open, onClose }: Props) {
+  const { t } = useTranslation();
   const documents = useAppStore((s) => s.documents);
   const regions = useAppStore((s) => s.regions);
   const activeDocId = useAppStore((s) => s.activeDocId);
@@ -109,10 +111,10 @@ export default function ExportDialog({ open, onClose }: Props) {
       const result = await exportToDownloads(docIds, eid);
 
       setExportResult(result);
-      setStatusMessage(`Exported ${docIds.length} file${docIds.length > 1 ? "s" : ""} successfully`);
+      setStatusMessage(t("exportDialog.exportSuccess", { count: docIds.length }));
     } catch (e: unknown) {
       setExportError(toErrorMessage(e));
-      setStatusMessage(`Export failed: ${toErrorMessage(e)}`);
+      setStatusMessage(t("exportDialog.exportFailed", { error: toErrorMessage(e) }));
     } finally {
       setIsExporting(false);
     }
@@ -143,7 +145,7 @@ export default function ExportDialog({ open, onClose }: Props) {
       await doExport();
     } catch (e: unknown) {
       if (toErrorMessage(e).includes("403") || toErrorMessage(e).includes("passphrase")) {
-        setVaultError("Invalid passphrase");
+        setVaultError(t("exportDialog.invalidPassphrase"));
       } else {
         setVaultError(toErrorMessage(e));
       }
@@ -199,9 +201,9 @@ export default function ExportDialog({ open, onClose }: Props) {
         <div style={{ display: "flex", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid var(--border-color)", gap: 10 }}>
           <Shield size={18} style={{ color: "#4caf50" }} />
           <span id="export-dialog-title" style={{ flex: 1, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
-            Export
+            {t("exportDialog.title")}
           </span>
-          <button className="btn-ghost btn-sm" onClick={onClose} style={{ padding: 4 }} aria-label="Close export dialog">
+          <button className="btn-ghost btn-sm" onClick={onClose} style={{ padding: 4 }} aria-label={t("exportDialog.closeAriaLabel")}>
             <X size={16} />
           </button>
         </div>
@@ -212,7 +214,7 @@ export default function ExportDialog({ open, onClose }: Props) {
             <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
             <input
               type="text"
-              placeholder="Search files..."
+              placeholder={t("exportDialog.searchPlaceholder")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{
@@ -232,17 +234,17 @@ export default function ExportDialog({ open, onClose }: Props) {
               onClick={selectAll}
               style={{ cursor: "pointer", textDecoration: "underline" }}
             >
-              Select all
+              {t("common.selectAll")}
             </span>
             <span
               onClick={selectNone}
               style={{ cursor: "pointer", textDecoration: "underline" }}
             >
-              Select none
+              {t("common.selectNone")}
             </span>
             <span style={{ marginLeft: "auto" }}>
-              {selectedIds.size} / {documents.length} selected
-              {selectedIds.size >= 50 && <span style={{ color: "#ff9800" }}> (max 50)</span>}
+              {t("exportDialog.nOfSelected", { selected: selectedIds.size, total: documents.length })}
+              {selectedIds.size >= 50 && <span style={{ color: "#ff9800" }}> {t("exportDialog.maxFiles")}</span>}
             </span>
           </div>
         </div>
@@ -251,7 +253,7 @@ export default function ExportDialog({ open, onClose }: Props) {
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
           {filteredDocs.length === 0 ? (
             <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-              No documents found
+              {t("exportDialog.noDocumentsFound")}
             </div>
           ) : (
             filteredDocs.map((doc) => (
@@ -309,12 +311,12 @@ export default function ExportDialog({ open, onClose }: Props) {
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)" }}>
               <Lock size={12} />
-              Vault passphrase required for tokenized regions
+              {t("exportDialog.vaultPassphraseRequired")}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <input
                 type="password"
-                placeholder="Enter vault passphrase..."
+                placeholder={t("exportDialog.enterPassphrase")}
                 value={vaultPass}
                 onChange={(e) => setVaultPass(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleVaultUnlockAndExport()}
@@ -335,7 +337,7 @@ export default function ExportDialog({ open, onClose }: Props) {
                 onClick={handleVaultUnlockAndExport}
                 disabled={!vaultPass}
               >
-                Unlock & Export
+                {t("exportDialog.unlockAndExport")}
               </button>
             </div>
             {vaultError && (
@@ -357,7 +359,7 @@ export default function ExportDialog({ open, onClose }: Props) {
           {selectedIds.size > 1 && (
             <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)" }}>
               <Package size={12} />
-              Exports as ZIP
+              {t("exportDialog.exportsAsZip")}
             </div>
           )}
           <div style={{ flex: 1 }} />
@@ -366,7 +368,7 @@ export default function ExportDialog({ open, onClose }: Props) {
             onClick={onClose}
             style={{ marginRight: 4 }}
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             className="btn-success"
@@ -376,8 +378,8 @@ export default function ExportDialog({ open, onClose }: Props) {
           >
             <Download size={14} />
             {isExporting
-              ? "Exporting…"
-              : `Export ${selectedIds.size} file${selectedIds.size !== 1 ? "s" : ""}`}
+              ? t("exportDialog.exporting")
+              : t("exportDialog.exportNFiles", { count: selectedIds.size })}
           </button>
         </div>
       </div>

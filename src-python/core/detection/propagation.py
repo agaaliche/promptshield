@@ -320,16 +320,71 @@ def propagate_regions_across_pages(
 # Partial ORG name propagation
 # ---------------------------------------------------------------------------
 
+def _is_numeric_token(w: str) -> bool:
+    """Return True if *w* looks like a number (digits, optional separators)."""
+    stripped = w.replace(",", "").replace(".", "").replace("-", "")
+    return stripped.isdigit() and len(stripped) > 0
+
+
+def _is_hyphenated_token(w: str) -> bool:
+    """Return True if *w* contains an internal hyphen connecting sub-words."""
+    return "-" in w and not w.startswith("-") and not w.endswith("-")
+
+
+def _merge_atomic_groups(words: list[str]) -> list[list[str]]:
+    """Merge words into atomic groups that must never be split.
+
+    Rules:
+    * Hyphenated words (e.g. "Coca-Cola") are already single tokens from
+      whitespace splitting — they stay atomic by default.
+    * Numeric tokens ("360", "747", "2023") are glued to their left
+      neighbour if one exists, making them inseparable.
+    * A leading numeric token (no left neighbour) is glued to the next
+      group on the right, so "360 Capital Group" keeps "360 Capital"
+      together.
+    * This prevents sub-phrases like "747 Division" from appearing when
+      the full ORG name is "Boeing 747 Division".
+    """
+    if not words:
+        return []
+    groups: list[list[str]] = [[words[0]]]
+    for w in words[1:]:
+        if _is_numeric_token(w):
+            # Glue number to previous group
+            groups[-1].append(w)
+        else:
+            groups.append([w])
+    # If the first group is purely numeric, merge it into the second group
+    if (len(groups) >= 2
+            and all(_is_numeric_token(w) for w in groups[0])):
+        groups[1] = groups[0] + groups[1]
+        groups.pop(0)
+    return groups
+
+
 def _generate_contiguous_subphrases(words: list[str], min_words: int = 2) -> list[str]:
     """Return all contiguous sub-phrases of *words* with >= *min_words* words.
 
     Excludes the full phrase itself (already handled by exact propagation).
+
+    Split rules:
+    * Only whitespace boundaries are considered split points.
+    * Hyphenated tokens (e.g. "Coca-Cola") are atomic — never split.
+    * Numeric tokens are glued to the preceding word and cannot form a
+      sub-phrase boundary (e.g. "Boeing 747" is indivisible).
     """
-    n = len(words)
+    groups = _merge_atomic_groups(words)
+    n = len(groups)
+    if n < 2:
+        return []
     subphrases: list[str] = []
-    for length in range(min_words, n):          # skip n (the full phrase)
+    for length in range(1, n):            # skip n (the full phrase)
         for start in range(n - length + 1):
-            subphrases.append(" ".join(words[start : start + length]))
+            phrase_words: list[str] = []
+            for g in groups[start : start + length]:
+                phrase_words.extend(g)
+            if len(phrase_words) >= min_words:
+                subphrases.append(" ".join(phrase_words))
     return subphrases
 
 
@@ -567,3 +622,56 @@ def propagate_partial_org_names(
         clamped_result.append(r)
 
     return clamped_result
+
+
+# ---------------------------------------------------------------------------
+# Type unification — ensure same text → single type across the document
+# ---------------------------------------------------------------------------
+
+def unify_types_by_text(regions: list[PIIRegion]) -> list[PIIRegion]:
+    """Ensure all regions with the same text share a single PII type.
+
+    For each unique normalised text, the type with the highest confidence
+    wins.  All regions with that text are updated to use the winning type.
+
+    Returns a new list (regions are copied only when changed).
+    """
+    if not regions:
+        return regions
+
+    # Group regions by normalised text key
+    groups: dict[str, list[int]] = defaultdict(list)
+    for idx, r in enumerate(regions):
+        key = _ws_collapse(_strip_accents(r.text.strip())).lower()
+        if len(key) < 2:
+            continue
+        groups[key].append(idx)
+
+    changed = False
+    result = list(regions)
+
+    for _key, indices in groups.items():
+        if len(indices) < 2:
+            continue
+
+        # Find the winning type (highest confidence)
+        best_idx = max(indices, key=lambda i: result[i].confidence)
+        best_type = result[best_idx].pii_type
+
+        # Check if all already agree
+        if all(result[i].pii_type == best_type for i in indices):
+            continue
+
+        # Unify
+        for i in indices:
+            if result[i].pii_type != best_type:
+                result[i] = result[i].model_copy(update={"pii_type": best_type})
+                changed = True
+
+    if changed:
+        unified_count = sum(
+            1 for orig, new in zip(regions, result) if orig.pii_type != new.pii_type
+        )
+        logger.info("Type unification: updated %d region(s) to match same-text siblings", unified_count)
+
+    return result

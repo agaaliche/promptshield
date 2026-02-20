@@ -9,10 +9,13 @@
 
 import { useEffect, useState, Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import i18n from "./i18n";
 import { useAppStore, useUIStore, useConnectionStore, useVaultStore, useDetectionStore, useDocumentStore, useRegionStore, useDocLoadingStore, useLicenseStore, useSnackbarStore } from "./store";
 import { validateLocalLicense, startBackend, revalidateLicense } from "./licenseApi";
 import { warmupModels } from "./api";
 import { toErrorMessage } from "./errorUtils";
+import { captureError } from "./sentry";
 import type { LicenseStatus as LicenseStatusType } from "./types";
 
 // ── Error Boundary ──────────────────────────────────────────────
@@ -28,13 +31,14 @@ class ErrorBoundary extends Component<EBProps, EBState> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("[ErrorBoundary]", error, info.componentStack);
+    captureError(error, { componentStack: info.componentStack ?? undefined });
   }
 
   render() {
     if (this.state.hasError) {
       return (
         <div style={{ padding: 32, textAlign: "center", color: "var(--text-secondary)" }}>
-          <h2 style={{ color: "var(--text-primary)", marginBottom: 8 }}>Something went wrong</h2>
+          <h2 style={{ color: "var(--text-primary)", marginBottom: 8 }}>{i18n.t("common.somethingWentWrong")}</h2>
           <p style={{ fontSize: 13, marginBottom: 16 }}>{this.state.error?.message}</p>
           <button
             onClick={() => this.setState({ hasError: false, error: null })}
@@ -47,7 +51,7 @@ class ErrorBoundary extends Component<EBProps, EBState> {
               cursor: "pointer",
             }}
           >
-            Try Again
+            {i18n.t("common.tryAgain")}
           </button>
         </div>
       );
@@ -69,8 +73,12 @@ import RevalidationDialog from "./components/RevalidationDialog";
 import UploadErrorDialog from "./components/UploadErrorDialog";
 import UploadDialog from "./components/UploadDialog";
 import { useDocumentUpload } from "./hooks/useDocumentUpload";
+import EulaDialog from "./components/EulaDialog";
+import { hasAcceptedEula } from "./eulaVersion";
+import OnboardingWizard, { hasCompletedOnboarding } from "./components/OnboardingWizard";
 
 function App() {
+  const { t } = useTranslation();
   const { currentView, setCurrentView } = useUIStore();
   const { backendReady, setBackendReady } = useConnectionStore();
   const { setVaultUnlocked } = useVaultStore();
@@ -83,6 +91,8 @@ function App() {
 
   const [showRevalidation, setShowRevalidation] = useState(false);
   const [backendStarting, setBackendStarting] = useState(false);
+  const [eulaAccepted, setEulaAccepted] = useState(hasAcceptedEula);
+  const [onboardingDone, setOnboardingDone] = useState(hasCompletedOnboarding);
 
   // Upload hook for retry-from-error-dialog support
   const { handleFiles: retryFiles } = useDocumentUpload();
@@ -123,7 +133,7 @@ function App() {
       } catch {
         // validateLocalLicense failed — no stored key or not in Tauri
         if (cancelled) return;
-        setLicenseStatus({ valid: false, payload: null, error: "No license key found", days_remaining: null });
+        setLicenseStatus({ valid: false, payload: null, error: t("app.noLicenseKeyFound"), days_remaining: null });
         setLicenseChecked(true);
       }
     };
@@ -228,7 +238,7 @@ function App() {
 
     // Signal loading start
     setDocLoading(true);
-    setDocLoadingMessage("Fetching document data…");
+    setDocLoadingMessage(t("app.fetchingDocData"));
 
     // Fetch full document (with pages array) and regions in parallel
     Promise.all([
@@ -237,10 +247,10 @@ function App() {
     ])
       .then(([fullDoc, regions]) => {
         if (cancelled || useAppStore.getState().activeDocId !== activeDocId) return;
-        setDocLoadingMessage("Processing pages…");
+        setDocLoadingMessage(t("app.processingPages"));
         // Merge full document data (pages, mime_type, etc.) into the store entry
         updateDocument(activeDocId, fullDoc);
-        setDocLoadingMessage("Loading regions…");
+        setDocLoadingMessage(t("app.loadingRegions"));
         setRegions(resolveAllOverlaps(regions));
       })
       .catch((err) => {
@@ -271,12 +281,22 @@ function App() {
     return () => { cancelled = true; };
   }, [activeDocId, setRegions, updateDocument, setDocLoading, setDocLoadingMessage, setDocuments, setActiveDocId, setCurrentView]);
 
+  // ── EULA gate: show TOS acceptance before anything else ──────
+  if (!eulaAccepted) {
+    return <EulaDialog onAccepted={() => setEulaAccepted(true)} />;
+  }
+
+  // ── Onboarding gate: show first-run wizard after EULA ──────
+  if (!onboardingDone) {
+    return <OnboardingWizard backendReady={backendReady} onComplete={() => setOnboardingDone(true)} />;
+  }
+
   // ── Auth gate: show AuthScreen if no valid license ──────────
   if (!licenseChecked) {
     return (
       <div style={styles.connecting}>
         <div style={styles.spinner} />
-        <p>Checking license...</p>
+        <p>{t("app.checkingLicense")}</p>
       </div>
     );
   }
@@ -300,6 +320,7 @@ function App() {
 
   return (
     <div style={{ display: "flex", height: "100vh", width: "100vw" }}>
+      <a href="#main-content" className="skip-to-content">{t("app.skipToMainContent")}</a>
       <Snackbar />
       <UploadErrorDialog onRetry={retryFiles} />
       <UploadDialog />
@@ -310,13 +331,18 @@ function App() {
         />
       )}
       <Sidebar />
-      <main style={{ flex: 1, overflow: "hidden", position: "relative", minHeight: 0, height: "100%" }}>
+      <main
+        id="main-content"
+        role="main"
+        aria-label={t("app.documentWorkspace")}
+        style={{ flex: 1, overflow: "hidden", position: "relative", minHeight: 0, height: "100%" }}
+      >
         {!backendReady ? (
           <div style={styles.connecting}>
             <div style={styles.spinner} />
-            <p>{backendStarting ? "Starting backend..." : "Connecting to local database..."}</p>
+            <p>{backendStarting ? t("app.startingBackend") : t("app.connectingToLocalDb")}</p>
             <p style={styles.hint}>
-              Make sure the Python sidecar is running on port 8910
+              {t("app.sidecarHint")}
             </p>
           </div>
         ) : (

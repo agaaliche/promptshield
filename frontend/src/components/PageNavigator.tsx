@@ -1,10 +1,11 @@
 /** Page navigator sidebar — shows page thumbnails for quick navigation. */
 
 import React from "react";
-import { ChevronLeft, ChevronRight, ShieldCheck } from "lucide-react";
+import { ChevronLeft, ChevronRight, ShieldCheck } from "../icons";
 import { getPageBitmapUrl } from "../api";
 import type { PIIRegion } from "../types";
 import { useSidebarStore } from "../store";
+import { useTranslation } from "react-i18next";
 
 interface PageNavigatorProps {
   docId: string | null;
@@ -37,6 +38,7 @@ export default function PageNavigator({
   sidebarWidth,
   onSidebarWidthChange,
 }: PageNavigatorProps) {
+  const { t } = useTranslation();
   const { setIsSidebarDragging, isSidebarDragging: sidebarDragging } = useSidebarStore();
   const listRef = React.useRef<HTMLDivElement>(null);
   const isDragging = React.useRef(false);
@@ -140,7 +142,7 @@ export default function PageNavigator({
           <button
             onClick={() => onCollapsedChange(false)}
             style={btnStyle}
-            title="Expand page navigator"
+            title={t("pageNavigator.expandTooltip")}
           >
             <ChevronLeft size={14} />
           </button>
@@ -151,7 +153,7 @@ export default function PageNavigator({
             letterSpacing: 1,
             userSelect: "none",
           }}>
-            Pages
+            {t("pageNavigator.pagesLabel")}
           </span>
         </div>
       ) : (
@@ -188,7 +190,7 @@ export default function PageNavigator({
                   {docId && (
                     <img
                       src={getPageBitmapUrl(docId, page)}
-                      alt={`Page ${page}`}
+                      alt={t("pageNavigator.pageAlt", { n: page })}
                       style={{
                         width: "100%",
                         display: "block",

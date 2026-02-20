@@ -308,8 +308,15 @@ export async function batchDeleteRegions(
 
 export async function addManualRegion(
   docId: string,
-  region: Partial<PIIRegion>
-): Promise<{ status: string; region_id: string }> {
+  region: Partial<PIIRegion>,
+): Promise<{
+  status: string;
+  region_id: string;
+  text: string;
+  pii_type: string;
+  new_regions: PIIRegion[];
+  all_ids: string[];
+}> {
   return request(`/api/documents/${docId}/regions/add`, {
     method: "POST",
     body: JSON.stringify(region),
@@ -361,8 +368,8 @@ export async function updateRegionLabel(
   docId: string,
   regionId: string,
   piiType: string,
-): Promise<void> {
-  await request(`/api/documents/${docId}/regions/${regionId}/label`, {
+): Promise<{ updated: Array<{ id: string; pii_type: string }> }> {
+  return request(`/api/documents/${docId}/regions/${regionId}/label`, {
     method: "PUT",
     body: JSON.stringify({ pii_type: piiType }),
   });
@@ -372,8 +379,8 @@ export async function updateRegionText(
   docId: string,
   regionId: string,
   text: string,
-): Promise<void> {
-  await request(`/api/documents/${docId}/regions/${regionId}/text`, {
+): Promise<{ updated: Array<{ id: string; text: string }> }> {
+  return request(`/api/documents/${docId}/regions/${regionId}/text`, {
     method: "PUT",
     body: JSON.stringify({ text }),
   });

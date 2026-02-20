@@ -146,8 +146,13 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
       if (!activeDocId) return;
       try {
         pushUndo();
+        // Optimistic update for the target
         updateRegion(regionId, { pii_type: newType });
-        await updateRegionLabel(activeDocId, regionId, newType);
+        // Backend propagates to all same-text siblings and returns the full list
+        const resp = await updateRegionLabel(activeDocId, regionId, newType);
+        for (const item of resp.updated) {
+          updateRegion(item.id, { pii_type: item.pii_type as PIIType });
+        }
       } catch (e: unknown) {
         console.error("Update label failed:", e);
         setStatusMessage(`Update failed: ${toErrorMessage(e)}`);
@@ -161,8 +166,13 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
       if (!activeDocId) return;
       try {
         pushUndo();
+        // Optimistic update for the target
         updateRegion(regionId, { text: newText });
-        await updateRegionText(activeDocId, regionId, newText);
+        // Backend propagates to all same-text siblings and returns the full list
+        const resp = await updateRegionText(activeDocId, regionId, newText);
+        for (const item of resp.updated) {
+          updateRegion(item.id, { text: item.text });
+        }
       } catch (e: unknown) {
         console.error("Update text failed:", e);
         setStatusMessage(`Update failed: ${toErrorMessage(e)}`);

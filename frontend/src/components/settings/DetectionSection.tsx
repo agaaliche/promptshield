@@ -1,7 +1,8 @@
 /** Detection settings — Regex/NER/LLM toggles, NER model dropdown, language selector, fuzziness slider. */
 
 import { useState, useRef } from "react";
-import { ChevronDown } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { ChevronDown } from "../../icons";
 import { useDetectionStore } from "../../store";
 import { toErrorMessage } from "../../errorUtils";
 import { updateSettings, logError } from "../../api";
@@ -9,25 +10,26 @@ import { Section, styles } from "./settingsStyles";
 import { CustomPatternsContent } from "./CustomPatternsSection";
 
 const NER_MODELS = [
-  { value: "auto", label: "Auto — best model per language (recommended)", lang: "Auto", languages: "English, Spanish, French, German, Italian, Dutch, Portuguese" },
-  { value: "spacy", label: "Default — fast, works offline, no download", lang: "English" },
+  { value: "auto", key: "auto", lang: "Auto", hasLanguages: true },
+  { value: "spacy", key: "default", lang: "English", hasLanguages: false },
   // Multilingual models
-  { value: "iiiorg/piiranha-v1-detect-personal-information", label: "Multilingual (Piiranha) — 6 languages, high accuracy", lang: "Multilingual", languages: "English, German, French, Spanish, Italian, Dutch" },
-  { value: "Babelscape/wikineural-multilingual-ner", label: "Multilingual (WikiNEural) — 9 languages incl. Portuguese", lang: "Multilingual", languages: "English, German, Spanish, French, Italian, Dutch, Polish, Portuguese, Russian" },
-  { value: "Davlan/xlm-roberta-base-ner-hrl", label: "Multilingual (XLM-R) — 10+ high-resource languages", lang: "Multilingual", languages: "English, German, Spanish, French, Italian, Dutch, Portuguese, Chinese, Arabic, and more" },
+  { value: "iiiorg/piiranha-v1-detect-personal-information", key: "piiranha", lang: "Multilingual", hasLanguages: true },
+  { value: "Babelscape/wikineural-multilingual-ner", key: "wikineural", lang: "Multilingual", hasLanguages: true },
+  { value: "Davlan/xlm-roberta-base-ner-hrl", key: "xlmr", lang: "Multilingual", hasLanguages: true },
   // English-specific models
-  { value: "Isotonic/distilbert_finetuned_ai4privacy_v2", label: "English — Comprehensive, 54 PII types", lang: "English", languages: "Covers 54 PII types including names, financial, identity, addresses, and more" },
-  { value: "dslim/bert-base-NER", label: "English — General purpose, good all-around", lang: "English" },
-  { value: "StanfordAIMI/stanford-deidentifier-base", label: "English — Medical & clinical documents", lang: "English" },
-  { value: "lakshyakh93/deberta_finetuned_pii", label: "English — Personal info (names, emails, phones)", lang: "English" },
+  { value: "Isotonic/distilbert_finetuned_ai4privacy_v2", key: "enComprehensive", lang: "English", hasLanguages: true },
+  { value: "dslim/bert-base-NER", key: "enGeneral", lang: "English", hasLanguages: false },
+  { value: "StanfordAIMI/stanford-deidentifier-base", key: "enMedical", lang: "English", hasLanguages: false },
+  { value: "lakshyakh93/deberta_finetuned_pii", key: "enPersonal", lang: "English", hasLanguages: false },
   // Language-specific models
-  { value: "Jean-Baptiste/camembert-ner", label: "French — CamemBERT, high accuracy", lang: "French" },
-  { value: "mrm8488/bert-spanish-cased-finetuned-ner", label: "Spanish — BERT fine-tuned NER", lang: "Spanish" },
-  { value: "fhswf/bert_de_ner", label: "German — BERT GermEval2014, high accuracy", lang: "German" },
-  { value: "pierreguillou/ner-bert-base-cased-pt-lenerbr", label: "Portuguese — LeNER-Br, legal & general NER", lang: "Portuguese" },
+  { value: "Jean-Baptiste/camembert-ner", key: "frCamembert", lang: "French", hasLanguages: false },
+  { value: "mrm8488/bert-spanish-cased-finetuned-ner", key: "esBert", lang: "Spanish", hasLanguages: false },
+  { value: "fhswf/bert_de_ner", key: "deGermeval", lang: "German", hasLanguages: false },
+  { value: "pierreguillou/ner-bert-base-cased-pt-lenerbr", key: "ptLener", lang: "Portuguese", hasLanguages: false },
 ] as const;
 
 export default function DetectionSection() {
+  const { t } = useTranslation();
   const { detectionSettings, setDetectionSettings } = useDetectionStore();
 
   const [pendingNerBackend, setPendingNerBackend] = useState<string | null>(null);
@@ -39,7 +41,7 @@ export default function DetectionSection() {
   return (
     <Section title="Detection" icon={<span>🔍</span>}>
       <p style={styles.hint}>
-        Choose which methods are used to find personal information in your documents.
+        {t("settingsDetection.description")}
       </p>
       <div style={styles.checkboxGroup}>
         <label style={styles.checkboxLabel}>
@@ -52,7 +54,7 @@ export default function DetectionSection() {
               updateSettings({ regex_enabled: v }).catch(logError("update-settings"));
             }}
           />{" "}
-          Pattern matching (finds IDs, emails, phone numbers, etc.)
+          {t("settingsDetection.patternMatching")}
         </label>
         <label style={{ ...styles.checkboxLabel, marginLeft: 24, opacity: detectionSettings.regex_enabled ? 1 : 0.5 }}>
           <input
@@ -65,7 +67,7 @@ export default function DetectionSection() {
               updateSettings({ custom_patterns_enabled: v }).catch(logError("update-settings"));
             }}
           />{" "}
-          Custom patterns
+          {t("settingsDetection.customPatterns")}
         </label>
         {detectionSettings.regex_enabled && detectionSettings.custom_patterns_enabled && (
           <div style={{ marginLeft: 24, marginTop: 4, marginBottom: 8 }}>
@@ -82,13 +84,13 @@ export default function DetectionSection() {
               updateSettings({ ner_enabled: v }).catch(logError("update-settings"));
             }}
           />{" "}
-          AI recognition (finds names, organizations, locations)
+          {t("settingsDetection.aiRecognition")}
         </label>
 
         {detectionSettings.ner_enabled && (
           <div style={{ marginLeft: 24, marginTop: 4, marginBottom: 8 }}>
             <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
-              AI recognition model
+              {t("settingsDetection.aiModel")}
             </label>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <div ref={nerDropRef} style={{ flex: 1, position: "relative" }}>
@@ -115,7 +117,7 @@ export default function DetectionSection() {
                   }}
                 >
                   <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {(NER_MODELS.find(m => m.value === (pendingNerBackend ?? detectionSettings.ner_backend)) ?? NER_MODELS[0]).label}
+                    {t(`settingsDetection.nerModels.${(NER_MODELS.find(m => m.value === (pendingNerBackend ?? detectionSettings.ner_backend)) ?? NER_MODELS[0]).key}`)}
                   </span>
                   {(() => {
                     const sel = NER_MODELS.find(m => m.value === (pendingNerBackend ?? detectionSettings.ner_backend)) ?? NER_MODELS[0];
@@ -126,7 +128,7 @@ export default function DetectionSection() {
                       <span style={{
                         fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4, flexShrink: 0,
                         ...(isAuto ? { background: "rgba(76,175,80,0.15)", color: "var(--accent-success)" } : isMulti ? { background: "rgba(74,158,255,0.12)", color: "var(--accent-primary)" } : isLangSpecific ? { background: "rgba(255,183,77,0.15)", color: "#ffb74d" } : { background: "rgba(255,255,255,0.06)", color: "var(--text-muted)" }),
-                      }}>{sel.lang}</span>
+                      }}>{t(`settingsDetection.nerModels.${sel.key}Badge`)}</span>
                     );
                   })()}
                   <ChevronDown size={14} style={{ flexShrink: 0, color: "var(--text-muted)", transition: "transform 0.15s", transform: nerDropOpen ? "rotate(180deg)" : "none" }} />
@@ -159,11 +161,11 @@ export default function DetectionSection() {
                           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = selected ? "rgba(74,158,255,0.15)" : "rgba(255,255,255,0.05)"; }}
                           onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = selected ? "rgba(74,158,255,0.1)" : "transparent"; }}
                         >
-                          <span style={{ flex: 1 }}>{m.label}</span>
+                          <span style={{ flex: 1 }}>{t(`settingsDetection.nerModels.${m.key}`)}</span>
                           <span style={{
                             fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4, flexShrink: 0,
                             ...(isAuto ? { background: "rgba(76,175,80,0.15)", color: "var(--accent-success)" } : isMulti ? { background: "rgba(74,158,255,0.12)", color: "var(--accent-primary)" } : isLangSpecific ? { background: "rgba(255,183,77,0.15)", color: "#ffb74d" } : { background: "rgba(255,255,255,0.06)", color: "var(--text-muted)" }),
-                          }}>{m.lang}</span>
+                          }}>{t(`settingsDetection.nerModels.${m.key}Badge`)}</span>
                         </button>
                       );
                     })}
@@ -189,12 +191,12 @@ export default function DetectionSection() {
                     setTimeout(() => setNerApplyStatus(""), 3000);
                   } catch (e: unknown) {
                     setNerApplyStatus("error");
-                    setNerApplyError(toErrorMessage(e) || "Failed to update NER backend");
+                    setNerApplyError(toErrorMessage(e) || t("settingsDetection.modelUpdateFailed"));
                   }
                 }}
                 style={{ whiteSpace: "nowrap" }}
               >
-                {nerApplyStatus === "saving" ? "Applying..." : "Apply"}
+                {nerApplyStatus === "saving" ? t("settingsDetection.applying") : t("common.apply")}
               </button>
             </div>
             {(() => {
@@ -203,20 +205,19 @@ export default function DetectionSection() {
               if (sel === "auto") {
                 return (
                   <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
-                    🧠 Detects document language automatically and picks the best model.
-                    <br />🌐 Supported: English, Spanish, French, German, Italian, Dutch, Portuguese
+                    {t("settingsDetection.autoModelDescription")}
                   </p>
                 );
               }
-              return model && "languages" in model ? (
+              return model && "hasLanguages" in model && model.hasLanguages ? (
                 <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
-                  🌐 {model.languages}
+                  🌐 {t(`settingsDetection.nerModels.${model.key}Languages`)}
                 </p>
               ) : null;
             })()}
             {nerApplyStatus === "saved" && (
               <p style={{ fontSize: 12, color: "var(--accent-success)", marginTop: 4 }}>
-                Model updated — takes effect on next scan.
+                {t("settingsDetection.modelUpdated")}
               </p>
             )}
             {nerApplyStatus === "error" && (
@@ -236,14 +237,14 @@ export default function DetectionSection() {
               updateSettings({ llm_detection_enabled: v }).catch(logError("update-settings"));
             }}
           />{" "}
-          Deep analysis (uses an LLM for harder-to-find information)
+          {t("settingsDetection.deepAnalysis")}
         </label>
 
         {/* Detection language selector */}
         <div style={{ marginTop: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
             <span style={{ fontSize: 13, color: "var(--text-primary)" }}>
-              Detection language
+              {t("settingsDetection.detectionLanguage")}
             </span>
           </div>
           <select
@@ -268,18 +269,17 @@ export default function DetectionSection() {
               cursor: "pointer",
             }}
           >
-            <option value="auto">Auto-detect per page</option>
-            <option value="en">English</option>
-            <option value="fr">French</option>
-            <option value="de">German</option>
-            <option value="es">Spanish</option>
-            <option value="it">Italian</option>
-            <option value="nl">Dutch</option>
-            <option value="pt">Portuguese</option>
+            <option value="auto">{t("settingsDetection.autoDetectPerPage")}</option>
+            <option value="en">{t("settingsDetection.lang.english")}</option>
+            <option value="fr">{t("settingsDetection.lang.french")}</option>
+            <option value="de">{t("settingsDetection.lang.german")}</option>
+            <option value="es">{t("settingsDetection.lang.spanish")}</option>
+            <option value="it">{t("settingsDetection.lang.italian")}</option>
+            <option value="nl">{t("settingsDetection.lang.dutch")}</option>
+            <option value="pt">{t("settingsDetection.lang.portuguese")}</option>
           </select>
           <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
-            Filters regex patterns to only those relevant for the selected
-            language. &ldquo;Auto&rdquo; detects per page using stop-word analysis.
+            {t("settingsDetection.languageFilterHint")}
           </p>
         </div>
 
@@ -287,7 +287,7 @@ export default function DetectionSection() {
         <div style={{ marginTop: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
             <span style={{ fontSize: 13, color: "var(--text-primary)" }}>
-              Region grouping
+              {t("settingsDetection.regionGrouping")}
             </span>
             <span style={{ fontSize: 12, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
               {Math.round(detectionSettings.detection_fuzziness * 100)}%
@@ -314,13 +314,11 @@ export default function DetectionSection() {
             style={{ width: "100%", accentColor: "var(--accent-primary)" }}
           />
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
-            <span>Strict — split more</span>
-            <span>Permissive — group more</span>
+            <span>{t("settingsDetection.strictSplit")}</span>
+            <span>{t("settingsDetection.permissiveGroup")}</span>
           </div>
           <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
-            Controls how aggressively nearby words merge into a single
-            highlight. Higher values allow wider gaps between words in
-            the same region (capped at 20 pt regardless).
+            {t("settingsDetection.regionGroupingHint")}
           </p>
         </div>
       </div>

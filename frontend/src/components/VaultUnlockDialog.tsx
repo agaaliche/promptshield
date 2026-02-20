@@ -1,7 +1,8 @@
 /** Vault unlock prompt overlay — used before tokenization. */
 
-import { Lock } from "lucide-react";
+import { Lock } from "../icons";
 import type { CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
 import { Z_MODAL } from "../zIndex";
 
 interface VaultUnlockDialogProps {
@@ -21,14 +22,14 @@ export default function VaultUnlockDialog({
   onUnlock,
   onCancel,
 }: VaultUnlockDialogProps) {
+  const { t } = useTranslation();
   return (
     <div style={overlayStyle} role="dialog" aria-modal="true" aria-labelledby="vault-unlock-title">
       <div style={dialogStyle}>
         <Lock size={24} style={{ color: "var(--accent-warning)", marginBottom: 8 }} />
-        <h3 id="vault-unlock-title" style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Unlock Vault</h3>
+        <h3 id="vault-unlock-title" style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{t("vaultUnlock.title")}</h3>
         <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
-          Tokenization requires the vault to store reversible mappings.
-          Enter your passphrase to unlock or create the vault.
+          {t("vaultUnlock.description")}
         </p>
         <div style={{ display: "flex", gap: 8, width: "100%" }}>
           <input
@@ -36,7 +37,7 @@ export default function VaultUnlockDialog({
             value={vaultPass}
             onChange={(e) => onPassChange(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && onUnlock()}
-            placeholder="Vault passphrase"
+            placeholder={t("vaultUnlock.passphrasePlaceholder")}
             autoFocus
             style={{ flex: 1 }}
           />
@@ -45,7 +46,7 @@ export default function VaultUnlockDialog({
             onClick={onUnlock}
             disabled={!vaultPass || isProcessing}
           >
-            Unlock & Anonymize
+            {t("vaultUnlock.unlockAndAnonymize")}
           </button>
         </div>
         {vaultError && (
@@ -56,7 +57,7 @@ export default function VaultUnlockDialog({
           style={{ marginTop: 8 }}
           onClick={onCancel}
         >
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     </div>

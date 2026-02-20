@@ -1,7 +1,8 @@
 /** Vault unlock form, vault stats, export/import backup functionality. */
 
 import { useState, useCallback } from "react";
-import { Lock, Unlock, Database, Download, Upload } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Lock, Unlock, Database, Download, Upload } from "../../icons";
 import { useVaultStore } from "../../store";
 import { toErrorMessage } from "../../errorUtils";
 import {
@@ -20,6 +21,7 @@ export interface VaultSectionProps {
 }
 
 export default function VaultSection({ vaultStats, setVaultStats }: VaultSectionProps) {
+  const { t } = useTranslation();
   const { vaultUnlocked, setVaultUnlocked } = useVaultStore();
 
   const [passphrase, setPassphrase] = useState("");
@@ -30,6 +32,8 @@ export default function VaultSection({ vaultStats, setVaultStats }: VaultSection
   const [importStatus, setImportStatus] = useState("");
   const [importFile, setImportFile] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [exportIsError, setExportIsError] = useState(false);
+  const [importIsError, setImportIsError] = useState(false);
 
   const handleUnlockVault = useCallback(async () => {
     setVaultError("");
@@ -38,9 +42,9 @@ export default function VaultSection({ vaultStats, setVaultStats }: VaultSection
       setVaultUnlocked(true);
       setPassphrase("");
     } catch (e: unknown) {
-      setVaultError(toErrorMessage(e) || "Failed to unlock vault");
+      setVaultError(toErrorMessage(e) || t("vault.failedToUnlock"));
     }
-  }, [passphrase, setVaultUnlocked]);
+  }, [passphrase, setVaultUnlocked, t]);
 
   return (
     <Section title="Token Vault" icon={<Database size={18} />}>
@@ -48,26 +52,26 @@ export default function VaultSection({ vaultStats, setVaultStats }: VaultSection
         <div style={styles.vaultInfo}>
           <div style={styles.badge}>
             <Unlock size={14} style={{ color: "var(--accent-success)" }} />
-            <span style={{ color: "var(--accent-success)" }}>Unlocked</span>
+            <span style={{ color: "var(--accent-success)" }}>{t("vault.unlocked")}</span>
           </div>
           {vaultStats && (
             <div style={styles.statsGrid}>
-              <StatItem label="Tokens stored" value={vaultStats.total_tokens} />
-              <StatItem label="Documents" value={vaultStats.total_documents} />
+              <StatItem label={t("vault.tokensStored")} value={vaultStats.total_tokens} />
+              <StatItem label={t("vault.documents")} value={vaultStats.total_documents} />
               <StatItem
-                label="Vault size"
-                value={`${(vaultStats.vault_size_bytes / 1024).toFixed(1)} KB`}
+                label={t("vault.vaultSize")}
+                value={`${(vaultStats.vault_size_bytes / 1024).toFixed(1)} ${t("vault.kb")}`}
               />
             </div>
           )}
           <div style={{ marginTop: 12 }}>
-            <p style={{ ...styles.hint, marginBottom: 8 }}>Export all tokens as an encrypted backup file.</p>
+            <p style={{ ...styles.hint, marginBottom: 8 }}>{t("vault.exportHint")}</p>
             <div style={styles.formRow}>
               <input
                 type="password"
                 value={exportPass}
                 onChange={(e) => setExportPass(e.target.value)}
-                placeholder="Export passphrase"
+                placeholder={t("vault.exportPassphrase")}
                 style={{ maxWidth: 200 }}
               />
               <button
@@ -84,18 +88,20 @@ export default function VaultSection({ vaultStats, setVaultStats }: VaultSection
                     a.download = `vault-export-${Date.now()}.json`;
                     a.click();
                     URL.revokeObjectURL(url);
-                    setExportStatus("Exported successfully");
+                    setExportStatus(t("vault.exportedSuccessfully"));
+                    setExportIsError(false);
                     setExportPass("");
                   } catch (e: unknown) {
-                    setExportStatus(`Export failed: ${toErrorMessage(e)}`);
+                    setExportStatus(t("vault.exportFailed", { error: toErrorMessage(e) }));
+                    setExportIsError(true);
                   }
                 }}
               >
-                <Download size={12} /> Export vault
+                <Download size={12} /> {t("vault.exportVault")}
               </button>
             </div>
             {exportStatus && (
-              <p style={{ fontSize: 12, marginTop: 4, color: exportStatus.toLowerCase().includes("failed") ? "var(--accent-danger)" : "var(--accent-success)" }}>
+              <p style={{ fontSize: 12, marginTop: 4, color: exportIsError ? "var(--accent-danger)" : "var(--accent-success)" }}>
                 {exportStatus}
               </p>
             )}
@@ -103,14 +109,14 @@ export default function VaultSection({ vaultStats, setVaultStats }: VaultSection
 
           {/* ── Import ── */}
           <div style={{ marginTop: 16, borderTop: "1px solid var(--border-color)", paddingTop: 12 }}>
-            <p style={{ ...styles.hint, marginBottom: 8 }}>Restore tokens from an encrypted backup file.</p>
+            <p style={{ ...styles.hint, marginBottom: 8 }}>{t("vault.importHint")}</p>
             <div style={styles.formRow}>
               <label
                 className="btn-ghost btn-sm"
                 style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
               >
                 <Upload size={12} />
-                {importFile ? importFile.name : "Choose file"}
+                {importFile ? importFile.name : t("vault.chooseFile")}
                 <input
                   type="file"
                   accept=".json"
@@ -128,7 +134,7 @@ export default function VaultSection({ vaultStats, setVaultStats }: VaultSection
                   type="password"
                   value={importPass}
                   onChange={(e) => setImportPass(e.target.value)}
-                  placeholder="Export passphrase"
+                  placeholder={t("vault.exportPassphrase")}
                   style={{ maxWidth: 200 }}
                 />
                 <button
@@ -141,27 +147,27 @@ export default function VaultSection({ vaultStats, setVaultStats }: VaultSection
                       const text = await importFile.text();
                       const result = await importVault(text, importPass);
                       setImportStatus(
-                        `Imported ${result.imported} token${result.imported !== 1 ? "s" : ""}` +
-                        (result.skipped ? `, ${result.skipped} skipped (duplicates)` : "") +
-                        (result.errors ? `, ${result.errors} errors` : "")
+                        t("vault.importResult", { imported: result.imported, skipped: result.skipped ?? 0, errors: result.errors ?? 0 })
                       );
+                      setImportIsError(false);
                       setImportFile(null);
                       setImportPass("");
                       // Refresh vault stats
                       getVaultStats().then(setVaultStats).catch(logError("vault-stats"));
                     } catch (e: unknown) {
-                      setImportStatus(`Import failed: ${toErrorMessage(e)}`);
+                      setImportStatus(t("vault.importFailed", { error: toErrorMessage(e) }));
+                      setImportIsError(true);
                     } finally {
                       setIsImporting(false);
                     }
                   }}
                 >
-                  {isImporting ? "Importing..." : "Restore backup"}
+                  {isImporting ? t("vault.importing") : t("vault.restoreBackup")}
                 </button>
               </div>
             )}
             {importStatus && (
-              <p style={{ fontSize: 12, marginTop: 4, color: importStatus.toLowerCase().includes("failed") ? "var(--accent-danger)" : "var(--accent-success)" }}>
+              <p style={{ fontSize: 12, marginTop: 4, color: importIsError ? "var(--accent-danger)" : "var(--accent-success)" }}>
                 {importStatus}
               </p>
             )}
@@ -170,15 +176,14 @@ export default function VaultSection({ vaultStats, setVaultStats }: VaultSection
       ) : (
         <div style={styles.vaultForm}>
           <p style={styles.hint}>
-            Enter a passphrase to unlock or create the token vault.
-            All token mappings are encrypted with this passphrase.
+            {t("vault.lockedHint")}
           </p>
           <div style={styles.formRow}>
             <input
               type="password"
               value={passphrase}
               onChange={(e) => setPassphrase(e.target.value)}
-              placeholder="Vault passphrase"
+              placeholder={t("vault.vaultPassphrase")}
               onKeyDown={(e) => e.key === "Enter" && handleUnlockVault()}
             />
             <button
@@ -186,7 +191,7 @@ export default function VaultSection({ vaultStats, setVaultStats }: VaultSection
               onClick={handleUnlockVault}
               disabled={!passphrase}
             >
-              <Lock size={14} /> Unlock
+              <Lock size={14} /> {t("vault.unlock")}
             </button>
           </div>
           {vaultError && <p style={styles.errorText}>{vaultError}</p>}

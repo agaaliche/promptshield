@@ -6,6 +6,7 @@
  */
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   CheckCircle,
   FileText,
@@ -17,7 +18,7 @@ import {
   Loader2,
   Package,
   AlertCircle,
-} from "lucide-react";
+} from "../icons";
 import { shellOpenFile, shellRevealFile, splitExportFile } from "../api";
 import type { SplitFileResult } from "../api";
 import { Z_TOP_DIALOG } from "../zIndex";
@@ -45,6 +46,7 @@ export default function ExportSuccessDialog({
   fileCount,
   totalSize,
 }: Props) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [actionError, setActionError] = useState("");
 
@@ -85,7 +87,7 @@ export default function ExportSuccessDialog({
       setActionError("");
       await shellOpenFile(savedPath);
     } catch (e: unknown) {
-      setActionError(`Could not open file: ${e instanceof Error ? e.message : String(e)}`);
+      setActionError(t("exportSuccess.couldNotOpenFile", { error: e instanceof Error ? e.message : String(e) }));
     }
   };
 
@@ -94,14 +96,14 @@ export default function ExportSuccessDialog({
       setActionError("");
       await shellRevealFile(splitResult?.saved_path ?? savedPath);
     } catch (e: unknown) {
-      setActionError(`Could not open folder: ${e instanceof Error ? e.message : String(e)}`);
+      setActionError(t("exportSuccess.couldNotOpenFolder", { error: e instanceof Error ? e.message : String(e) }));
     }
   };
 
   const handleSplit = async () => {
     const mb = parseFloat(maxSizeMb);
     if (isNaN(mb) || mb <= 0) {
-      setSplitError("Enter a valid size in MB");
+      setSplitError(t("exportSuccess.enterValidSize"));
       return;
     }
     setIsSplitting(true);
@@ -127,7 +129,7 @@ export default function ExportSuccessDialog({
         await shellOpenFile(splitResult.saved_path);
       }
     } catch (e: unknown) {
-      setActionError(`Could not open: ${e instanceof Error ? e.message : String(e)}`);
+      setActionError(t("exportSuccess.couldNotOpen", { error: e instanceof Error ? e.message : String(e) }));
     }
   };
 
@@ -179,13 +181,13 @@ export default function ExportSuccessDialog({
             id="export-success-title"
             style={{ flex: 1, margin: 0, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}
           >
-            Export Successful
+            {t("exportSuccess.title")}
           </h2>
           <button
             className="btn-ghost"
             onClick={onClose}
             style={{ padding: 4, lineHeight: 0 }}
-            aria-label="Close"
+            aria-label={t("common.close")}
           >
             <X size={16} />
           </button>
@@ -195,8 +197,8 @@ export default function ExportSuccessDialog({
         <div style={{ padding: "16px" }}>
           <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
             {splitResult
-              ? `${splitResult.part_count} part${splitResult.part_count !== 1 ? "s" : ""} (${formatBytes(splitResult.total_size)})`
-              : `${fileCount} file${fileCount !== 1 ? "s" : ""} exported (${formatBytes(totalSize)})`}
+              ? t("exportSuccess.nParts", { count: splitResult.part_count, size: formatBytes(splitResult.total_size) })
+              : t("exportSuccess.nFilesExported", { count: fileCount, size: formatBytes(totalSize) })}
           </div>
 
           {/* File path display */}
@@ -244,7 +246,7 @@ export default function ExportSuccessDialog({
               className="btn-ghost"
               onClick={handleCopyPath}
               style={{ padding: 4, lineHeight: 0, flexShrink: 0 }}
-              title="Copy path"
+              title={t("exportSuccess.copyPath")}
             >
               {copied ? <Check size={14} style={{ color: "#4caf50" }} /> : <Copy size={14} />}
             </button>
@@ -264,7 +266,7 @@ export default function ExportSuccessDialog({
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
                 <Package size={13} style={{ color: "#4caf50" }} />
                 <span style={{ fontSize: 12, fontWeight: 500, color: "#4caf50" }}>
-                  Split into {splitResult.part_count} parts
+                  {t("exportSuccess.splitIntoParts", { count: splitResult.part_count })}
                 </span>
               </div>
               <div style={{ maxHeight: 120, overflowY: "auto" }}>
@@ -319,11 +321,11 @@ export default function ExportSuccessDialog({
             >
               <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>
                 <Scissors size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
-                Split file for AI ingestion (parts are named sequentially)
+                {t("exportSuccess.splitHint")}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <label style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-                  Max size
+                  {t("exportSuccess.maxSize")}
                 </label>
                 <input
                   type="number"
@@ -343,7 +345,7 @@ export default function ExportSuccessDialog({
                     textAlign: "right",
                   }}
                 />
-                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>MB</span>
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t("exportSuccess.mb")}</span>
                 <button
                   className="btn-primary btn-sm"
                   onClick={handleSplit}
@@ -360,12 +362,12 @@ export default function ExportSuccessDialog({
                   {isSplitting ? (
                     <>
                       <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
-                      Splitting…
+                      {t("exportSuccess.splitting")}
                     </>
                   ) : (
                     <>
                       <Scissors size={13} />
-                      Split
+                      {t("exportSuccess.split")}
                     </>
                   )}
                 </button>
@@ -395,7 +397,7 @@ export default function ExportSuccessDialog({
           }}
         >
           <button className="btn-ghost btn-sm" onClick={onClose}>
-            Close
+            {t("common.close")}
           </button>
           <button
             className="btn-ghost btn-sm"
@@ -403,7 +405,7 @@ export default function ExportSuccessDialog({
             style={{ display: "flex", alignItems: "center", gap: 5 }}
           >
             <FolderOpen size={14} />
-            Open Folder
+            {t("exportSuccess.openFolder")}
           </button>
           {splitResult?.split ? (
             <button
@@ -412,7 +414,7 @@ export default function ExportSuccessDialog({
               style={{ display: "flex", alignItems: "center", gap: 5 }}
             >
               <Package size={14} />
-              Open Split Zip
+              {t("exportSuccess.openSplitZip")}
             </button>
           ) : (
             <button
@@ -421,7 +423,7 @@ export default function ExportSuccessDialog({
               style={{ display: "flex", alignItems: "center", gap: 5 }}
             >
               <FileText size={14} />
-              Open File
+              {t("exportSuccess.openFile")}
             </button>
           )}
         </div>

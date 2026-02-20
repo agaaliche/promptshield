@@ -5,8 +5,9 @@
 
 import { useState, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { PII_COLORS, getPIIColor, loadLabelConfig, type PIIRegion, type RegionAction, type PIIType } from "../types";
-import { X, Trash2, Key, Edit3, Tag, ChevronRight, ChevronLeft, ReplaceAll, Search } from "lucide-react";
+import { X, Trash2, Key, Edit3, Tag, ChevronRight, ChevronLeft, ReplaceAll, RefreshCw } from "../icons";
 
 export type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
@@ -117,6 +118,7 @@ function RegionOverlay({
   rightInset = 0,
   leftSidebarWidth = 0,
 }: Props) {
+  const { t } = useTranslation();
   const [showEditPanel, setShowEditPanel] = useState(false);
   const [toolbarExpanded, setToolbarExpanded] = useState(getCachedToolbarExpanded);
   const [activeTab, setActiveTab] = useState<"label" | "content">("label");
@@ -610,9 +612,9 @@ function RegionOverlay({
                 alignItems: "center",
                 color: "var(--text-secondary)",
               }}
-              title={toolbarExpanded ? "Collapse" : "Expand"}
+              title={toolbarExpanded ? t("regions.collapse") : t("regions.expand")}
             >
-              {toolbarExpanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+              {toolbarExpanded ? <ChevronLeft size={14} variant="light" /> : <ChevronRight size={14} variant="light" />}
             </button>
           </div>
 
@@ -633,6 +635,7 @@ function RegionOverlay({
                 fontSize: 12,
                 display: "flex",
                 alignItems: "center",
+                justifyContent: toolbarExpanded ? "flex-start" : "center",
                 gap: 8,
                 background: "transparent",
                 border: "1px solid transparent",
@@ -641,11 +644,11 @@ function RegionOverlay({
                 color: "var(--text-primary)",
                 whiteSpace: "nowrap",
               }}
-              title="Replace all matching"
+              title={t("regions.replaceAllMatching")}
               className="btn-ghost btn-sm"
             >
-              <ReplaceAll size={16} />
-              {toolbarExpanded && "Replace all"}
+              <ReplaceAll size={16} variant="light" />
+              {toolbarExpanded && t("regions.replaceAll")}
             </button>
 
             {/* Detect */}
@@ -660,6 +663,7 @@ function RegionOverlay({
                 fontSize: 12,
                 display: "flex",
                 alignItems: "center",
+                justifyContent: toolbarExpanded ? "flex-start" : "center",
                 gap: 8,
                 background: "transparent",
                 border: "1px solid transparent",
@@ -668,11 +672,11 @@ function RegionOverlay({
                 color: "var(--text-primary)",
                 whiteSpace: "nowrap",
               }}
-              title="Detect — re-analyze"
+              title={t("regions.redetect")}
               className="btn-ghost btn-sm"
             >
-              <Search size={16} />
-              {toolbarExpanded && "Detect"}
+              <RefreshCw size={16} variant="light" />
+              {toolbarExpanded && t("common.detect")}
             </button>
 
             {/* Edit */}
@@ -687,6 +691,7 @@ function RegionOverlay({
                 fontSize: 12,
                 display: "flex",
                 alignItems: "center",
+                justifyContent: toolbarExpanded ? "flex-start" : "center",
                 gap: 8,
                 background: showEditPanel ? "var(--bg-primary)" : "transparent",
                 border: "1px solid transparent",
@@ -696,11 +701,11 @@ function RegionOverlay({
                 fontWeight: showEditPanel ? 600 : 400,
                 whiteSpace: "nowrap",
               }}
-              title="Edit label/content"
+              title={t("regions.editLabelContent")}
               className="btn-ghost btn-sm"
             >
-              <Edit3 size={16} />
-              {toolbarExpanded && "Edit"}
+              <Edit3 size={16} variant="light" />
+              {toolbarExpanded && t("common.edit")}
             </button>
 
             {/* Clear */}
@@ -715,6 +720,7 @@ function RegionOverlay({
                 fontSize: 12,
                 display: "flex",
                 alignItems: "center",
+                justifyContent: toolbarExpanded ? "flex-start" : "center",
                 gap: 8,
                 background: "transparent",
                 border: "1px solid transparent",
@@ -723,11 +729,11 @@ function RegionOverlay({
                 color: "var(--text-primary)",
                 whiteSpace: "nowrap",
               }}
-              title="Clear — remove from document"
+              title={t("regions.clearFromDocument")}
               className="btn-ghost btn-sm"
             >
-              <X size={16} />
-              {toolbarExpanded && "Clear"}
+              <X size={16} variant="light" />
+              {toolbarExpanded && t("regions.clear")}
             </button>
 
             {/* Separator */}
@@ -745,6 +751,7 @@ function RegionOverlay({
                 fontSize: 12,
                 display: "flex",
                 alignItems: "center",
+                justifyContent: toolbarExpanded ? "flex-start" : "center",
                 gap: 8,
                 background: region.action === "TOKENIZE" ? "rgba(156,39,176,0.15)" : "transparent",
                 border: region.action === "TOKENIZE" ? "1px solid #9c27b0" : "1px solid transparent",
@@ -755,11 +762,11 @@ function RegionOverlay({
                 boxShadow: region.action === "TOKENIZE" ? "0 0 6px rgba(156,39,176,0.3)" : "none",
                 transition: "all 0.15s ease",
               }}
-              title={region.action === "TOKENIZE" ? "Undo tokenize" : "Tokenize"}
+              title={region.action === "TOKENIZE" ? t("regions.undoTokenize") : t("regions.tokenize")}
               className="btn-tokenize btn-sm"
             >
-              <Key size={16} />
-              {toolbarExpanded && "Tokenize"}
+              <Key size={16} variant="light" />
+              {toolbarExpanded && t("regions.tokenize")}
             </button>
 
             {/* Remove */}
@@ -774,6 +781,7 @@ function RegionOverlay({
                 fontSize: 12,
                 display: "flex",
                 alignItems: "center",
+                justifyContent: toolbarExpanded ? "flex-start" : "center",
                 gap: 8,
                 background: region.action === "REMOVE" ? "rgba(244,67,54,0.15)" : "transparent",
                 border: region.action === "REMOVE" ? "1px solid #f44336" : "1px solid transparent",
@@ -784,11 +792,11 @@ function RegionOverlay({
                 boxShadow: region.action === "REMOVE" ? "0 0 6px rgba(244,67,54,0.3)" : "none",
                 transition: "all 0.15s ease",
               }}
-              title={region.action === "REMOVE" ? "Undo remove" : "Remove"}
+              title={region.action === "REMOVE" ? t("regions.undoRemove") : t("regions.remove")}
               className="btn-danger btn-sm"
             >
-              <Trash2 size={16} />
-              {toolbarExpanded && "Remove"}
+              <Trash2 size={16} variant="light" />
+              {toolbarExpanded && t("regions.remove")}
             </button>
           </div>
         </div>,
@@ -800,7 +808,7 @@ function RegionOverlay({
         <div
           ref={dialogRef}
           role="dialog"
-          aria-label="Edit region"
+          aria-label={t("regions.editContent")}
           style={{
             position: "fixed",
             left: dialogPos.x,
@@ -841,7 +849,7 @@ function RegionOverlay({
             }}
           >
             <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
-              Edit Content
+              {t("regions.editContent")}
             </div>
             <button
               onClick={(e) => {
@@ -857,9 +865,9 @@ function RegionOverlay({
                 alignItems: "center",
                 color: "var(--text-secondary)",
               }}
-              title="Close"
+              title={t("common.close")}
             >
-              <X size={16} />
+              <X size={16} variant="light" />
             </button>
           </div>
 
@@ -882,8 +890,8 @@ function RegionOverlay({
                 justifyContent: "center",
               }}
             >
-              <Tag size={14} />
-              Label
+              <Tag size={14} variant="light" />
+              {t("regions.labelTab")}
             </button>
             <button
               onClick={() => setActiveTab("content")}
@@ -902,8 +910,8 @@ function RegionOverlay({
                 justifyContent: "center",
               }}
             >
-              <Edit3 size={14} />
-              Content
+              <Edit3 size={14} variant="light" />
+              {t("regions.contentTab")}
             </button>
           </div>
 
@@ -914,7 +922,7 @@ function RegionOverlay({
                 {/* Label selector */}
                 {!isEditingLabel ? (
                   <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>PII Type:</div>
+                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>{t("regions.piiType")}</div>
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
                         {region.pii_type}
@@ -922,16 +930,16 @@ function RegionOverlay({
                       <button
                         className="btn-ghost btn-sm"
                         onClick={() => setIsEditingLabel(true)}
-                        title="Change label"
+                        title={t("regions.change")}
                         style={{ padding: "2px 6px", fontSize: 11 }}
                       >
-                        Change
+                        {t("regions.change")}
                       </button>
                     </div>
                   </div>
                 ) : (
                   <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>Select PII Type:</div>
+                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>{t("regions.selectPIIType")}</div>
                     <select
                       autoFocus
                       value={region.pii_type}
@@ -963,7 +971,7 @@ function RegionOverlay({
 
                 {/* Confidence */}
                 <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 8 }}>
-                  Confidence: <span style={{ fontWeight: 600 }}>{Math.round(region.confidence * 100)}%</span>
+                  {t("regions.confidence")} <span style={{ fontWeight: 600 }}>{Math.round(region.confidence * 100)}%</span>
                 </div>
               </div>
             ) : (
@@ -971,7 +979,7 @@ function RegionOverlay({
                 {/* Content text - editable only for images */}
                 {!isEditingText ? (
                   <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>Detected Text:</div>
+                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>{t("regions.detectedText")}</div>
                     <div style={{ 
                       fontSize: 13, 
                       color: "var(--text-primary)", 
@@ -991,16 +999,16 @@ function RegionOverlay({
                           setEditedText(region.text);
                           setIsEditingText(true);
                         }}
-                        title="Edit detected text"
+                        title={t("regions.editText")}
                         style={{ padding: "6px 10px", fontSize: 12, marginTop: 8 }}
                       >
-                        Edit Text
+                        {t("regions.editText")}
                       </button>
                     )}
                   </div>
                 ) : (
                   <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>Edit Text:</div>
+                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>{t("regions.editTextLabel")}</div>
                     <textarea
                       autoFocus
                       value={editedText}
@@ -1030,7 +1038,7 @@ function RegionOverlay({
                         }}
                         style={{ padding: "6px 16px", fontSize: 12 }}
                       >
-                        Save
+                        {t("common.save")}
                       </button>
                       <button
                         className="btn-ghost btn-sm"
@@ -1040,7 +1048,7 @@ function RegionOverlay({
                         }}
                         style={{ padding: "6px 16px", fontSize: 12 }}
                       >
-                        Cancel
+                        {t("common.cancel")}
                       </button>
                     </div>
                   </div>

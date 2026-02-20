@@ -1,7 +1,8 @@
 /** Autodetect PII settings dropdown panel with Blacklist grid. */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X, Save, Trash2, Plus, Pin } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X, Save, Trash2, Plus, Pin } from "../icons";
 import { Z_TOP_DIALOG } from "../zIndex";
 import BlacklistGrid, { type BlacklistAction } from "./BlacklistGrid";
 import { createEmptyGrid } from "./blacklistUtils";
@@ -139,6 +140,7 @@ export default function AutodetectPanel({
   pageNavWidth = 0,
   regions = [],
 }: AutodetectPanelProps) {
+  const { t } = useTranslation();
   const savedFilterConfig = useRef(loadFilterConfig());
   const [fuzziness, setFuzziness] = useState(savedFilterConfig.current?.fuzziness ?? 0.55);
   const [scope, setScope] = useState<"page" | "all">("page");
@@ -463,9 +465,9 @@ export default function AutodetectPanel({
             }}
             onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "var(--text-primary)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-secondary)"; }}
-            title="Dock to toolbar"
+            title={t("detection.dockToToolbar")}
           >
-            <Pin size={14} strokeWidth={2.2} />
+            <Pin size={14} strokeWidth={2.2} variant="light" />
           </button>
         )}
         {/* Spacer + window controls */}
@@ -495,9 +497,9 @@ export default function AutodetectPanel({
             }}
             onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.1)"; e.currentTarget.style.color = "var(--text-primary)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-secondary)"; }}
-            title={isMaximized ? "Restore" : "Maximize"}
+            title={isMaximized ? t("detection.restore") : t("detection.maximize")}
           >
-            {isMaximized ? <Minimize2 size={14} strokeWidth={2.2} /> : <Maximize2 size={14} strokeWidth={2.2} />}
+            {isMaximized ? <Minimize2 size={14} strokeWidth={2.2} variant="light" /> : <Maximize2 size={14} strokeWidth={2.2} variant="light" />}
           </button>
           <button
             onClick={onClose}
@@ -516,15 +518,15 @@ export default function AutodetectPanel({
             }}
             onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(220,38,38,0.25)"; e.currentTarget.style.color = "#f87171"; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-secondary)"; }}
-            title="Close"
+            title={t("common.close")}
           >
-            <X size={14} strokeWidth={2.2} />
+            <X size={14} strokeWidth={2.2} variant="light" />
           </button>
         </div>
       </div>
 
       {/* Filter button + Sensitivity slider on same line */}
-      <div className="slider-row" style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+      <div className="slider-row" style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 20 }}>
         {/* Filter adjustment button — top-left */}
         <button
           onClick={() => {
@@ -549,15 +551,15 @@ export default function AutodetectPanel({
             transition: "all 0.15s ease",
             padding: 0,
           }}
-          title={showTabs ? "Hide detection settings" : "Show detection settings"}
+          title={showTabs ? t("detection.hideSettings") : t("detection.showSettings")}
         >
-          <SlidersHorizontal size={16}  />
+          <SlidersHorizontal size={16} variant="light" />
         </button>
 
         {/* Slider column */}
         <div style={{ flex: 1, minWidth: 0, marginRight: 12, marginLeft: 4 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--text-secondary)", marginBottom: 3 }}>
-            <span>Sensitivity</span>
+            <span>{t("detection.sensitivity")}</span>
             <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{fuzziness.toFixed(2)}</span>
           </div>
           <input
@@ -567,15 +569,15 @@ export default function AutodetectPanel({
             style={{ width: "100%", accentColor: "var(--accent-primary)" }}
           />
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-muted)", marginTop: 1 }}>
-            <span>More results</span>
-            <span>Fewer results</span>
+            <span>{t("detection.moreResults")}</span>
+            <span>{t("detection.fewerResults")}</span>
           </div>
         </div>
       </div>
 
       {/* Saved templates — selector (when templates exist) or inline save box (when empty) */}
       {templates.length > 0 ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 14px", marginTop: 6, position: "relative" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 14px", marginTop: 6, marginBottom: 12, position: "relative" }}>
           <select
             value={selectedTemplate}
             onChange={(e) => {
@@ -605,12 +607,12 @@ export default function AutodetectPanel({
               cursor: "pointer",
             }}
           >
-            <option value="" disabled>Load template…</option>
+            <option value="" disabled>{t("detection.loadTemplate")}</option>
             {templates.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
           </select>
           {selectedTemplate && (
             <button
-              title="Delete selected template"
+              title={t("detection.deleteTemplate")}
               onClick={() => {
                 const updated = templates.filter(t => t.name !== selectedTemplate);
                 saveTemplates(updated);
@@ -632,12 +634,12 @@ export default function AutodetectPanel({
               onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(220,38,38,0.15)"; e.currentTarget.style.color = "#f87171"; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-muted)"; }}
             >
-              <Trash2 size={13} />
+              <Trash2 size={13} variant="light" />
             </button>
           )}
           {/* Ellipsis (save-as) button */}
           <button
-            title="Save as template"
+            title={t("detection.saveAsTemplate")}
             onClick={() => setShowSaveMenu(v => !v)}
             style={{
               width: 28, height: 28, padding: 0,
@@ -655,7 +657,7 @@ export default function AutodetectPanel({
             onMouseEnter={(e) => { if (!showSaveMenu) e.currentTarget.style.background = "var(--bg-surface)"; }}
             onMouseLeave={(e) => { if (!showSaveMenu) e.currentTarget.style.background = "transparent"; }}
           >
-            <Plus size={14} />
+            <Plus size={14} variant="light" />
           </button>
           {/* Save-as dropdown menu */}
           {showSaveMenu && (
@@ -680,7 +682,7 @@ export default function AutodetectPanel({
               <input
                 autoFocus
                 type="text"
-                placeholder="Template name…"
+                placeholder={t("detection.templateNamePlaceholder")}
                 value={templateName}
                 onChange={(e) => setTemplateName(e.target.value)}
                 onKeyDown={(e) => {
@@ -721,7 +723,7 @@ export default function AutodetectPanel({
                   setTemplateName("");
                   setShowSaveMenu(false);
                 }}
-                title="Save current settings as template"
+                title={t("detection.saveTemplateTitle")}
                 style={{
                   height: 28,
                   padding: "0 10px",
@@ -738,16 +740,16 @@ export default function AutodetectPanel({
                   opacity: templateName.trim() ? 1 : 0.5,
                 }}
               >
-                <Save size={12} /> Save
+                <Save size={12} variant="light" /> {t("common.save")}
               </button>
             </div>
           )}
         </div>
       ) : showTabs ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 14px", marginTop: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 14px", marginTop: 6, marginBottom: 12 }}>
           <input
             type="text"
-            placeholder="Save as template…"
+            placeholder={t("detection.templateNamePlaceholder")}
             value={templateName}
             onChange={(e) => setTemplateName(e.target.value)}
             onKeyDown={(e) => {
@@ -801,7 +803,7 @@ export default function AutodetectPanel({
               setSelectedTemplate(name);
               setTemplateName("");
             }}
-            title="Save current settings as template"
+            title={t("detection.saveTemplateTitle")}
             style={{
               height: 28,
               padding: "0 10px",
@@ -818,20 +820,21 @@ export default function AutodetectPanel({
               opacity: templateName.trim() ? 1 : 0.5,
             }}
           >
-            <Save size={12} /> Save
+            <Save size={12} variant="light" /> {t("common.save")}
           </button>
         </div>
       ) : null}
 
       {/* Detection settings tabs (collapsible via gear) */}
-      {showTabs && (<>
+      {showTabs && (
+      <div style={{ padding: 6, margin: 12, background: "rgba(0,0,0,0.15)", borderRadius: 6 }}>
         {/* 4-tab bar: Patterns | Expressions | AI Recognition | Deep Analysis */}
-        <div style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-color)", flexShrink: 0, marginTop: 6, padding: "0 10px" }}>
+        <div style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-color)", flexShrink: 0, padding: "0 10px" }}>
           {([
-            { key: "patterns" as const, label: "Patterns", active: regexEnabled },
-            { key: "blacklist" as const, label: "Expressions", active: blCells.flat().some(c => c.trim()) },
-            { key: "ai" as const, label: "AI Recognition", active: nerEnabled },
-            { key: "deep" as const, label: "Deep Analysis", active: llmEnabled },
+            { key: "patterns" as const, label: t("detection.tabPatterns"), active: regexEnabled },
+            { key: "blacklist" as const, label: t("detection.tabExpressions"), active: blCells.flat().some(c => c.trim()) },
+            { key: "ai" as const, label: t("detection.tabAI"), active: nerEnabled },
+            { key: "deep" as const, label: t("detection.tabDeepAnalysis"), active: llmEnabled },
           ] as const).map(({ key, label, active }) => {
             const isSel = tab === key;
             return (
@@ -865,7 +868,7 @@ export default function AutodetectPanel({
           {/* Patterns tab (regex) */}
           {tab === "patterns" && (<>
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
-              Select which data patterns to look for
+              {t("detection.selectPatterns")}
             </div>
             {/* Select all header checkbox */}
             {(() => {
@@ -888,7 +891,7 @@ export default function AutodetectPanel({
                     }}
                     style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
                   />
-                  Select all
+                  {t("common.selectAll")}
                 </label>
               );
             })()}
@@ -929,12 +932,12 @@ export default function AutodetectPanel({
                   borderTop: "1px solid var(--border-color)",
                   display: "flex", alignItems: "center", gap: 6,
                 }}>
-                  🎯 Custom Patterns
+                  🎯 {t("detection.customPatterns")}
                   <span style={{
                     fontSize: 10, color: "var(--text-muted)", fontWeight: 400,
                     marginLeft: "auto",
                   }}>
-                    from Settings
+                    {t("detection.fromSettings")}
                   </span>
                 </div>
                 {customPatterns.map(cp => (
@@ -968,7 +971,7 @@ export default function AutodetectPanel({
           {tab === "blacklist" && (
             <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
               <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 6 }}>
-                Enter words or phrases to find and flag in the document. Paste from Excel or CSV supported.
+                {t("detection.expressionsHint")}
               </div>
               <BlacklistGrid
                 cells={blCells}
@@ -985,13 +988,13 @@ export default function AutodetectPanel({
           {/* AI Recognition tab (NER) */}
           {tab === "ai" && (<>
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
-              AI-powered recognition of names and entities
+              {t("detection.aiTitle")}
             </div>
             {([
-              { key: "PERSON", icon: "👤", label: "People's names" },
-              { key: "ORG", icon: "🏢", label: "Organizations & companies" },
-              { key: "LOCATION", icon: "📍", label: "Cities, countries & places" },
-              { key: "CUSTOM", icon: "🔎", label: "Catch all (IDs, codes, misc. entities)" },
+              { key: "PERSON", icon: "👤", label: t("detection.aiPeople") },
+              { key: "ORG", icon: "🏢", label: t("detection.aiOrgs") },
+              { key: "LOCATION", icon: "📍", label: t("detection.aiPlaces") },
+              { key: "CUSTOM", icon: "🔎", label: t("detection.aiCatchAll") },
             ] as const).map(({ key, icon, label }) => (
               <label key={key} style={{
                 display: "flex", alignItems: "center", gap: 8,
@@ -1010,17 +1013,17 @@ export default function AutodetectPanel({
             ))}
             <div style={{
               marginTop: 4, padding: "8px 10px",
-              background: "rgba(255,255,255,0.04)", borderRadius: 6,
+              borderRadius: 6,
               fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5,
             }}>
-              Uses machine learning to find names, organizations and locations even when they don't follow a predictable format.
+              {t("detection.aiHint")}
             </div>
           </>)}
 
           {/* Deep Analysis tab (LLM) */}
           {tab === "deep" && (<>
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>
-              Context-aware analysis using a language model
+              {t("detection.deepTitle")}
             </div>
             {(() => {
               const llmReady = llmStatus?.loaded === true || (llmStatus?.provider === "remote" && !!llmStatus?.remote_api_url);
@@ -1039,7 +1042,7 @@ export default function AutodetectPanel({
                     style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
                   />
                   <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>🧠</span>
-                  Enable deep analysis
+                  {t("detection.deepEnable")}
                 </label>
                 {!llmReady && (
                   <div style={{
@@ -1047,7 +1050,7 @@ export default function AutodetectPanel({
                     background: "rgba(255,180,0,0.08)", borderRadius: 6, border: "1px solid rgba(255,180,0,0.15)",
                     fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5,
                   }}>
-                    No LLM engine configured. Go to <strong style={{ color: "var(--text-secondary)" }}>Settings → LLM Engine</strong> to load a local model or connect a remote API.
+                    {t("detection.deepNoLLM")}
                   </div>
                 )}
                 <div style={{
@@ -1055,14 +1058,14 @@ export default function AutodetectPanel({
                   background: "rgba(255,255,255,0.04)", borderRadius: 6,
                   fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5,
                 }}>
-                  Reads the full text to understand context and catch PII that patterns and AI names might miss. <strong style={{ color: "var(--text-secondary)" }}>Slowest method</strong> — best used after reviewing faster layers.
+                  {t("detection.deepHint")}
                 </div>
               </>);
             })()}
           </>)}
 
         </div>
-      </>)}
+      </div>)}
 
       {/* Bottom toolbar — scope radio left, detect right */}
       <div style={{
@@ -1078,8 +1081,8 @@ export default function AutodetectPanel({
         {/* Scope radio group — left */}
         <div style={{ display: "flex", gap: 10 }}>
           {([
-            { key: "page" as const, label: `Page ${activePage}` },
-            { key: "all" as const, label: "All pages" },
+            { key: "page" as const, label: t("detection.scopePage", { n: activePage }) },
+            { key: "all" as const, label: t("detection.scopeAllPages") },
           ]).map(({ key, label }) => (
             <label
               key={key}
@@ -1114,8 +1117,8 @@ export default function AutodetectPanel({
           disabled={isProcessing || (!regexEnabled && !nerEnabled && !llmEnabled && !blCells.flat().some(c => c.trim()))}
           style={{ whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6, marginRight: 4 }}
         >
-          <ScanSearch size={14} />
-          {isProcessing ? "Detecting…" : "Detect"}
+          <ScanSearch size={14} variant="light" />
+                    {isProcessing ? t("detection.detecting") : t("common.detect")}
         </button>
       </div>
 
@@ -1135,7 +1138,7 @@ export default function AutodetectPanel({
             justifyContent: "center",
             userSelect: "none",
           }}
-          title="Drag to resize"
+          title={t("detection.dragToResize")}
         >
           <svg width="14" height="14" viewBox="0 0 10 10" style={{ opacity: 0.85 }}>
             <line x1="9" y1="1" x2="1" y2="9" stroke="var(--text-muted)" strokeWidth="1.2" />

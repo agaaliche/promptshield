@@ -1,6 +1,7 @@
 /** Settings panel — tabbed layout: Detection, AI Engine, General. */
 
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useVaultStore, useDetectionStore, useConnectionStore } from "../store";
 import {
   getVaultStatus,
@@ -18,17 +19,12 @@ import LLMEngineSection from "./settings/LLMEngineSection";
 import AccountSection from "./settings/AccountSection";
 import UpdatesSection from "./settings/UpdatesSection";
 
-const TABS = [
-  { id: "detection", label: "Detection", icon: "🔍" },
-  { id: "ai",        label: "AI Engine", icon: "🧠" },
-  { id: "vault",     label: "Vault",     icon: "🔒" },
-  { id: "updates",   label: "Updates",   icon: "🚀" },
-  { id: "general",   label: "Account",   icon: "⚙️" },
-] as const;
+const TAB_IDS = ["detection", "ai", "vault", "updates", "general"] as const;
 
-type TabId = (typeof TABS)[number]["id"];
+type TabId = (typeof TAB_IDS)[number];
 
 export default function SettingsView() {
+  const { t } = useTranslation();
   const { vaultUnlocked, setVaultUnlocked } = useVaultStore();
   const { setLLMStatus, setDetectionSettings } = useDetectionStore();
   const { backendReady } = useConnectionStore();
@@ -71,7 +67,7 @@ export default function SettingsView() {
 
   return (
     <div style={styles.container}>
-      <h2 style={styles.title}>Settings</h2>
+      <h2 style={styles.title}>{t("settingsView.title")}</h2>
 
       {/* ── Tab bar ── */}
       <div
@@ -82,12 +78,20 @@ export default function SettingsView() {
           borderBottom: "1px solid var(--border-color)",
         }}
       >
-        {TABS.map((tab) => {
-          const active = activeTab === tab.id;
+        {(["detection", "ai", "vault", "updates", "general"] as const).map((id) => {
+          const active = activeTab === id;
+          const labels: Record<TabId, { icon: string; label: string }> = {
+            detection: { icon: "🔍", label: t("settingsView.tabDetection") },
+            ai:        { icon: "🧠", label: t("settingsView.tabAIEngine") },
+            vault:     { icon: "🔒", label: t("settingsView.tabVault") },
+            updates:   { icon: "🚀", label: t("settingsView.tabUpdates") },
+            general:   { icon: "⚙️", label: t("settingsView.tabAccount") },
+          };
+          const tab = labels[id];
           return (
             <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              key={id}
+              onClick={() => setActiveTab(id)}
               style={{
                 display: "flex",
                 alignItems: "center",

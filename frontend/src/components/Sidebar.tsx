@@ -2,10 +2,11 @@
 
 import { useRef, useCallback, useEffect, useState, useMemo } from "react";
 import {
-  FileSearch,
+  FileShield,
   ArrowRightLeft,
   Settings,
   Shield,
+  ShieldSolid,
   FileText,
   Trash2,
   ChevronDown,
@@ -15,10 +16,11 @@ import {
   ArrowUpDown,
   X,
   AlertTriangle,
-} from "lucide-react";
+} from "../icons";
 import { useShallow } from "zustand/react/shallow";
 import { useDocumentStore, useRegionStore, useUIStore, useConnectionStore, useSidebarStore, useUploadStore, useAppStore } from "../store";
 import { deleteDocument } from "../api";
+import { useTranslation } from "react-i18next";
 import { useDocumentUpload } from "../hooks/useDocumentUpload";
 import UserMenu from "./UserMenu";
 
@@ -38,6 +40,7 @@ export default function Sidebar() {
   const { uploadQueue, dismissingErrorUploads } = useUploadStore();
   const { showUploadDialog, setShowUploadDialog } = useAppStore(useShallow((s) => ({ showUploadDialog: s.showUploadDialog, setShowUploadDialog: s.setShowUploadDialog })));
   const { backendReady } = useConnectionStore();
+  const { t } = useTranslation();
 
   const isDragging = useRef(false);
   const startX = useRef(0);
@@ -186,20 +189,20 @@ export default function Sidebar() {
   };
 
   const navItems: Array<{ id: View; label: string; icon: React.ReactNode }> = [
-    { id: "detokenize", label: "Token Swap", icon: <ArrowRightLeft size={18} /> },
-    { id: "settings", label: "Settings", icon: <Settings size={18} /> },
+    { id: "detokenize", label: t("sidebar.tokenSwap"), icon: <ArrowRightLeft size={18} /> },
+    { id: "settings", label: t("sidebar.settings"), icon: <Settings size={18} /> },
   ];
 
   return (
-    <div style={{ ...sidebarStyles.sidebar, width: leftSidebarWidth }}>
+    <div style={{ ...sidebarStyles.sidebar, width: leftSidebarWidth }} role="navigation" aria-label={t("sidebar.ariaLabel")}>
       {/* Logo */}
       <div style={sidebarStyles.logo}>
         <Shield size={22} style={{ color: "var(--accent-primary)" }} />
-        <span style={sidebarStyles.logoText}>prompt<span style={{ color: 'var(--accent-primary)', fontWeight: 700 }}>Shield</span></span>
+        <span style={sidebarStyles.logoText}>prompt<span style={{ color: 'var(--accent-primary)', fontWeight: 700 }}>{t("common.shield")}</span></span>
       </div>
 
       {/* Nav items */}
-      <nav style={sidebarStyles.nav}>
+      <nav style={sidebarStyles.nav} aria-label={t("sidebar.mainNavigation")}>
         {/* Protect Files — accordion wrapper */}
         <div style={{
           background: (currentView === "viewer" || currentView === "upload") ? "var(--bg-tertiary)" : "transparent",
@@ -222,8 +225,8 @@ export default function Sidebar() {
               }
             }}
           >
-            <FileSearch size={18} />
-            <span style={{ flex: 1 }}>Protect Files</span>
+            <FileShield size={18} />
+            <span style={{ flex: 1 }}>{t("sidebar.protectFiles")}</span>
             {(documents.length > 0 || uploadQueue.length > 0) && (protectExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}
           </button>
 
@@ -263,11 +266,11 @@ export default function Sidebar() {
                         {item.name}
                       </span>
                       <span style={{ fontSize: 9, color: "var(--text-muted)", flexShrink: 0 }}>
-                        {item.status === "queued" ? "Queued"
-                          : item.status === "uploading" && item.ocrPhase === "extracting" ? "Extracting"
-                          : item.status === "uploading" && item.ocrPhase === "ocr" ? "OCR"
-                          : item.status === "uploading" ? "Uploading"
-                          : item.status === "done" ? "Done" : "Error"}
+                        {item.status === "queued" ? t("sidebar.uploadStatus.queued")
+                          : item.status === "uploading" && item.ocrPhase === "extracting" ? t("sidebar.uploadStatus.extracting")
+                          : item.status === "uploading" && item.ocrPhase === "ocr" ? t("sidebar.uploadStatus.ocr")
+                          : item.status === "uploading" ? t("sidebar.uploadStatus.uploading")
+                          : item.status === "done" ? t("sidebar.uploadStatus.done") : t("sidebar.uploadStatus.error")}
                       </span>
                     </div>
                     {/* OCR progress detail line */}
@@ -297,7 +300,7 @@ export default function Sidebar() {
 
                 {recentDocs.length === 0 && uploadQueue.length === 0 ? (
                   <div style={{ fontSize: 11, color: "var(--text-muted)", padding: "10px 8px", textAlign: "center" }}>
-                    No files yet
+                    {t("sidebar.noFilesYet")}
                   </div>
                 ) : (
                   recentDocs.map((doc) => (
@@ -316,10 +319,10 @@ export default function Sidebar() {
                           const hasPending = storeRegions.some((r) => r.action === "PENDING");
                           const hasResolved = storeRegions.some((r) => r.action === "TOKENIZE" || r.action === "REMOVE");
                           if (!hasPending && hasResolved) {
-                            return <Shield size={12} fill="#4caf50" style={{ flexShrink: 0, color: "#4caf50" }} />;
+                            return <ShieldSolid size={12} fill="#4caf50" style={{ flexShrink: 0, color: "#4caf50" }} />;
                           }
                         } else if (doc.is_protected) {
-                          return <Shield size={12} fill="#4caf50" style={{ flexShrink: 0, color: "#4caf50" }} />;
+                          return <ShieldSolid size={12} fill="#4caf50" style={{ flexShrink: 0, color: "#4caf50" }} />;
                         }
                         return <FileText size={12} style={{ flexShrink: 0 }} />;
                       })()}
@@ -382,9 +385,9 @@ export default function Sidebar() {
                   fontSize: 11, padding: "5px 6px", display: "flex", alignItems: "center", gap: 4, border: "1px solid transparent",
                 }}
                 onClick={() => setShowFilesDialog(true)}
-                title="Manage all files"
+                title={t("sidebar.manageAllFiles")}
               >
-                <FolderOpen size={12} /> Manage Files
+                <FolderOpen size={12} /> {t("sidebar.manageFiles")}
               </button>
             </div>
           </div>
@@ -395,6 +398,8 @@ export default function Sidebar() {
         {navItems.map((item) => (
           <button
             key={item.id}
+            aria-label={item.label}
+            aria-current={currentView === item.id ? "page" : undefined}
             style={{
               ...sidebarStyles.navItem,
               ...(currentView === item.id ? sidebarStyles.navItemActive : {}),
@@ -413,10 +418,10 @@ export default function Sidebar() {
       </div>
 
       {/* Connection status */}
-      <div style={sidebarStyles.statusArea}>
+      <div style={sidebarStyles.statusArea} role="status" aria-live="polite">
         <div style={sidebarStyles.statusDot(backendReady)} />
         <span style={sidebarStyles.statusText}>
-          {backendReady ? "Local database connected" : "Connecting..."}
+          {backendReady ? t("sidebar.statusConnected") : t("sidebar.statusConnecting")}
         </span>
       </div>
 
@@ -441,7 +446,7 @@ export default function Sidebar() {
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Document files"
+          aria-label={t("sidebar.documentFiles")}
           style={{
             position: "fixed",
             inset: 0,
@@ -471,17 +476,17 @@ export default function Sidebar() {
             {/* Dialog header */}
             <div style={{ display: "flex", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid var(--border-color)", gap: 10 }}>
               <FolderOpen size={18} style={{ color: "var(--accent-primary)" }} />
-              <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>All Documents</span>
+              <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>{t("sidebar.allDocuments")}</span>
               {documents.length > 0 && (
                 <button
                   className="btn-ghost btn-sm"
                   onClick={() => setConfirmDeleteAll(true)}
                   style={{ padding: "4px 8px", fontSize: 11, display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)" }}
-                  title="Delete all documents"
+                  title={t("sidebar.deleteAllTitle")}
                   onMouseEnter={(e) => { e.currentTarget.style.color = "#f44336"; }}
                   onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
                 >
-                  <Trash2 size={13} /> Delete All
+                  <Trash2 size={13} /> {t("sidebar.deleteAll")}
                 </button>
               )}
               <button
@@ -499,7 +504,7 @@ export default function Sidebar() {
                 <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
                 <input
                   type="text"
-                  placeholder="Search files..."
+                  placeholder={t("sidebar.searchFiles")}
                   value={filesSearch}
                   onChange={(e) => setFilesSearch(e.target.value)}
                   style={{
@@ -537,20 +542,20 @@ export default function Sidebar() {
                 color: "#f44336",
               }}>
                 <AlertTriangle size={14} style={{ flexShrink: 0 }} />
-                <span style={{ flex: 1 }}>Delete all {documents.length} documents? This cannot be undone.</span>
+                <span style={{ flex: 1 }}>{t("sidebar.deleteConfirm", { count: documents.length })}</span>
                 <button
                   className="btn-ghost btn-sm"
                   onClick={handleDeleteAll}
                   style={{ padding: "4px 10px", fontSize: 11, color: "#f44336", fontWeight: 600, border: "1px solid rgba(244, 67, 54, 0.4)", borderRadius: 4 }}
                 >
-                  Confirm
+                  {t("common.confirm")}
                 </button>
                 <button
                   className="btn-ghost btn-sm"
                   onClick={() => setConfirmDeleteAll(false)}
                   style={{ padding: "4px 8px", fontSize: 11 }}
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </button>
               </div>
             )}
@@ -561,19 +566,19 @@ export default function Sidebar() {
                 style={{ flex: 1, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}
                 onClick={() => toggleSort("name")}
               >
-                Name {sortField === "name" && <ArrowUpDown size={10} />}
+                {t("common.name")} {sortField === "name" && <ArrowUpDown size={10} />}
               </span>
               <span
                 style={{ width: 50, textAlign: "right", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}
                 onClick={() => toggleSort("pages")}
               >
-                Pages {sortField === "pages" && <ArrowUpDown size={10} />}
+                {t("common.pages")} {sortField === "pages" && <ArrowUpDown size={10} />}
               </span>
               <span
                 style={{ width: 80, textAlign: "right", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}
                 onClick={() => toggleSort("date")}
               >
-                Date {sortField === "date" && <ArrowUpDown size={10} />}
+                {t("common.date")} {sortField === "date" && <ArrowUpDown size={10} />}
               </span>
               <span style={{ width: 28 }} />
             </div>
@@ -582,7 +587,7 @@ export default function Sidebar() {
             <div style={{ flex: 1, overflowY: "auto", padding: "4px 8px" }}>
               {sortedDocs.length === 0 ? (
                 <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)", fontSize: 13 }}>
-                  {documents.length === 0 ? "No documents uploaded yet" : "No matches"}
+                  {documents.length === 0 ? t("sidebar.noDocumentsUploaded") : t("common.noMatches")}
                 </div>
               ) : (
                 sortedDocs.map((doc) => (
@@ -631,7 +636,7 @@ export default function Sidebar() {
                         cursor: "pointer",
                       }}
                       onClick={(e) => handleDelete(e, doc.doc_id)}
-                      title="Delete"
+                      title={t("common.delete")}
                       onMouseEnter={(e) => { e.currentTarget.style.color = "#f44336"; }}
                       onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
                     >

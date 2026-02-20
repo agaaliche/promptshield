@@ -173,6 +173,10 @@ async def detect_pii(doc_id: str) -> dict[str, Any]:
         # Partial ORG propagation: flag 2+-word sub-phrases of known ORG names
         doc.regions = propagate_partial_org_names(doc.regions, doc.pages)
 
+        # Type unification: ensure same text → single type across the document
+        from core.detection.propagation import unify_types_by_text
+        doc.regions = unify_types_by_text(doc.regions)
+
         # Final sweep: drop any ORG region with digit-only or very short text
         # Exception: numbered companies with legal suffixes (e.g., "9169270 Canada Inc.")
         from models.schemas import PIIType as _PIIType
@@ -624,6 +628,10 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
 
         doc.regions = all_regions
 
+        # Type unification: ensure same text → single type across the document
+        from core.detection.propagation import unify_types_by_text as _unify_r
+        doc.regions = _unify_r(doc.regions)
+
         # Final sweep: drop any ORG region with digit-only or very short text
         # Exception: numbered companies with legal suffixes (e.g., "9169270 Canada Inc.")
         from models.schemas import PIIType as _PIIType
@@ -775,6 +783,11 @@ async def reset_detection(doc_id: str) -> dict[str, Any]:
         all_regions = await asyncio.to_thread(_run)
         doc.regions = propagate_regions_across_pages(all_regions, doc.pages)
         doc.regions = propagate_partial_org_names(doc.regions, doc.pages)
+
+        # Type unification: ensure same text → single type across the document
+        from core.detection.propagation import unify_types_by_text as _unify_reset
+        doc.regions = _unify_reset(doc.regions)
+
         doc.status = DocumentStatus.REVIEWING
         save_doc(doc)
 

@@ -10,7 +10,8 @@ import {
   X,
   Key,
   ReplaceAll,
-} from "lucide-react";
+} from "../icons";
+import { useTranslation } from "react-i18next";
 import useDraggableToolbar from "../hooks/useDraggableToolbar";
 import {
   batchDeleteRegions,
@@ -81,6 +82,7 @@ export default function MultiSelectToolbar({
   clearSelection: _clearSelection,
   setStatusMessage: _setStatusMessage,
 }: MultiSelectToolbarProps) {
+  const { t } = useTranslation();
   if (selectedRegionIds.length <= 1) return null;
 
   return (
@@ -143,9 +145,9 @@ export default function MultiSelectToolbar({
               alignItems: "center",
               color: "var(--text-secondary)",
             }}
-            title={expanded ? "Collapse" : "Expand"}
+            title={expanded ? t("tools.collapse") : t("tools.expand")}
           >
-            {expanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+            {expanded ? <ChevronLeft size={14} variant="light" /> : <ChevronRight size={14} variant="light" />}
           </button>
         </div>
 
@@ -168,6 +170,7 @@ export default function MultiSelectToolbar({
               fontSize: 12,
               display: "flex",
               alignItems: "center",
+              justifyContent: expanded ? "flex-start" : "center",
               gap: 8,
               background: "transparent",
               border: "1px solid transparent",
@@ -176,11 +179,11 @@ export default function MultiSelectToolbar({
               color: "var(--text-primary)",
               whiteSpace: "nowrap",
             }}
-            title="Replace all matching text"
+            title={t("multiSelect.replaceAllTooltip")}
             className="btn-ghost btn-sm"
           >
-            <ReplaceAll size={16} />
-            {expanded && "Replace all"}
+            <ReplaceAll size={16} variant="light" />
+            {expanded && t("multiSelect.replaceAll")}
           </button>
 
           {/* Detect */}
@@ -197,6 +200,7 @@ export default function MultiSelectToolbar({
               fontSize: 12,
               display: "flex",
               alignItems: "center",
+              justifyContent: expanded ? "flex-start" : "center",
               gap: 8,
               background: "transparent",
               border: "1px solid transparent",
@@ -205,11 +209,11 @@ export default function MultiSelectToolbar({
               color: "var(--text-primary)",
               whiteSpace: "nowrap",
             }}
-            title="Re-detect content"
+            title={t("multiSelect.detectTooltip")}
             className="btn-ghost btn-sm"
           >
-            <Search size={16} />
-            {expanded && "Detect"}
+            <Search size={16} variant="light" />
+            {expanded && t("multiSelect.detect")}
           </button>
 
           {/* Edit */}
@@ -224,6 +228,7 @@ export default function MultiSelectToolbar({
               fontSize: 12,
               display: "flex",
               alignItems: "center",
+              justifyContent: expanded ? "flex-start" : "center",
               gap: 8,
               background: showEditDialog ? "var(--bg-primary)" : "transparent",
               border: "1px solid transparent",
@@ -233,11 +238,11 @@ export default function MultiSelectToolbar({
               fontWeight: showEditDialog ? 600 : 400,
               whiteSpace: "nowrap",
             }}
-            title="Edit label"
+            title={t("multiSelect.editTooltip")}
             className="btn-ghost btn-sm"
           >
-            <Edit3 size={16} />
-            {expanded && "Edit"}
+            <Edit3 size={16} variant="light" />
+            {expanded && t("multiSelect.edit")}
           </button>
 
           {/* Clear */}
@@ -256,6 +261,7 @@ export default function MultiSelectToolbar({
               fontSize: 12,
               display: "flex",
               alignItems: "center",
+              justifyContent: expanded ? "flex-start" : "center",
               gap: 8,
               background: "transparent",
               border: "1px solid transparent",
@@ -264,11 +270,11 @@ export default function MultiSelectToolbar({
               color: "var(--text-primary)",
               whiteSpace: "nowrap",
             }}
-            title="Clear — remove from document"
+            title={t("multiSelect.clearTooltip")}
             className="btn-ghost btn-sm"
           >
-            <X size={16} />
-            {expanded && "Clear"}
+            <X size={16} variant="light" />
+            {expanded && t("multiSelect.clear")}
           </button>
 
           {/* Separator */}
@@ -291,6 +297,7 @@ export default function MultiSelectToolbar({
               fontSize: 12,
               display: "flex",
               alignItems: "center",
+              justifyContent: expanded ? "flex-start" : "center",
               gap: 8,
               background: "transparent",
               border: "1px solid transparent",
@@ -299,11 +306,11 @@ export default function MultiSelectToolbar({
               color: "var(--tokenize)",
               whiteSpace: "nowrap",
             }}
-            title="Tokenize"
+            title={t("regions.tokenize")}
             className="btn-tokenize btn-sm"
           >
-            <Key size={16} />
-            {expanded && "Tokenize"}
+            <Key size={16} variant="light" />
+            {expanded && t("regions.tokenize")}
           </button>
 
           {/* Remove */}
@@ -323,6 +330,7 @@ export default function MultiSelectToolbar({
               fontSize: 12,
               display: "flex",
               alignItems: "center",
+              justifyContent: expanded ? "flex-start" : "center",
               gap: 8,
               background: "transparent",
               border: "1px solid transparent",
@@ -331,11 +339,11 @@ export default function MultiSelectToolbar({
               color: "var(--danger)",
               whiteSpace: "nowrap",
             }}
-            title="Remove"
+            title={t("regions.remove")}
             className="btn-danger btn-sm"
           >
-            <Trash2 size={16} />
-            {expanded && "Remove"}
+            <Trash2 size={16} variant="light" />
+            {expanded && t("regions.remove")}
           </button>
         </div>
       </div>
@@ -362,7 +370,7 @@ export default function MultiSelectToolbar({
           onClick={(e) => e.stopPropagation()}
         >
           <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>
-            Change Label for {selectedRegionIds.length} Regions
+            {t("multiSelect.changeLabelTitle", { count: selectedRegionIds.length })}
           </div>
           <select
             autoFocus
@@ -397,14 +405,14 @@ export default function MultiSelectToolbar({
               }}
               style={{ flex: 1 }}
             >
-              Apply
+              {t("common.apply")}
             </button>
             <button
               className="btn-ghost btn-sm"
               onClick={() => setShowEditDialog(false)}
               style={{ flex: 1 }}
             >
-              Cancel
+              {t("common.cancel")}
             </button>
           </div>
         </div>

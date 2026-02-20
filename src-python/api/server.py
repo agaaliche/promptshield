@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -36,6 +37,28 @@ logger = logging.getLogger(__name__)
 
 # L1: Single source of truth for the app version
 _VERSION = "0.1.0"
+
+# ── Sentry crash reporting (optional) ────────────────────────────────────
+# Set SENTRY_DSN env var to enable. When unset, Sentry is a no-op.
+_SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            release=f"promptshield-sidecar@{_VERSION}",
+            environment=os.environ.get("SENTRY_ENVIRONMENT", "production"),
+            traces_sample_rate=0.1,
+            send_default_pii=False,
+            # Integrate with FastAPI automatically
+            integrations=[],
+            auto_enabling_integrations=True,
+        )
+        logger.info("Sentry crash reporting initialized")
+    except ImportError:
+        logger.warning("sentry-sdk not installed — crash reporting disabled")
+    except Exception as e:
+        logger.warning(f"Failed to initialize Sentry: {e}")
 
 
 # ---------------------------------------------------------------------------

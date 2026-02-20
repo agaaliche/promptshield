@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # Admin
     admin_emails: str = ""  # comma-separated list of admin emails
 
+    # Logging
+    log_format: str = "text"  # "json" for structured Cloud Run / GCP logs
+    log_level: str = "INFO"   # DEBUG, INFO, WARNING, ERROR
+
     # Dev mode
     dev_mode: bool = False
     allow_default_secret: bool = False

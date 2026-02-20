@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Loader2,
   CheckCircle2,
@@ -19,7 +20,7 @@ import {
   Check,
   Scissors,
   Package,
-} from "lucide-react";
+} from "../icons";
 import { getExportProgress, shellOpenFile, shellRevealFile, splitExportFile, getSplitProgress } from "../api";
 import type { ExportProgressInfo, ExportDocStatus, ExportSaveResult, SplitFileResult, SplitProgressInfo } from "../api";
 import { Z_TOP_DIALOG } from "../zIndex";
@@ -51,6 +52,7 @@ export default function ExportProgressDialog({
   exportResult,
   onClose,
 }: Props) {
+  const { t } = useTranslation();
   const [progress, setProgress] = useState<ExportProgressInfo | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef(Date.now());
@@ -150,7 +152,7 @@ export default function ExportProgressDialog({
   const isComplete = !!exportResult;
   const isError = !exportResult && progress?.status === "error";
   const isSaving = progress?.phase === "saving";
-  const message = progress?.message || "Preparing export…";
+  const message = progress?.message || t("exportProgress.preparing");
   const docStatuses: ExportDocStatus[] = progress?.doc_statuses || [];
 
   const pct =
@@ -197,7 +199,7 @@ export default function ExportProgressDialog({
       setActionError("");
       await shellOpenFile(savedPath);
     } catch (e: unknown) {
-      setActionError(`Could not open file: ${e instanceof Error ? e.message : String(e)}`);
+      setActionError(t("exportProgress.couldNotOpenFile", { error: e instanceof Error ? e.message : String(e) }));
     }
   };
 
@@ -206,14 +208,14 @@ export default function ExportProgressDialog({
       setActionError("");
       await shellRevealFile(splitResult?.saved_path ?? savedPath);
     } catch (e: unknown) {
-      setActionError(`Could not open folder: ${e instanceof Error ? e.message : String(e)}`);
+      setActionError(t("exportProgress.couldNotOpenFolder", { error: e instanceof Error ? e.message : String(e) }));
     }
   };
 
   const handleSplit = async () => {
     const mb = parseFloat(maxSizeMb);
     if (isNaN(mb) || mb <= 0) {
-      setSplitError("Enter a valid size in MB");
+      setSplitError(t("exportProgress.enterValidSize"));
       return;
     }
     const sid = `split_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -243,7 +245,7 @@ export default function ExportProgressDialog({
         await shellOpenFile(splitResult.saved_path);
       }
     } catch (e: unknown) {
-      setActionError(`Could not open: ${e instanceof Error ? e.message : String(e)}`);
+      setActionError(t("exportProgress.couldNotOpen", { error: e instanceof Error ? e.message : String(e) }));
     }
   };
 
@@ -251,7 +253,7 @@ export default function ExportProgressDialog({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Export progress"
+      aria-label={t("exportProgress.ariaLabel", "Export progress")}
       style={{
         position: "fixed",
         inset: 0,
@@ -301,12 +303,12 @@ export default function ExportProgressDialog({
           )}
           <span style={{ fontWeight: 600, fontSize: 14, color: "var(--text-primary)", flex: 1 }}>
             {isComplete
-              ? "Export Complete"
+              ? t("exportProgress.titleComplete")
               : isError
-                ? "Export Failed"
+                ? t("exportProgress.titleFailed")
                 : isSaving
-                  ? "Saving to Downloads"
-                  : "Exporting Documents"}
+                  ? t("exportProgress.titleSaving")
+                  : t("exportProgress.titleExporting")}
           </span>
           {(isComplete || isError) && (
             <button
@@ -453,12 +455,12 @@ export default function ExportProgressDialog({
                         }}
                       >
                         {ds.status === "done"
-                          ? "Done"
+                          ? t("exportProgress.statusDone")
                           : ds.status === "running"
-                            ? "Anonymizing…"
+                            ? t("exportProgress.statusAnonymizing")
                             : ds.status === "error"
-                              ? "Failed"
-                              : "Pending"}
+                              ? t("exportProgress.statusFailed")
+                              : t("common.pending")}
                       </span>
                     </div>
                   ))}
@@ -477,8 +479,8 @@ export default function ExportProgressDialog({
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <Download size={12} />
                   <span>
-                    {docsDone}/{docsTotal} file{docsTotal !== 1 ? "s" : ""}
-                    {docsFailed > 0 ? ` (${docsFailed} failed)` : ""}
+                    {t("exportProgress.nOfFiles", { done: docsDone, total: docsTotal })}
+                    {docsFailed > 0 ? ` ${t("exportProgress.nFailed", { count: docsFailed })}` : ""}
                   </span>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -494,8 +496,8 @@ export default function ExportProgressDialog({
             <>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
                 {splitResult
-                  ? `${splitResult.part_count} part${splitResult.part_count !== 1 ? "s" : ""} (${formatBytes(splitResult.total_size)})`
-                  : `${fileCount} file${fileCount !== 1 ? "s" : ""} exported (${formatBytes(totalSize)}) in ${formatElapsed(elapsed)}`}
+                  ? t("exportProgress.nParts", { count: splitResult.part_count, size: formatBytes(splitResult.total_size) })
+                  : t("exportProgress.nFilesExported", { count: fileCount, size: formatBytes(totalSize), time: formatElapsed(elapsed) })}
               </div>
 
               {/* File path display */}
@@ -543,7 +545,7 @@ export default function ExportProgressDialog({
                   className="btn-ghost"
                   onClick={handleCopyPath}
                   style={{ padding: 4, lineHeight: 0, flexShrink: 0 }}
-                  title="Copy path"
+                  title={t("exportProgress.copyPath")}
                 >
                   {copied ? (
                     <Check size={14} style={{ color: "#4caf50" }} />
@@ -574,7 +576,7 @@ export default function ExportProgressDialog({
                   >
                     <Package size={13} style={{ color: "#4caf50" }} />
                     <span style={{ fontSize: 12, fontWeight: 500, color: "#4caf50" }}>
-                      Split into {splitResult.part_count} parts
+                      {t("exportProgress.splitIntoParts", { count: splitResult.part_count })}
                     </span>
                   </div>
                   <div style={{ maxHeight: 120, overflowY: "auto" }}>
@@ -638,7 +640,7 @@ export default function ExportProgressDialog({
                       size={12}
                       style={{ verticalAlign: "middle", marginRight: 4 }}
                     />
-                    Split file for AI ingestion (parts are named sequentially)
+                    {t("exportProgress.splitHint")}
                   </div>
 
                   {/* Controls row */}
@@ -650,7 +652,7 @@ export default function ExportProgressDialog({
                         whiteSpace: "nowrap",
                       }}
                     >
-                      Max size
+                      {t("exportProgress.maxSize")}
                     </label>
                     <input
                       type="number"
@@ -670,7 +672,7 @@ export default function ExportProgressDialog({
                         textAlign: "right",
                       }}
                     />
-                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>MB</span>
+                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t("exportProgress.mb")}</span>
                     <button
                       className="btn-primary btn-sm"
                       onClick={handleSplit}
@@ -690,12 +692,12 @@ export default function ExportProgressDialog({
                             size={13}
                             style={{ animation: "spin 1s linear infinite" }}
                           />
-                          Splitting…
+                          {t("exportProgress.splitting")}
                         </>
                       ) : (
                         <>
                           <Scissors size={13} />
-                          Split
+                          {t("exportProgress.split")}
                         </>
                       )}
                     </button>
@@ -786,7 +788,7 @@ export default function ExportProgressDialog({
             }}
           >
             <button className="btn-ghost btn-sm" onClick={onClose}>
-              Close
+              {t("common.close")}
             </button>
             {isComplete && (
               <>
@@ -796,7 +798,7 @@ export default function ExportProgressDialog({
                   style={{ display: "flex", alignItems: "center", gap: 5 }}
                 >
                   <FolderOpen size={14} />
-                  Open Folder
+                  {t("exportProgress.openFolder")}
                 </button>
                 {splitResult?.split ? (
                   <button
@@ -805,7 +807,7 @@ export default function ExportProgressDialog({
                     style={{ display: "flex", alignItems: "center", gap: 5 }}
                   >
                     <Package size={14} />
-                    Open Split Zip
+                    {t("exportProgress.openSplitZip")}
                   </button>
                 ) : (
                   <button
@@ -814,7 +816,7 @@ export default function ExportProgressDialog({
                     style={{ display: "flex", alignItems: "center", gap: 5 }}
                   >
                     <FileText size={14} />
-                    Open File
+                    {t("exportProgress.openFile")}
                   </button>
                 )}
               </>

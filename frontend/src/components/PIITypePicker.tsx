@@ -1,7 +1,8 @@
 /** PII Type Picker dialog — shown after the user draws a region. */
 
-import { PenTool, Edit3, Trash2 } from "lucide-react";
+import { PenTool, Edit3, Trash2 } from "../icons";
 import type { PIILabelEntry } from "../types";
+import { useTranslation } from "react-i18next";
 
 interface PIITypePickerProps {
   frequentLabels: PIILabelEntry[];
@@ -55,21 +56,22 @@ export default function PIITypePicker({
   onCancel,
   updateLabelConfig,
 }: PIITypePickerProps) {
+  const { t } = useTranslation();
   return (
-    <div role="dialog" aria-modal="true" aria-label="Select PII type" style={overlayStyle}>
+    <div role="dialog" aria-modal="true" aria-label={t("piiPicker.title")} style={overlayStyle}>
       <div style={dialogStyle}>
         <PenTool size={24} style={{ color: "var(--accent-primary)", marginBottom: 8 }} />
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
-          Select PII Type
+          {t("piiPicker.title")}
         </h3>
         <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
-          What type of sensitive data does this region contain?
+          {t("piiPicker.description")}
         </p>
 
         {/* ── Frequent labels (big buttons) ── */}
         {!typePickerEditMode && frequentLabels.length > 0 && (
           <>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Frequent</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>{t("piiPicker.frequent")}</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, width: "100%", marginBottom: 12 }}>
               {frequentLabels.map((entry) => (
                 <button
@@ -100,7 +102,7 @@ export default function PIITypePicker({
         {/* ── Other labels (smaller buttons) ── */}
         {!typePickerEditMode && otherLabels.length > 0 && (
           <>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Other</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>{t("piiPicker.other")}</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4, width: "100%", marginBottom: 12 }}>
               {otherLabels.map((entry) => (
                 <button
@@ -129,13 +131,13 @@ export default function PIITypePicker({
         {/* ── Edit mode ── */}
         {typePickerEditMode && (
           <div style={{ width: "100%", marginBottom: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Manage Labels</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>{t("piiPicker.manageLabels")}</div>
 
             {/* Add new label */}
             <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
               <input
                 type="text"
-                placeholder="New label name..."
+                placeholder={t("piiPicker.newLabelPlaceholder")}
                 value={typePickerNewLabel}
                 onChange={(e) => setTypePickerNewLabel(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
                 onKeyDown={(e) => {
@@ -179,7 +181,7 @@ export default function PIITypePicker({
                 }}
                 style={{ padding: "6px 12px", fontSize: 12 }}
               >
-                Add
+                {t("common.add")}
               </button>
             </div>
 
@@ -206,12 +208,12 @@ export default function PIITypePicker({
                     {/* Label name */}
                     <span style={{ flex: 1, fontSize: 12, fontWeight: 500, color: "var(--text-primary)" }}>
                       {entry.label}
-                      {inUse && <span style={{ fontSize: 10, color: "var(--text-secondary)", marginLeft: 4 }}>(in use)</span>}
+                      {inUse && <span style={{ fontSize: 10, color: "var(--text-secondary)", marginLeft: 4 }}>({t("piiPicker.inUse")})</span>}
                     </span>
 
                     {/* Frequent star toggle */}
                     <button
-                      title={entry.frequent ? "Remove from frequent" : "Add to frequent"}
+                      title={entry.frequent ? t("piiPicker.removeFromFrequent") : t("piiPicker.addToFrequent")}
                       onClick={() => updateLabelConfig((prev) => prev.map((e) => e.label === entry.label ? { ...e, frequent: !e.frequent } : e))}
                       style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: 14, color: entry.frequent ? "#f59e0b" : "var(--text-secondary)" }}
                     >
@@ -220,7 +222,7 @@ export default function PIITypePicker({
 
                     {/* Hide/show toggle */}
                     <button
-                      title={entry.hidden ? "Show label" : "Hide label"}
+                      title={entry.hidden ? t("piiPicker.showLabel") : t("piiPicker.hideLabel")}
                       onClick={() => updateLabelConfig((prev) => prev.map((e) => e.label === entry.label ? { ...e, hidden: !e.hidden } : e))}
                       style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: 12, color: "var(--text-secondary)" }}
                     >
@@ -230,7 +232,7 @@ export default function PIITypePicker({
                     {/* Delete (only user-added AND not in use) */}
                     {entry.userAdded && !inUse && (
                       <button
-                        title="Delete label"
+                        title={t("piiPicker.deleteLabel")}
                         onClick={() => updateLabelConfig((prev) => prev.filter((e) => e.label !== entry.label))}
                         style={{ background: "none", border: "none", cursor: "pointer", padding: 2, fontSize: 12, color: "#ef4444" }}
                       >
@@ -252,14 +254,14 @@ export default function PIITypePicker({
             style={{ display: "flex", alignItems: "center", gap: 4 }}
           >
             <Edit3 size={12} />
-            {typePickerEditMode ? "Done" : "Edit"}
+            {typePickerEditMode ? t("common.done") : t("common.edit")}
           </button>
           <div style={{ flex: 1 }} />
           <button
             className="btn-ghost btn-sm"
             onClick={onCancel}
           >
-            Cancel
+            {t("common.cancel")}
           </button>
         </div>
       </div>

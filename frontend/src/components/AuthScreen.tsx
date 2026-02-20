@@ -9,6 +9,7 @@
  */
 
 import { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useLicenseStore, useSnackbarStore } from "../store";
 import { toErrorMessage } from "../errorUtils";
 import {
@@ -23,6 +24,7 @@ type Mode = "signin" | "key";
 export default function AuthScreen() {
   const { setLicenseStatus, setLicenseChecked } = useLicenseStore();
   const { addSnackbar } = useSnackbarStore();
+  const { t } = useTranslation();
 
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
@@ -33,8 +35,8 @@ export default function AuthScreen() {
 
   // ── Online sign-in ──────────────────────────────────────────
   const handleSignIn = useCallback(async () => {
-    if (!email.trim()) { setError("Please enter your email"); return; }
-    if (!password) { setError("Please enter your password"); return; }
+    if (!email.trim()) { setError(t("auth.pleaseEnterEmail")); return; }
+    if (!password) { setError(t("auth.pleaseEnterPassword")); return; }
     setLoading(true);
     setError(null);
     try {
@@ -42,12 +44,12 @@ export default function AuthScreen() {
       if (status.valid) {
         setLicenseStatus(status);
         setLicenseChecked(true);
-        addSnackbar("License activated!", "success");
+        addSnackbar(t("auth.licenseActivated"), "success");
       } else {
-        setError(status.error ?? "Activation failed");
+        setError(status.error ?? t("auth.activationFailed"));
       }
     } catch (e: unknown) {
-      setError(toErrorMessage(e) ?? "Sign-in failed");
+      setError(toErrorMessage(e) ?? t("auth.signInFailed"));
     } finally {
       setLoading(false);
     }
@@ -62,13 +64,13 @@ export default function AuthScreen() {
       if (status.valid) {
         setLicenseStatus(status);
         setLicenseChecked(true);
-        addSnackbar("License activated!", "success");
+        addSnackbar(t("auth.licenseActivated"), "success");
       } else {
-        setError(status.error ?? "Activation failed");
+        setError(status.error ?? t("auth.activationFailed"));
       }
     } catch (e: unknown) {
       if (toErrorMessage(e) !== "Sign-in cancelled") {
-        setError(toErrorMessage(e) ?? "Google sign-in failed");
+        setError(toErrorMessage(e) ?? t("auth.googleSignInFailed"));
       }
     } finally {
       setLoading(false);
@@ -78,7 +80,7 @@ export default function AuthScreen() {
   // ── Offline key paste ───────────────────────────────────────
   const handleActivateKey = useCallback(async () => {
     const trimmed = licenseKey.trim();
-    if (!trimmed) { setError("Please paste your license key"); return; }
+    if (!trimmed) { setError(t("auth.pleaseEnterLicenseKey")); return; }
     setLoading(true);
     setError(null);
     try {
@@ -86,12 +88,12 @@ export default function AuthScreen() {
       if (status.valid) {
         setLicenseStatus(status);
         setLicenseChecked(true);
-        addSnackbar("License activated!", "success");
+        addSnackbar(t("auth.licenseActivated"), "success");
       } else {
-        setError(status.error ?? "Invalid or expired license key");
+        setError(status.error ?? t("auth.invalidOrExpiredKey"));
       }
     } catch (e: unknown) {
-      setError(toErrorMessage(e) ?? "Failed to apply license key");
+      setError(toErrorMessage(e) ?? t("auth.failedToApplyKey"));
     } finally {
       setLoading(false);
     }
@@ -107,8 +109,8 @@ export default function AuthScreen() {
     <div style={styles.container}>
       <div style={styles.card}>
         <div style={styles.header}>
-          <h1 style={styles.title}>promptShield</h1>
-          <p style={styles.subtitle}>Secure Document Anonymization</p>
+          <h1 style={styles.title}>{t("common.promptShield")}</h1>
+          <p style={styles.subtitle}>{t("auth.branding")}</p>
         </div>
 
         {/* ── Tab bar ── */}
@@ -117,13 +119,13 @@ export default function AuthScreen() {
             style={{ ...styles.tab, ...(mode === "signin" ? styles.tabActive : {}) }}
             onClick={() => { setMode("signin"); setError(null); }}
           >
-            Sign In
+            {t("auth.tabSignIn")}
           </button>
           <button
             style={{ ...styles.tab, ...(mode === "key" ? styles.tabActive : {}) }}
             onClick={() => { setMode("key"); setError(null); }}
           >
-            License Key
+            {t("auth.tabLicenseKey")}
           </button>
         </div>
 
@@ -143,11 +145,11 @@ export default function AuthScreen() {
                 <path fill="#34A853" d="M10.53 28.59A14.5 14.5 0 019.5 24c0-1.59.28-3.14.76-4.59l-7.98-6.19A23.97 23.97 0 000 24c0 3.77.9 7.35 2.56 10.56l7.97-5.97z" />
                 <path fill="#FBBC05" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 5.97C6.51 42.62 14.62 48 24 48z" />
               </svg>
-              <span>Sign in with Google</span>
+              <span>{t("auth.signInWithGoogle")}</span>
             </button>
             <div style={styles.divider}>
               <span style={styles.dividerLine} />
-              <span style={styles.dividerText}>or</span>
+              <span style={styles.dividerText}>{t("common.or")}</span>
               <span style={styles.dividerLine} />
             </div>
           </div>
@@ -156,22 +158,22 @@ export default function AuthScreen() {
         <form onSubmit={handleSubmit} style={styles.form}>
           {mode === "signin" ? (
             <>
-              <label style={styles.label}>Email</label>
+              <label style={styles.label}>{t("auth.emailLabel")}</label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="user@example.com"
+                placeholder={t("auth.emailPlaceholder")}
                 required
                 style={styles.input}
                 autoFocus
               />
-              <label style={styles.label}>Password</label>
+              <label style={styles.label}>{t("auth.passwordLabel")}</label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
+                placeholder={t("auth.passwordPlaceholder")}
                 required
                 minLength={8}
                 style={styles.input}
@@ -179,11 +181,11 @@ export default function AuthScreen() {
             </>
           ) : (
             <>
-              <label style={styles.label}>License Key</label>
+              <label style={styles.label}>{t("auth.licenseKeyLabel")}</label>
               <textarea
                 value={licenseKey}
                 onChange={(e) => setLicenseKey(e.target.value)}
-                placeholder="Paste your license key here..."
+                placeholder={t("auth.licenseKeyPlaceholder")}
                 rows={5}
                 style={styles.textarea}
                 autoFocus
@@ -201,29 +203,29 @@ export default function AuthScreen() {
             }}
           >
             {loading
-              ? "Please wait..."
+              ? t("auth.pleaseWait")
               : mode === "signin"
-                ? "Sign In & Activate"
-                : "Activate License"}
+                ? t("auth.signInAndActivate")
+                : t("auth.activateLicense")}
           </button>
         </form>
 
         <div style={styles.footer}>
           <p style={styles.footerText}>
-            Don't have an account?{" "}
+            {t("auth.dontHaveAccount")}{" "}
             <a
               href="https://promptshield.ca"
               target="_blank"
               rel="noopener noreferrer"
               style={styles.link}
             >
-              Sign up at promptshield.ca
+              {t("auth.signUpLink")}
             </a>
           </p>
           <p style={styles.footerHint}>
             {mode === "signin"
-              ? "After activation, the app works offline for up to 30 days."
-              : "No internet? Paste an offline license key from your account dashboard."}
+              ? t("auth.offlineNote")
+              : t("auth.offlineKeyNote")}
           </p>
         </div>
       </div>

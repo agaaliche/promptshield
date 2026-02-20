@@ -1,6 +1,7 @@
 /** Dialog shown when one or more file uploads fail. */
 
-import { AlertTriangle, RefreshCw, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { AlertTriangle, RefreshCw, X } from "../icons";
 import { useAppStore } from "../store";
 import { getFailedFiles, clearFailedFileRefs } from "../hooks/useDocumentUpload";
 import { Z_MODAL } from "../zIndex";
@@ -8,6 +9,7 @@ import { Z_MODAL } from "../zIndex";
 const DISMISS_ANIMATION_MS = 400;
 
 export default function UploadErrorDialog({ onRetry }: { onRetry?: (files: File[]) => void }) {
+  const { t } = useTranslation();
   const show = useAppStore((s) => s.showUploadErrorDialog);
   const uploadQueue = useAppStore((s) => s.uploadQueue);
   const setShowUploadErrorDialog = useAppStore((s) => s.setShowUploadErrorDialog);
@@ -54,8 +56,8 @@ export default function UploadErrorDialog({ onRetry }: { onRetry?: (files: File[
           <AlertTriangle size={20} style={{ color: "#f44336", flexShrink: 0 }} />
           <span style={styles.title}>
             {errorItems.length === 1
-              ? "Upload failed"
-              : `${errorItems.length} uploads failed`}
+              ? t("upload.uploadFailed")
+              : t("upload.nUploadsFailed", { count: errorItems.length })}
           </span>
           <button style={styles.closeBtn} onClick={handleClose} aria-label="Close">
             <X size={16} />
@@ -67,7 +69,7 @@ export default function UploadErrorDialog({ onRetry }: { onRetry?: (files: File[
           {errorItems.map((item) => (
             <div key={item.id} style={styles.row}>
               <span style={styles.fileName}>{item.name}</span>
-              <span style={styles.errorMsg}>{item.error || "Unknown error"}</span>
+              <span style={styles.errorMsg}>{item.error || t("upload.unknownError")}</span>
             </div>
           ))}
         </div>
@@ -77,11 +79,11 @@ export default function UploadErrorDialog({ onRetry }: { onRetry?: (files: File[
           {onRetry && (
             <button style={styles.retryBtn} onClick={handleRetry}>
               <RefreshCw size={13} style={{ marginRight: 6 }} />
-              Retry {errorItems.length === 1 ? "" : `(${errorItems.length})`}
+              {errorItems.length === 1 ? t("common.retry") : t("upload.retryN", { count: errorItems.length })}
             </button>
           )}
           <button style={styles.okBtn} onClick={handleClose}>
-            Dismiss
+            {t("common.dismiss")}
           </button>
         </div>
       </div>

@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Loader2,
   CheckCircle2,
@@ -15,7 +16,7 @@ import {
   Shield,
   Clock,
   FileText,
-} from "lucide-react";
+} from "../icons";
 import { getDetectionProgress } from "../api";
 import type { DetectionProgressData, DetectionProgressPageStatus } from "../types";
 import { Z_MODAL } from "../zIndex";
@@ -26,13 +27,13 @@ interface Props {
   visible: boolean;
 }
 
-/* Human-readable labels for pipeline step keys */
-const STEP_LABELS: Record<string, string> = {
-  regex: "Regex",
-  ner: "NER",
-  gliner: "GLiNER",
-  llm: "LLM",
-  merge: "Merge",
+/* Translation keys for pipeline step labels */
+const STEP_LABEL_KEYS: Record<string, string> = {
+  regex: "detectionProgress.stepRegex",
+  ner: "detectionProgress.stepNER",
+  gliner: "detectionProgress.stepGLiNER",
+  llm: "detectionProgress.stepLLM",
+  merge: "detectionProgress.stepMerge",
 };
 
 function formatElapsed(seconds: number): string {
@@ -60,6 +61,7 @@ function currentGlobalStep(data: DetectionProgressData): string | null {
 }
 
 export default function DetectionProgressDialog({ docId, docName, visible }: Props) {
+  const { t } = useTranslation();
   const [progress, setProgress] = useState<DetectionProgressData | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startRef = useRef(Date.now());
@@ -120,22 +122,22 @@ export default function DetectionProgressDialog({ docId, docName, visible }: Pro
   if (isDone) overallPct = 100;
 
   // Status message
-  let message = "Starting detection…";
+  let message = t("detectionProgress.startingDetection");
   if (isRunning && globalStep) {
-    message = `Running ${STEP_LABELS[globalStep] ?? globalStep} — page ${Math.min(pagesDone + 1, totalPages)} of ${totalPages}`;
+    message = t("detectionProgress.runningStep", { step: t(STEP_LABEL_KEYS[globalStep] ?? globalStep), current: Math.min(pagesDone + 1, totalPages), total: totalPages });
   } else if (isRunning && totalPages > 0) {
-    message = `Detecting — page ${Math.min(pagesDone + 1, totalPages)} of ${totalPages}`;
+    message = t("detectionProgress.detectingPage", { current: Math.min(pagesDone + 1, totalPages), total: totalPages });
   } else if (isDone) {
-    message = `Detection complete — ${regionsFound} region${regionsFound !== 1 ? "s" : ""} found`;
+    message = t("detectionProgress.completeRegions", { count: regionsFound });
   } else if (isError) {
-    message = progress?.error ?? "Detection failed";
+    message = progress?.error ?? t("detectionProgress.failedFallback");
   }
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Detection progress"
+      aria-label={t("detectionProgress.ariaLabel")}
       style={{
         position: "absolute",
         inset: 0,
@@ -180,10 +182,10 @@ export default function DetectionProgressDialog({ docId, docName, visible }: Pro
           )}
           <span style={{ fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>
             {isDone
-              ? "Detection Complete"
+              ? t("detectionProgress.titleComplete")
               : isError
-                ? "Detection Failed"
-                : "Detecting PII"}
+                ? t("detectionProgress.titleFailed")
+                : t("detectionProgress.titleDetecting")}
           </span>
         </div>
 
@@ -209,7 +211,7 @@ export default function DetectionProgressDialog({ docId, docName, visible }: Pro
           {pipelineSteps.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 16 }}>
               {pipelineSteps.map((step, i) => {
-                const label = STEP_LABELS[step] ?? step;
+                const label = t(STEP_LABEL_KEYS[step] ?? step);
                 const globalIdx = globalStep ? pipelineSteps.indexOf(globalStep) : -1;
                 const stepDone = isDone || (isRunning && globalIdx > i);
                 const stepActive = isRunning && globalIdx === i;
@@ -355,7 +357,7 @@ export default function DetectionProgressDialog({ docId, docName, visible }: Pro
                   {/* Page label */}
                   <span style={{ width: 50, color: "var(--text-muted)", flexShrink: 0 }}>
                     <FileText size={10} style={{ marginRight: 3, verticalAlign: "middle" }} />
-                    Page {ps.page}
+                    {t("detectionProgress.pageN", { n: ps.page })}
                   </span>
                   {/* Status */}
                   <span
@@ -371,10 +373,10 @@ export default function DetectionProgressDialog({ docId, docName, visible }: Pro
                     }}
                   >
                     {ps.status === "running" && ps.pipeline_step
-                      ? STEP_LABELS[ps.pipeline_step] ?? ps.pipeline_step
+                      ? t(STEP_LABEL_KEYS[ps.pipeline_step] ?? ps.pipeline_step)
                       : ps.status === "done"
-                        ? `Done — ${ps.regions} region${ps.regions !== 1 ? "s" : ""}`
-                        : "Pending"}
+                        ? t("detectionProgress.pageDone", { count: ps.regions })
+                        : t("common.pending")}
                   </span>
                   {/* Mini spinner or check */}
                   {ps.status === "running" && (
@@ -400,12 +402,12 @@ export default function DetectionProgressDialog({ docId, docName, visible }: Pro
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <Shield size={12} />
-              <span>{regionsFound} region{regionsFound !== 1 ? "s" : ""}</span>
+              <span>{t("detectionProgress.nRegions", { count: regionsFound })}</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <FileText size={12} />
               <span>
-                {pagesDone}/{totalPages} page{totalPages !== 1 ? "s" : ""}
+                {t("detectionProgress.nOfPages", { done: pagesDone, total: totalPages })}
               </span>
             </div>
           </div>

@@ -1,6 +1,7 @@
 /** LLM Engine — hardware info, local/remote provider toggle, model list, remote API config. */
 
 import { useState, useCallback, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Brain,
   Cpu,
@@ -9,7 +10,7 @@ import {
   FolderOpen,
   Trash2,
   RefreshCw,
-} from "lucide-react";
+} from "../../icons";
 import { useDetectionStore } from "../../store";
 import { toErrorMessage } from "../../errorUtils";
 import {
@@ -30,6 +31,7 @@ import type { HardwareInfo } from "../../api";
 import { Section, styles } from "./settingsStyles";
 
 export default function LLMEngineSection() {
+  const { t } = useTranslation();
   const { llmStatus, setLLMStatus, detectionSettings, setDetectionSettings } = useDetectionStore();
 
   const [models, setModels] = useState<Array<{ name: string; path: string; size_gb: number }>>([]);
@@ -79,12 +81,12 @@ export default function LLMEngineSection() {
         const status = await getLLMStatus();
         setLLMStatus(status);
       } catch (e: unknown) {
-        setLlmError(toErrorMessage(e) || "Failed to load model");
+        setLlmError(toErrorMessage(e) || t("llmEngine.loadFailed"));
       } finally {
         setLlmLoading(null);
       }
     },
-    [setLLMStatus]
+    [setLLMStatus, t]
   );
 
   const handleUnloadModel = useCallback(async () => {
@@ -108,10 +110,10 @@ export default function LLMEngineSection() {
             {hwInfo.gpus.length > 0 ? hwInfo.gpus.map((gpu, i) => (
               <span key={i} style={{ color: "var(--accent-success)" }} title={`${gpu.name} — Driver ${gpu.driver_version}`}>
                 <Zap size={13} style={{ verticalAlign: -2, marginRight: 3 }} />
-                {gpu.name} — {Math.round(gpu.vram_total_mb / 1024)} GB VRAM ({Math.round(gpu.vram_free_mb / 1024)} GB free)
+                {t("llmEngine.gpuInfo", { name: gpu.name, vram: Math.round(gpu.vram_total_mb / 1024), free: Math.round(gpu.vram_free_mb / 1024) })}
               </span>
             )) : (
-              <span style={{ color: "var(--text-muted)" }}>No GPU detected — CPU only</span>
+              <span style={{ color: "var(--text-muted)" }}>{t("llmEngine.noGPU")}</span>
             )}
           </div>
         </div>
@@ -129,7 +131,7 @@ export default function LLMEngineSection() {
             } catch {}
           }}
         >
-          <Cpu size={14} /> Local (GGUF)
+          <Cpu size={14} /> {t("llmEngine.localTab")}
         </button>
         <button
           className={llmStatus?.provider === "remote" ? "btn-primary" : "btn-ghost"}
@@ -142,7 +144,7 @@ export default function LLMEngineSection() {
             } catch {}
           }}
         >
-          <Globe size={14} /> Remote API
+          <Globe size={14} /> {t("llmEngine.remoteTab")}
         </button>
       </div>
 
@@ -155,7 +157,7 @@ export default function LLMEngineSection() {
             <Cpu size={14} style={{ color: "var(--accent-success)" }} />
             <span>{llmStatus.model_name}</span>
             {llmStatus.gpu_enabled && (
-              <span style={styles.gpuTag}>GPU</span>
+              <span style={styles.gpuTag}>{t("llmEngine.gpuTag")}</span>
             )}
           </div>
           <button
@@ -163,30 +165,28 @@ export default function LLMEngineSection() {
             onClick={handleUnloadModel}
             style={{ marginTop: 8 }}
           >
-            Unload Model
+            {t("llmEngine.unloadModel")}
           </button>
         </div>
       ) : (
         <div>
           {localLlmReady === false ? (
             <div style={{ padding: "10px 12px", marginBottom: 12, background: "rgba(244,67,54,0.08)", borderRadius: 6, border: "1px solid rgba(244,67,54,0.2)", fontSize: 12, color: "var(--accent-danger)", lineHeight: 1.6 }}>
-              <strong>Local LLM disabled</strong> — minimum hardware requirements not met.
+              <strong>{t("llmEngine.disabledHint")}</strong>
               <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-                Requires an NVIDIA GPU with 4+ GB VRAM, or at least 16 GB RAM.
-                Use <strong style={{ color: "var(--text-secondary)" }}>Remote API</strong> instead to connect to an external LLM service.
+                {t("llmEngine.disabledRequirements")}
               </div>
             </div>
           ) : (
             <p style={styles.hint}>
-              Load a GGUF model for enhanced PII detection. Place model files
-              in the models directory.
+              {t("llmEngine.localHint")}
               <button
                 className="btn-ghost btn-sm"
                 onClick={() => openModelsDir().catch(logError("open-models-dir"))}
                 style={{ marginLeft: 4, display: "inline-flex", alignItems: "center", gap: 4, verticalAlign: "middle", fontSize: 11, padding: "2px 6px" }}
-                title="Open models directory"
+                title={t("llmEngine.openModelsDirTitle")}
               >
-                <FolderOpen size={12} /> Open
+                <FolderOpen size={12} /> {t("llmEngine.openModelsDir")}
               </button>
             </p>
           )}
@@ -205,7 +205,7 @@ export default function LLMEngineSection() {
                   <div>
                     <span style={{ fontWeight: 500 }}>{m.name}</span>
                     <span style={styles.modelSize}>{m.size_gb} GB</span>
-                    {isActive && <span style={{ fontSize: 11, color: "var(--accent-primary)", fontWeight: 600, marginLeft: 8 }}>● Active</span>}
+                    {isActive && <span style={{ fontSize: 11, color: "var(--accent-primary)", fontWeight: 600, marginLeft: 8 }}>{t("llmEngine.active")}</span>}
                   </div>
                   {isActive ? (
                     <button
@@ -213,7 +213,7 @@ export default function LLMEngineSection() {
                       onClick={handleUnloadModel}
                       disabled={llmLoading !== null}
                     >
-                      Unload
+                      {t("llmEngine.unload")}
                     </button>
                   ) : (
                   <button
@@ -221,7 +221,7 @@ export default function LLMEngineSection() {
                     onClick={() => handleLoadModel(m.path)}
                     disabled={llmLoading !== null || disabled}
                   >
-                    {llmLoading === m.path ? "Loading..." : "Load"}
+                    {llmLoading === m.path ? t("llmEngine.loadingModel") : t("llmEngine.load")}
                   </button>
                   )}
                 </div>
@@ -230,8 +230,7 @@ export default function LLMEngineSection() {
             </div>
           ) : localLlmReady !== false ? (
             <p style={styles.hint}>
-              No models found. Place .gguf files in the models directory and
-              click refresh.
+              {t("llmEngine.noModelsFound")}
             </p>
           ) : null}
           <button
@@ -239,7 +238,7 @@ export default function LLMEngineSection() {
             onClick={() => listModels().then(setModels)}
             style={{ marginTop: 8 }}
           >
-            <RefreshCw size={12} /> Refresh models
+            <RefreshCw size={12} /> {t("llmEngine.refreshModels")}
           </button>
           {llmError && <p style={styles.errorText}>{llmError}</p>}
         </div>
@@ -251,47 +250,46 @@ export default function LLMEngineSection() {
       {llmStatus?.provider === "remote" && (
         <div>
           <p style={styles.hint}>
-            Connect to any OpenAI-compatible API — OpenAI, Anthropic (Claude),
-            Groq, Mistral, Together, Azure, or your own vLLM / Ollama server.
+            {t("llmEngine.remoteHint")}
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div>
               <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
-                API Base URL
+                {t("llmEngine.apiBaseUrl")}
               </label>
               <input
                 type="text"
                 value={remoteApiUrl}
                 onChange={(e) => { setRemoteApiUrl(e.target.value); setRemoteStatus(""); }}
-                placeholder="https://api.openai.com/v1"
+                placeholder={t("llmEngine.apiBaseUrlPlaceholder")}
                 style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border-color)", background: "var(--bg-secondary)", color: "var(--text-primary)", fontSize: 13 }}
               />
             </div>
             <div>
               <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
-                API Key
+                {t("llmEngine.apiKey")}
               </label>
               <input
                 type="password"
                 value={remoteApiKey}
                 onChange={(e) => { setRemoteApiKey(e.target.value); setRemoteStatus(""); }}
-                placeholder="sk-..."
+                placeholder={t("llmEngine.apiKeyPlaceholder")}
                 style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border-color)", background: "var(--bg-secondary)", color: "var(--text-primary)", fontSize: 13 }}
               />
             </div>
             <div>
               <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
-                Model name
+                {t("llmEngine.modelName")}
               </label>
               <input
                 type="text"
                 value={remoteModel}
                 onChange={(e) => { setRemoteModel(e.target.value); setRemoteStatus(""); }}
-                placeholder="gpt-4o-mini"
+                placeholder={t("llmEngine.modelNamePlaceholder")}
                 style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border-color)", background: "var(--bg-secondary)", color: "var(--text-primary)", fontSize: 13 }}
               />
               <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-                Examples: gpt-4o-mini, claude-sonnet-4-20250514, llama-3.1-70b-versatile, mistral-large-latest
+                {t("llmEngine.modelExamples")}
               </p>
             </div>
 
@@ -307,7 +305,7 @@ export default function LLMEngineSection() {
                     const keyToSend = remoteApiKey.startsWith("••") ? "" : remoteApiKey;
                     if (!keyToSend) {
                       setRemoteStatus("error");
-                      setRemoteError("Please enter a valid API key");
+                      setRemoteError(t("llmEngine.pleaseEnterApiKey"));
                       return;
                     }
                     await configureRemoteLLM(remoteApiUrl, keyToSend, remoteModel);
@@ -318,11 +316,11 @@ export default function LLMEngineSection() {
                     setTimeout(() => setRemoteStatus(""), 3000);
                   } catch (e: unknown) {
                     setRemoteStatus("error");
-                    setRemoteError(toErrorMessage(e) || "Failed to configure remote LLM");
+                    setRemoteError(toErrorMessage(e) || t("llmEngine.configFailed"));
                   }
                 }}
               >
-                {remoteStatus === "saving" ? "Saving..." : "Save & Activate"}
+                {remoteStatus === "saving" ? t("llmEngine.saving") : t("llmEngine.saveAndActivate")}
               </button>
               <button
                 className="btn-ghost btn-sm"
@@ -338,21 +336,21 @@ export default function LLMEngineSection() {
                       setRemoteLatency(result.latency_ms ?? null);
                     } else {
                       setRemoteStatus("error");
-                      setRemoteError(result.error || "Connection test failed");
+                      setRemoteError(result.error || t("llmEngine.testFailed"));
                     }
                   } catch (e: unknown) {
                     setRemoteStatus("error");
-                    setRemoteError(toErrorMessage(e) || "Test failed");
+                    setRemoteError(toErrorMessage(e) || t("llmEngine.testFailedShort"));
                   }
                 }}
               >
-                <Zap size={12} /> {remoteStatus === "testing" ? "Testing..." : "Test connection"}
+                <Zap size={12} /> {remoteStatus === "testing" ? t("llmEngine.testing") : t("llmEngine.testConnection")}
               </button>
               {llmStatus?.remote_api_url && (
                 <button
                   className="btn-ghost btn-sm"
                   style={{ marginLeft: "auto", color: "var(--accent-danger)", padding: 4, lineHeight: 1 }}
-                  title="Remove connection"
+                  title={t("llmEngine.removeConnection")}
                   onClick={async () => {
                     try {
                       await disconnectRemoteLLM();
@@ -379,7 +377,7 @@ export default function LLMEngineSection() {
 
             {remoteStatus === "ok" && (
               <p style={{ fontSize: 12, color: "var(--accent-success)", display: "flex", alignItems: "center", gap: 4 }}>
-                ✓ Connected{remoteLatency != null && ` — ${remoteLatency}ms latency`}
+                ✓ {t("llmEngine.connected")}{remoteLatency != null && ` ${t("llmEngine.latency", { ms: remoteLatency })}`}
               </p>
             )}
             {remoteStatus === "error" && (

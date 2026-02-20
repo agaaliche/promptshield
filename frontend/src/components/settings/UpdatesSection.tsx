@@ -1,6 +1,7 @@
 /** Updates section — online check + download, offline package install. */
 
 import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Download,
   RefreshCw,
@@ -9,7 +10,7 @@ import {
   AlertTriangle,
   ArrowUpCircle,
   Package,
-} from "lucide-react";
+} from "../../icons";
 import { Section, styles } from "./settingsStyles";
 import {
   getAppVersion,
@@ -42,6 +43,7 @@ type UpdatePhase =
   | "done";
 
 export default function UpdatesSection() {
+  const { t } = useTranslation();
   const [phase, setPhase] = useState<UpdatePhase>("idle");
   const [currentVersion, setCurrentVersion] = useState("…");
   const [checkResult, setCheckResult] = useState<UpdateCheckResult | null>(null);
@@ -196,11 +198,11 @@ export default function UpdatesSection() {
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 13, color: "var(--text-primary)", fontWeight: 500 }}>
-            Current version: <span style={{ fontFamily: "monospace" }}>{currentVersion}</span>
+            {t("updates.currentVersion")} <span style={{ fontFamily: "monospace" }}>{currentVersion}</span>
           </div>
           {lastChecked && (
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-              Last checked: {lastChecked}
+              {t("updates.lastChecked")} {lastChecked}
             </div>
           )}
         </div>
@@ -209,7 +211,7 @@ export default function UpdatesSection() {
       {/* ── Online update section ── */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-          <Download size={14} /> Online update
+          <Download size={14} /> {t("updates.onlineUpdate")}
         </div>
 
         {phase === "idle" && (
@@ -219,21 +221,21 @@ export default function UpdatesSection() {
             disabled={!inTauri}
             style={{ display: "flex", alignItems: "center", gap: 6 }}
           >
-            <RefreshCw size={14} /> Check for updates
+            <RefreshCw size={14} /> {t("updates.checkForUpdates")}
           </button>
         )}
 
         {phase === "checking" && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--text-muted)", fontSize: 13 }}>
             <RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} />
-            Checking for updates…
+            {t("updates.checkingForUpdates")}
           </div>
         )}
 
         {phase === "up-to-date" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--accent-success)", fontSize: 13 }}>
-              <CheckCircle size={16} /> You're up to date!
+              <CheckCircle size={16} /> {t("updates.upToDate")}
               {checkResult?.latest_version && (
                 <span style={{ color: "var(--text-muted)", fontSize: 12 }}>
                   (v{checkResult.latest_version})
@@ -245,7 +247,7 @@ export default function UpdatesSection() {
               onClick={() => { setPhase("idle"); setCheckResult(null); }}
               style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 4 }}
             >
-              <RefreshCw size={12} /> Check again
+              <RefreshCw size={12} /> {t("updates.checkAgain")}
             </button>
           </div>
         )}
@@ -260,14 +262,14 @@ export default function UpdatesSection() {
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <Package size={16} style={{ color: "var(--accent-primary)" }} />
               <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
-                Version {manifest.version} available
+                {t("updates.versionAvailable", { version: manifest.version })}
               </span>
               {manifest.mandatory && (
                 <span style={{
                   fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 3,
                   background: "rgba(244,67,54,0.15)", color: "var(--accent-danger)",
                 }}>
-                  Required
+                  {t("updates.required")}
                 </span>
               )}
             </div>
@@ -284,7 +286,7 @@ export default function UpdatesSection() {
             )}
 
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 10 }}>
-              Size: {formatSize(manifest.size)} · Released: {manifest.pub_date}
+              {t("updates.size", { size: formatSize(manifest.size) })} · {t("updates.released", { date: manifest.pub_date })}
             </div>
 
             <div style={{ display: "flex", gap: 8 }}>
@@ -293,13 +295,13 @@ export default function UpdatesSection() {
                 onClick={handleDownloadAndInstall}
                 style={{ display: "flex", alignItems: "center", gap: 6 }}
               >
-                <Download size={14} /> Download & Install
+                <Download size={14} /> {t("updates.downloadAndInstall")}
               </button>
               <button
                 className="btn-secondary btn-sm"
                 onClick={() => { setPhase("idle"); setManifest(null); setCheckResult(null); }}
               >
-                Later
+                {t("updates.later")}
               </button>
             </div>
           </div>
@@ -309,7 +311,7 @@ export default function UpdatesSection() {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--text-muted)", fontSize: 13 }}>
               <Download size={14} style={{ animation: "pulse 1.5s ease-in-out infinite" }} />
-              Downloading update…
+              {t("updates.downloading")}
             </div>
             {progress && (
               <div>
@@ -335,13 +337,13 @@ export default function UpdatesSection() {
 
         {phase === "done" && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--accent-success)", fontSize: 13 }}>
-            <CheckCircle size={16} /> Update installed successfully. Restarting…
+            <CheckCircle size={16} /> {t("updates.installSuccess")}
           </div>
         )}
 
         {!inTauri && phase === "idle" && (
           <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
-            Online updates are only available in the desktop app.
+            {t("updates.desktopOnly")}
           </p>
         )}
       </div>
@@ -352,10 +354,10 @@ export default function UpdatesSection() {
       {/* ── Offline update section ── */}
       <div>
         <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-          <Upload size={14} /> Offline update
+          <Upload size={14} /> {t("updates.offlineUpdate")}
         </div>
         <p style={styles.hint}>
-          Install an update from a downloaded package file. Use this when the machine has no internet access.
+          {t("updates.offlineHint")}
         </p>
 
         {phase !== "offline-preview" && phase !== "offline-installing" && (
@@ -365,7 +367,7 @@ export default function UpdatesSection() {
             disabled={!inTauri || phase === "downloading" || phase === "installing" || phase === "checking"}
             style={{ display: "flex", alignItems: "center", gap: 6 }}
           >
-            <Upload size={14} /> Select update package…
+            <Upload size={14} /> {t("updates.selectPackage")}
           </button>
         )}
 
@@ -380,7 +382,7 @@ export default function UpdatesSection() {
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <Package size={16} style={{ color: "var(--accent-primary)" }} />
               <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
-                Offline package: v{offlineMeta.version}
+                {t("updates.offlinePackage", { version: offlineMeta.version })}
               </span>
             </div>
 
@@ -396,7 +398,7 @@ export default function UpdatesSection() {
             )}
 
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 10 }}>
-              Platform: {offlineMeta.platform} · Released: {offlineMeta.pub_date}
+              {t("updates.platform", { platform: offlineMeta.platform })} · {t("updates.released", { date: offlineMeta.pub_date })}
             </div>
 
             <div style={{ display: "flex", gap: 8 }}>
@@ -405,7 +407,7 @@ export default function UpdatesSection() {
                 onClick={handleInstallOffline}
                 style={{ display: "flex", alignItems: "center", gap: 6 }}
               >
-                <Download size={14} /> Install update
+                <Download size={14} /> {t("updates.installUpdate")}
               </button>
               <button
                 className="btn-secondary btn-sm"
@@ -415,7 +417,7 @@ export default function UpdatesSection() {
                   setOfflinePath(null);
                 }}
               >
-                Cancel
+                {t("common.cancel")}
               </button>
             </div>
           </div>
@@ -424,7 +426,7 @@ export default function UpdatesSection() {
         {phase === "offline-installing" && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--text-muted)", fontSize: 13, marginTop: 8 }}>
             <RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} />
-            Installing update…
+            {t("updates.installing")}
           </div>
         )}
       </div>
@@ -440,7 +442,7 @@ export default function UpdatesSection() {
           <AlertTriangle size={16} style={{ color: "var(--accent-danger)", flexShrink: 0, marginTop: 1 }} />
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, color: "var(--accent-danger)", fontWeight: 500 }}>
-              Update failed
+              {t("updates.updateFailed")}
             </div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
               {error}
@@ -453,7 +455,7 @@ export default function UpdatesSection() {
               color: "var(--text-muted)", fontSize: 12, padding: "2px 6px",
             }}
           >
-            Dismiss
+            {t("common.dismiss")}
           </button>
         </div>
       )}
@@ -468,7 +470,7 @@ export default function UpdatesSection() {
             padding: 0,
           }}
         >
-          Clear downloaded update cache
+          {t("updates.clearCache")}
         </button>
       </div>
 

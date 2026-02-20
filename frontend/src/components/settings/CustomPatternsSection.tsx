@@ -1,7 +1,8 @@
 /** Custom Patterns — user-defined regex patterns for PII detection. */
 
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Play, ToggleLeft, ToggleRight, AlertCircle, Check, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Plus, Trash2, Play, ToggleLeft, ToggleRight, AlertCircle, Check, X } from "../../icons";
 import { styles } from "./settingsStyles";
 import { toErrorMessage } from "../../errorUtils";
 import {
@@ -71,6 +72,7 @@ interface PatternEditorProps {
 }
 
 function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<"simple" | "advanced">(initial?.pattern ? "advanced" : "simple");
   const [name, setName] = useState(initial?.name ?? "");
   const [piiType, setPiiType] = useState(initial?.pii_type ?? "CUSTOM");
@@ -126,11 +128,11 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
 
   const handleSave = () => {
     if (!name.trim()) {
-      setError("Name is required");
+      setError(t("customPatterns.nameRequired"));
       return;
     }
     if (!generatedRegex.trim()) {
-      setError("Pattern is required");
+      setError(t("customPatterns.patternRequired"));
       return;
     }
     
@@ -138,7 +140,7 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
     try {
       new RegExp(generatedRegex);
     } catch {
-      setError("Invalid regex pattern");
+      setError(t("customPatterns.invalidRegex"));
       return;
     }
     
@@ -183,7 +185,7 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
             fontWeight: 500,
           }}
         >
-          Simple Mode
+          {t("customPatterns.simpleMode")}
         </button>
         <button
           onClick={() => setMode("advanced")}
@@ -199,20 +201,20 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
             fontWeight: 500,
           }}
         >
-          Advanced (Regex)
+          {t("customPatterns.advancedMode")}
         </button>
       </div>
       
       {/* Name */}
       <div style={{ marginBottom: 12 }}>
         <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
-          Pattern name
+          {t("customPatterns.patternName")}
         </label>
         <input
           type="text"
           value={name}
           onChange={(e) => { setName(e.target.value); setError(""); }}
-          placeholder="e.g., Employee ID"
+          placeholder={t("customPatterns.patternNamePlaceholder")}
           style={{
             width: "100%",
             padding: "8px 10px",
@@ -228,7 +230,7 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
       {/* PII Type */}
       <div style={{ marginBottom: 12 }}>
         <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
-          PII type
+          {t("customPatterns.piiTypeLabel")}
         </label>
         <select
           value={piiType}
@@ -253,7 +255,7 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
       {mode === "simple" && (
         <div style={{ marginBottom: 12 }}>
           <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 8 }}>
-            Pattern template
+            {t("customPatterns.patternTemplate")}
           </label>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {blocks.map((block, index) => (
@@ -272,7 +274,7 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
                   }}
                 >
                   {BLOCK_TYPES.map(bt => (
-                    <option key={bt.value} value={bt.value}>{bt.label}</option>
+                    <option key={bt.value} value={bt.value}>{t(`customPatterns.blockTypes.${bt.value}`)}</option>
                   ))}
                 </select>
                 
@@ -346,12 +348,12 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
                 fontSize: 12,
               }}
             >
-              <Plus size={14} /> Add block
+              <Plus size={14} /> {t("customPatterns.addBlock")}
             </button>
           </div>
           
           <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-muted)" }}>
-            Preview: <code style={{ background: "var(--bg-secondary)", padding: "2px 6px", borderRadius: 3 }}>
+            {t("customPatterns.preview")}: <code style={{ background: "var(--bg-secondary)", padding: "2px 6px", borderRadius: 3 }}>
               {formatTemplate(blocks)}
             </code>
           </div>
@@ -362,13 +364,13 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
       {mode === "advanced" && (
         <div style={{ marginBottom: 12 }}>
           <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
-            Regex pattern
+            {t("customPatterns.regexPattern")}
           </label>
           <input
             type="text"
             value={regexPattern}
             onChange={(e) => { setRegexPattern(e.target.value); setError(""); }}
-            placeholder="e.g., [A-Z]{3}-\d{5}"
+            placeholder={t("customPatterns.regexPlaceholder")}
             style={{
               width: "100%",
               padding: "8px 10px",
@@ -381,7 +383,7 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
             }}
           />
           <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-            Use standard regex syntax. Common patterns: <code>\d</code> (digit), <code>[A-Z]</code> (letter), <code>\{"{n}"}</code> (exactly n times)
+            {t("customPatterns.regexHint")}
           </p>
         </div>
       )}
@@ -389,7 +391,7 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
       {/* Generated regex preview */}
       <div style={{ marginBottom: 12 }}>
         <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
-          Generated regex
+          {t("customPatterns.generatedRegex")}
         </label>
         <code style={{
           display: "block",
@@ -401,7 +403,7 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
           fontFamily: "monospace",
           wordBreak: "break-all",
         }}>
-          {generatedRegex || "(empty)"}
+          {generatedRegex || t("customPatterns.empty")}
         </code>
       </div>
       
@@ -413,10 +415,10 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
             checked={caseSensitive}
             onChange={(e) => setCaseSensitive(e.target.checked)}
           />
-          Case sensitive
+          {t("customPatterns.caseSensitive")}
         </label>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Confidence:</label>
+          <label style={{ fontSize: 12, color: "var(--text-muted)" }}>{t("customPatterns.confidenceLabel")}:</label>
           <input
             type="number"
             value={confidence}
@@ -440,14 +442,14 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
       {/* Test section */}
       <div style={{ marginBottom: 12, padding: 12, background: "var(--bg-secondary)", borderRadius: 6 }}>
         <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
-          Test your pattern
+          {t("customPatterns.testPattern")}
         </label>
         <div style={{ display: "flex", gap: 8 }}>
           <input
             type="text"
             value={testText}
             onChange={(e) => setTestText(e.target.value)}
-            placeholder="Enter sample text to test..."
+            placeholder={t("customPatterns.testPlaceholder")}
             style={{
               flex: 1,
               padding: "8px 10px",
@@ -475,7 +477,7 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
               fontSize: 13,
             }}
           >
-            <Play size={14} /> Test
+            <Play size={14} /> {t("common.test")}
           </button>
         </div>
         
@@ -495,11 +497,11 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
               gap: 6,
             }}>
               {testResult.match_count > 0 ? <Check size={14} /> : <X size={14} />}
-              {testResult.match_count} match{testResult.match_count !== 1 ? "es" : ""} found
+              {t("customPatterns.nMatches", { count: testResult.match_count })}
             </div>
             {testResult.matches.length > 0 && (
               <div style={{ marginTop: 6, fontSize: 12, color: "var(--text-secondary)" }}>
-                Matches: {testResult.matches.map(m => (
+                {t("customPatterns.matches")} {testResult.matches.map(m => (
                   <code key={m.start} style={{ background: "var(--accent-success)", color: "white", padding: "1px 4px", borderRadius: 2, marginRight: 4 }}>
                     {m.text}
                   </code>
@@ -531,7 +533,7 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
             fontSize: 13,
           }}
         >
-          Cancel
+          {t("common.cancel")}
         </button>
         <button
           onClick={handleSave}
@@ -546,7 +548,7 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
             fontWeight: 500,
           }}
         >
-          {initial ? "Update" : "Add"} Pattern
+          {initial ? t("customPatterns.updatePattern") : t("customPatterns.addPattern")}
         </button>
       </div>
     </div>
@@ -558,6 +560,7 @@ function PatternEditor({ onSave, onCancel, initial }: PatternEditorProps) {
  * Used by DetectionSection when the "Custom patterns" checkbox is checked.
  */
 export function CustomPatternsContent() {
+  const { t } = useTranslation();
   const [patterns, setPatterns] = useState<CustomPattern[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -599,7 +602,7 @@ export function CustomPatternsContent() {
   };
 
   const handleDeletePattern = async (patternId: string) => {
-    if (!confirm("Delete this pattern?")) return;
+    if (!confirm(t("customPatterns.deleteConfirm"))) return;
     try {
       await deleteCustomPattern(patternId);
       setPatterns(patterns.filter(p => p.id !== patternId));
@@ -630,7 +633,7 @@ export function CustomPatternsContent() {
   return (
     <div>
       <p style={styles.hint}>
-        Define custom regex patterns to detect organization-specific data formats like employee IDs, reference numbers, or internal codes.
+        {t("customPatterns.description")}
       </p>
       
       {error && (
@@ -646,7 +649,7 @@ export function CustomPatternsContent() {
       )}
       
       {loading ? (
-        <p style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading patterns...</p>
+        <p style={{ fontSize: 13, color: "var(--text-muted)" }}>{t("customPatterns.loadingPatterns")}</p>
       ) : (
         <>
           {/* Pattern list */}
@@ -676,7 +679,7 @@ export function CustomPatternsContent() {
                       padding: 0,
                       display: "flex",
                     }}
-                    title={pattern.enabled ? "Disable" : "Enable"}
+                    title={pattern.enabled ? t("customPatterns.disable") : t("customPatterns.enable")}
                   >
                     {pattern.enabled ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
                   </button>
@@ -715,7 +718,7 @@ export function CustomPatternsContent() {
                       fontSize: 12,
                     }}
                   >
-                    Edit
+                    {t("common.edit")}
                   </button>
                   
                   <button
@@ -728,7 +731,7 @@ export function CustomPatternsContent() {
                       padding: 4,
                       display: "flex",
                     }}
-                    title="Delete"
+                    title={t("customPatterns.deletePattern")}
                   >
                     <Trash2 size={16} />
                   </button>
@@ -762,13 +765,13 @@ export function CustomPatternsContent() {
                 fontSize: 13,
               }}
             >
-              <Plus size={16} /> Add custom pattern
+              <Plus size={16} /> {t("customPatterns.addCustomPattern")}
             </button>
           )}
           
           {patterns.length === 0 && !showEditor && (
             <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8, textAlign: "center" }}>
-              No custom patterns defined yet. Add one to detect organization-specific data.
+              {t("customPatterns.emptyState")}
             </p>
           )}
         </>

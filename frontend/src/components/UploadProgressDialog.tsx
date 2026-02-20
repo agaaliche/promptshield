@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useState, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Loader2,
   CheckCircle2,
@@ -18,7 +19,7 @@ import {
   FileText,
   Clock,
   ScanSearch,
-} from "lucide-react";
+} from "../icons";
 import { getUploadProgress } from "../api";
 import type { UploadProgressInfo } from "../api";
 import { Z_MODAL } from "../zIndex";
@@ -44,9 +45,9 @@ function formatElapsed(seconds: number): string {
 }
 
 /** Phase config for the two-step indicator. */
-const PHASES = [
-  { key: "extracting", label: "Extract", icon: FileText },
-  { key: "ocr", label: "OCR", icon: ScanSearch },
+const PHASE_LABEL_KEYS = [
+  { key: "extracting", labelKey: "uploadProgress.phaseExtract", icon: FileText },
+  { key: "ocr", labelKey: "uploadProgress.phaseOCR", icon: ScanSearch },
 ] as const;
 
 export default function UploadProgressDialog({
@@ -56,6 +57,7 @@ export default function UploadProgressDialog({
   phase,
   visible,
 }: Props) {
+  const { t } = useTranslation();
   const [uploadInfo, setUploadInfo] = useState<UploadProgressInfo | null>(null);
   const uploadPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef(Date.now());
@@ -110,7 +112,7 @@ export default function UploadProgressDialog({
     if (uploadPhase === "ocr") activePhaseIdx = 1;
     else activePhaseIdx = 0;
   } else if (isDone) {
-    activePhaseIdx = PHASES.length; // all done
+    activePhaseIdx = PHASE_LABEL_KEYS.length; // all done
   }
 
   // Overall percentage (0-100 across 2 phases: each gets ~50%)
@@ -136,13 +138,13 @@ export default function UploadProgressDialog({
   }
 
   // Current message
-  let message = "Preparing…";
+  let message = t("uploadProgress.preparing");
   if (isUploading) {
-    message = uploadInfo?.message || "Processing document…";
+    message = uploadInfo?.message || t("uploadProgress.processingFallback");
   } else if (isDone) {
-    message = "Extraction complete — ready for detection";
+    message = t("uploadProgress.extractionComplete");
   } else if (isError) {
-    message = "Processing failed";
+    message = t("uploadProgress.processingFailed");
   }
 
   const totalPages = uploadInfo?.total_pages || 0;
@@ -151,7 +153,7 @@ export default function UploadProgressDialog({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Upload progress"
+      aria-label={t("uploadProgress.ariaLabel")}
       style={{
         position: "absolute",
         inset: 0,
@@ -195,7 +197,7 @@ export default function UploadProgressDialog({
             />
           )}
           <span style={{ fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>
-            {isDone ? "Processing Complete" : isError ? "Processing Failed" : "Processing Document"}
+            {isDone ? t("uploadProgress.titleComplete") : isError ? t("uploadProgress.titleFailed") : t("uploadProgress.titleProcessing")}
           </span>
         </div>
 
@@ -227,7 +229,7 @@ export default function UploadProgressDialog({
 
           {/* Phase steps indicator */}
           <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 16 }}>
-            {PHASES.map((p, i) => {
+            {PHASE_LABEL_KEYS.map((p, i) => {
               const Icon = p.icon;
               const isActive = i === activePhaseIdx && !isDone && !isError;
               const isCompleted = isDone || i < activePhaseIdx;
@@ -277,10 +279,10 @@ export default function UploadProgressDialog({
                             : "var(--text-muted)",
                       }}
                     >
-                      {p.label}
+                      {t(p.labelKey)}
                     </span>
                   </div>
-                  {i < PHASES.length - 1 && (
+                  {i < PHASE_LABEL_KEYS.length - 1 && (
                     <div
                       style={{
                         height: 2,
@@ -351,12 +353,12 @@ export default function UploadProgressDialog({
             >
               {uploadPhase === "extracting" && (
                 <div>
-                  Extracting page {uploadInfo?.current_page ?? 0} of {totalPages}
+                  {t("uploadProgress.extractingPage", { current: uploadInfo?.current_page ?? 0, total: totalPages })}
                 </div>
               )}
               {uploadPhase === "ocr" && (
                 <>
-                  <div>OCR processing: {uploadInfo?.ocr_pages_done ?? 0} of {uploadInfo?.ocr_pages_total ?? 0} pages</div>
+                  <div>{t("uploadProgress.ocrPage", { current: uploadInfo?.ocr_pages_done ?? 0, total: uploadInfo?.ocr_pages_total ?? 0 })}</div>
                   <div
                     style={{
                       height: 4,

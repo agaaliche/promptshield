@@ -1,7 +1,8 @@
 /** Upload dialog — drag & drop overlay that appears on top of the document viewer. */
 
 import { useCallback, useRef, useState } from "react";
-import { Upload, X, FolderUp } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Upload, X, FolderUp } from "../icons";
 import { useUploadStore, useUIStore } from "../store";
 import { useDocumentUpload, ACCEPTED_FILE_TYPES } from "../hooks/useDocumentUpload";
 import { Z_UPLOAD_DIALOG } from "../zIndex";
@@ -9,6 +10,7 @@ import { Z_UPLOAD_DIALOG } from "../zIndex";
 const ACCEPT = ACCEPTED_FILE_TYPES;
 
 export default function UploadDialog() {
+  const { t } = useTranslation();
   const { showUploadDialog, setShowUploadDialog } = useUploadStore();
   const { isProcessing } = useUIStore();
 
@@ -40,7 +42,7 @@ export default function UploadDialog() {
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Upload documents"
+      aria-label={t("upload.ariaLabel")}
       style={styles.backdrop}
       onClick={onBackdropClick}
     >
@@ -48,7 +50,7 @@ export default function UploadDialog() {
         {/* Header */}
         <div style={styles.header}>
           <Upload size={18} style={{ color: "var(--accent-primary)" }} />
-          <span style={styles.headerTitle}>Upload Documents</span>
+          <span style={styles.headerTitle}>{t("upload.title")}</span>
           <button
             className="btn-ghost btn-sm"
             onClick={() => setShowUploadDialog(false)}
@@ -101,7 +103,7 @@ export default function UploadDialog() {
             {isProcessing ? (
               <div style={styles.processingContent}>
                 <div style={styles.spinner} />
-                <p style={styles.processingText}>Processing documents...</p>
+                <p style={styles.processingText}>{t("upload.processing")}</p>
               </div>
             ) : (
               <>
@@ -110,10 +112,10 @@ export default function UploadDialog() {
                   style={{ color: "var(--accent-primary)", marginBottom: 14 }}
                 />
                 <p style={styles.dropText}>
-                  Drag & drop files here, or click to browse
+                  {t("upload.dragDrop")}
                 </p>
                 <p style={styles.formatText}>
-                  Supports: PDF, DOCX, XLSX, PPTX, JPG, PNG, TIFF, BMP
+                  {t("upload.supportedFormats")}
                 </p>
                 <button
                   className="btn-ghost btn-sm"
@@ -123,7 +125,7 @@ export default function UploadDialog() {
                     folderRef.current?.click();
                   }}
                 >
-                  <FolderUp size={14} /> Upload folder
+                  <FolderUp size={14} /> {t("upload.uploadFolder")}
                 </button>
               </>
             )}

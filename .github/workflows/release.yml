@@ -1,0 +1,238 @@
+# Build and release signed Tauri desktop installers.
+#
+# Triggers on version tags: v0.1.0, v1.0.0, etc.
+# Builds for Windows (MSI + NSIS) and macOS (.dmg).
+#
+# Required repository secrets:
+#   WINDOWS_CERTIFICATE       — Base64-encoded .pfx code-signing certificate
+#   WINDOWS_CERTIFICATE_PWD   — Password for the .pfx
+#   APPLE_CERTIFICATE         — Base64-encoded .p12 Apple Developer ID cert
+#   APPLE_CERTIFICATE_PWD     — Password for the .p12
+#   APPLE_ID                  — Apple ID email (for notarization)
+#   APPLE_ID_PASSWORD         — App-specific password for notarization
+#   APPLE_TEAM_ID             — Apple Developer Team ID
+#   SENTRY_AUTH_TOKEN         — (optional) For uploading source maps
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ── Build Python sidecar (runs once, artifacts shared) ──────
+  build-sidecar:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: .exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            ext: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        working-directory: src-python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[build]"
+          pip install nuitka ordered-set
+
+      - name: Build sidecar with Nuitka
+        working-directory: src-python
+        run: |
+          python -m nuitka \
+            --standalone \
+            --onefile \
+            --output-filename=doc-anonymizer-sidecar${{ matrix.ext }} \
+            --output-dir=../dist \
+            main.py
+        shell: bash
+
+      - name: Upload sidecar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-${{ matrix.target }}
+          path: dist/doc-anonymizer-sidecar${{ matrix.ext }}
+
+  # ── Build Tauri app (Windows) ────────────────────────────────
+  build-windows:
+    needs: build-sidecar
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download sidecar
+        uses: actions/download-artifact@v4
+        with:
+          name: sidecar-x86_64-pc-windows-msvc
+          path: frontend/src-tauri/binaries/
+
+      - name: Rename sidecar for Tauri
+        run: |
+          Move-Item `
+            frontend/src-tauri/binaries/doc-anonymizer-sidecar.exe `
+            frontend/src-tauri/binaries/doc-anonymizer-sidecar-x86_64-pc-windows-msvc.exe
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      - name: Import code-signing certificate
+        if: env.WINDOWS_CERTIFICATE != ''
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PWD: ${{ secrets.WINDOWS_CERTIFICATE_PWD }}
+        run: |
+          $certBytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          $certPath = Join-Path $env:RUNNER_TEMP "cert.pfx"
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+          $thumb = (Import-PfxCertificate -FilePath $certPath `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -Password (ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PWD -AsPlainText -Force)).Thumbprint
+          Write-Host "Certificate imported. Thumbprint: $thumb"
+          echo "TAURI_SIGNING_CERTIFICATE_THUMBPRINT=$thumb" >> $env:GITHUB_ENV
+          Remove-Item $certPath
+
+      - name: Build Tauri app
+        working-directory: frontend
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+        run: npx tauri build
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            frontend/src-tauri/target/release/bundle/msi/*.msi
+            frontend/src-tauri/target/release/bundle/nsis/*.exe
+
+  # ── Build Tauri app (macOS) ──────────────────────────────────
+  build-macos:
+    needs: build-sidecar
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download sidecar
+        uses: actions/download-artifact@v4
+        with:
+          name: sidecar-aarch64-apple-darwin
+          path: frontend/src-tauri/binaries/
+
+      - name: Rename sidecar for Tauri
+        run: |
+          mv frontend/src-tauri/binaries/doc-anonymizer-sidecar \
+             frontend/src-tauri/binaries/doc-anonymizer-sidecar-aarch64-apple-darwin
+          chmod +x frontend/src-tauri/binaries/doc-anonymizer-sidecar-aarch64-apple-darwin
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      - name: Import Apple certificate
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PWD: ${{ secrets.APPLE_CERTIFICATE_PWD }}
+        run: |
+          CERT_PATH=$RUNNER_TEMP/cert.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PWD=$(openssl rand -base64 32)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PWD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          rm "$CERT_PATH"
+
+      - name: Build Tauri app
+        working-directory: frontend
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || 'Developer ID Application' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx tauri build --target aarch64-apple-darwin
+
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: |
+            frontend/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+
+  # ── Create GitHub Release ────────────────────────────────────
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/windows-installers/**/*
+            artifacts/macos-installer/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

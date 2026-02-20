@@ -1,16 +1,18 @@
 /** User menu — shows logged user info in sidebar bottom. */
 
-import { User } from "lucide-react";
+import { User } from "../icons";
 import { useLicenseStore } from "../store";
 import { auth } from "../firebaseConfig";
+import { useTranslation } from "react-i18next";
 
 export default function UserMenu() {
+  const { t } = useTranslation();
   const { licenseStatus } = useLicenseStore();
 
   if (!licenseStatus?.valid) return null;
 
   const payload = licenseStatus.payload;
-  const email = payload?.email ?? auth.currentUser?.email ?? "Unknown";
+  const email = payload?.email ?? auth.currentUser?.email ?? t("userMenu.unknown");
 
   // Derive display values
   const userName = email.split("@")[0];

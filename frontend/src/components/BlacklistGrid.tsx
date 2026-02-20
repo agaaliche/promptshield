@@ -1,8 +1,9 @@
 /** Excel-like grid for blacklist term entry with copy/paste support. */
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Key, Trash2 } from "lucide-react";
+import { Key, Trash2 } from "../icons";
 import { MAX_COLS, MAX_ROWS } from "./blacklistUtils";
+import { useTranslation } from "react-i18next";
 
 /** Marching ants keyframes – injected once. */
 const MARCHING_ANTS_STYLE = `
@@ -49,6 +50,7 @@ export default function BlacklistGrid({
   onFuzzinessChange,
   matchStatus,
 }: BlacklistGridProps) {
+  const { t } = useTranslation();
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
   const [selectionEnd, setSelectionEnd] = useState<{ row: number; col: number } | null>(null);
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
@@ -830,10 +832,10 @@ export default function BlacklistGrid({
               textShadow: "none",
               transition: "all 0.15s ease",
             }}
-            title="Flag matched regions for tokenization"
+            title={t("blacklist.tokenizeTooltip")}
           >
             <Key size={13} />
-            Tokenize
+            {t("blacklist.tokenize")}
           </button>
           <button
             onClick={() => onActionChange(action === "remove" ? "none" : "remove")}
@@ -855,16 +857,16 @@ export default function BlacklistGrid({
               textShadow: "none",
               transition: "all 0.15s ease",
             }}
-            title="Flag matched regions for removal"
+            title={t("blacklist.removeTooltip")}
           >
             <Trash2 size={13} />
-            Remove
+            {t("blacklist.remove")}
           </button>
         </div>
 
         {/* Fuzziness slider */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 120 }}>
-          <span style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>Fuzziness</span>
+          <span style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{t("blacklist.fuzziness")}</span>
           <input
             type="range"
             min={0.5}
@@ -873,16 +875,16 @@ export default function BlacklistGrid({
             value={fuzziness}
             onChange={(e) => onFuzzinessChange(parseFloat(e.target.value))}
             style={{ flex: 1, accentColor: "var(--accent-primary)", cursor: "pointer" }}
-            title={`Fuzziness: ${fuzziness.toFixed(2)} — ${fuzziness >= 0.98 ? "Exact match" : fuzziness >= 0.85 ? "Minor typos tolerated" : "More variations allowed"}`}
+            title={`${t("blacklist.fuzziness")}: ${fuzziness.toFixed(2)} — ${fuzziness >= 0.98 ? t("blacklist.exactMatch") : fuzziness >= 0.85 ? t("blacklist.minorTypos") : t("blacklist.moreVariations")}`}
           />
           <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-primary)", minWidth: 28, textAlign: "right" }}>
-            {fuzziness >= 0.98 ? "Exact" : fuzziness.toFixed(2)}
+            {fuzziness >= 0.98 ? t("blacklist.exact") : fuzziness.toFixed(2)}
           </span>
         </div>
 
         {/* Term count */}
         <span style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-          {filledCellCount} term{filledCellCount !== 1 ? "s" : ""}
+          {t("blacklist.nTerms", { count: filledCellCount })}
         </span>
       </div>
     </div>

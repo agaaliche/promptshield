@@ -1,6 +1,7 @@
 /** De-tokenization view — paste text OR upload a file to replace tokens with originals. */
 
 import { useState, useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ArrowRightLeft,
   Copy,
@@ -10,7 +11,7 @@ import {
   FileText,
   Download,
   X,
-} from "lucide-react";
+} from "../icons";
 import { detokenize, detokenizeFile, type DetokenizeFileResult } from "../api";
 import { toErrorMessage } from "../errorUtils";
 import { useVaultStore, useUIStore } from "../store";
@@ -20,6 +21,7 @@ type Mode = "text" | "file";
 const ACCEPTED_EXTENSIONS = ".txt,.csv,.pdf,.docx,.xlsx";
 
 export default function DetokenizeView() {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<Mode>("text");
 
   // Text mode state
@@ -130,8 +132,8 @@ export default function DetokenizeView() {
       <div style={S.container}>
         <div style={S.lockMessage}>
           <AlertTriangle size={48} style={{ color: "var(--accent-warning)" }} />
-          <h2>Vault Locked</h2>
-          <p>Unlock the vault in Settings to use de-tokenization.</p>
+          <h2>{t("detokenize.vaultLocked")}</h2>
+          <p>{t("detokenize.unlockVaultHint")}</p>
         </div>
       </div>
     );
@@ -140,9 +142,9 @@ export default function DetokenizeView() {
   // ── Render ────────────────────────────────────────────────────────
   return (
     <div style={S.container}>
-      <h2 style={S.title}>Token Swap</h2>
+      <h2 style={S.title}>{t("detokenize.title")}</h2>
       <p style={S.subtitle}>
-        Replace anonymization tokens with original values from your vault.
+        {t("detokenize.description")}
       </p>
 
       {/* Mode tabs */}
@@ -152,14 +154,14 @@ export default function DetokenizeView() {
           style={S.tab}
           onClick={() => setMode("text")}
         >
-          <FileText size={14} /> Paste Text
+          <FileText size={14} /> {t("detokenize.tabPasteText")}
         </button>
         <button
           className={mode === "file" ? "btn-primary" : "btn-ghost"}
           style={S.tab}
           onClick={() => setMode("file")}
         >
-          <Upload size={14} /> Upload File
+          <Upload size={14} /> {t("detokenize.tabUploadFile")}
         </button>
       </div>
 
@@ -167,12 +169,12 @@ export default function DetokenizeView() {
       {mode === "text" && (
         <div style={S.columns}>
           <div style={S.column}>
-            <label style={S.label}>Input (with tokens)</label>
+            <label style={S.label}>{t("detokenize.inputLabel")}</label>
             <textarea
               style={S.textarea}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Paste text containing [P38291] style tokens here..."
+              placeholder={t("detokenize.inputPlaceholder")}
               rows={18}
             />
           </div>
@@ -182,7 +184,7 @@ export default function DetokenizeView() {
               className="btn-primary"
               onClick={handleDetokenizeText}
               disabled={isProcessing || !input.trim()}
-              title="Swap tokens"
+              title={t("detokenize.swapTokens")}
               style={{
                 width: 52,
                 height: 52,
@@ -205,10 +207,10 @@ export default function DetokenizeView() {
 
           <div style={S.column}>
             <div style={S.outputHeader}>
-              <label style={S.label}>Output (restored)</label>
+              <label style={S.label}>{t("detokenize.outputLabel")}</label>
               {output && (
                 <button className="btn-ghost btn-sm" onClick={copyOutput}>
-                  <Copy size={12} /> Copy
+                  <Copy size={12} /> {t("common.copy")}
                 </button>
               )}
             </div>
@@ -216,7 +218,7 @@ export default function DetokenizeView() {
               style={S.textarea}
               value={output}
               readOnly
-              placeholder="Swapped text will appear here..."
+              placeholder={t("detokenize.outputPlaceholder")}
               rows={18}
             />
           </div>
@@ -243,7 +245,7 @@ export default function DetokenizeView() {
                 style={{ color: "var(--text-tertiary)" }}
               />
               <p style={{ margin: 0, fontWeight: 600 }}>
-                Drop a file here or click to browse
+                {t("detokenize.dropFileHint")}
               </p>
               <p
                 style={{
@@ -252,7 +254,7 @@ export default function DetokenizeView() {
                   color: "var(--text-tertiary)",
                 }}
               >
-                Supported: .pdf, .docx, .xlsx, .txt, .csv
+                {t("detokenize.supportedFiles")}
               </p>
               <input
                 ref={fileInputRef}
@@ -300,7 +302,7 @@ export default function DetokenizeView() {
                   style={{ padding: "10px 20px" }}
                 >
                   <ArrowRightLeft size={16} />
-                  {isProcessing ? "Processing..." : "Swap Tokens in File"}
+                  {isProcessing ? t("detokenize.processingFile") : t("detokenize.swapTokens")}
                 </button>
 
                 {fileResult && (
@@ -313,16 +315,14 @@ export default function DetokenizeView() {
                     }}
                   >
                     <Download size={16} />
-                    Download {fileResult.filename}
+                    {t("detokenize.downloadFile", { filename: fileResult.filename })}
                   </button>
                 )}
               </div>
 
               {selectedFile.name.toLowerCase().endsWith(".pdf") && (
                 <p style={S.hint}>
-                  Note: PDF files will be converted to .txt for
-                  de-tokenization because modifying PDF internals is
-                  unreliable.
+                  {t("detokenize.pdfNote")}
                 </p>
               )}
             </div>
@@ -337,7 +337,7 @@ export default function DetokenizeView() {
             size={16}
             style={{ color: "var(--accent-success)" }}
           />
-          <span>{tokensReplaced} token(s) replaced successfully</span>
+          <span>{t("detokenize.tokensReplaced", { count: tokensReplaced })}</span>
         </div>
       )}
 
@@ -345,8 +345,7 @@ export default function DetokenizeView() {
         <div style={S.warning}>
           <AlertTriangle size={16} />
           <span>
-            {unresolved.length} token(s) could not be resolved:{" "}
-            {unresolved.join(", ")}
+            {t("detokenize.tokensUnresolved", { count: unresolved.length, list: unresolved.join(", ") })}
           </span>
         </div>
       )}

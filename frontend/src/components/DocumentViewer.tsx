@@ -1,6 +1,7 @@
 /** Document viewer — renders page bitmap with PII highlight overlays. */
 
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ChevronLeft,
   ChevronRight,
@@ -14,7 +15,7 @@ import {
   Upload,
   LayoutGrid,
   X,
-} from "lucide-react";
+} from "../icons";
 import { useDocumentStore, useRegionStore, useUIStore, useVaultStore, useDocLoadingStore, useSidebarStore, useDetectionStore, useUploadStore } from "../store";
 import {
   getPageBitmapUrl,
@@ -43,6 +44,7 @@ import useLabelConfig from "../hooks/useLabelConfig";
 
 
 export default function DocumentViewer() {
+  const { t } = useTranslation();
   const { activeDocId, documents, activePage, setActivePage } = useDocumentStore();
   const { regions, updateRegionAction, removeRegion, setRegions, updateRegionBBox, updateRegion, selectedRegionIds, setSelectedRegionIds, toggleSelectedRegionId, clearSelection, pushUndo, undo, redo, canUndo, canRedo } = useRegionStore();
   const { zoom, setZoom, isProcessing, setIsProcessing, setStatusMessage, setDrawMode } = useUIStore();
@@ -75,6 +77,10 @@ export default function DocumentViewer() {
   const containerRef = useRef<HTMLDivElement>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+
+  // ── Fixed document width — captured once on image load so sidebar resizes don't reflow ──
+  const [baseWidth, setBaseWidth] = useState(0);
+  const baseWidthRef = useRef(0);
 
   const isImageFile = doc?.mime_type?.startsWith("image/") || false;
   const bitmapUrl = activeDocId ? getPageBitmapUrl(activeDocId, activePage) : "";
@@ -197,6 +203,24 @@ export default function DocumentViewer() {
     setCopiedRegions, setStatusMessage, handlePasteRegions, batchDeleteRegions,
   });
 
+  // ── Reset base width when switching documents ──
+  useEffect(() => {
+    baseWidthRef.current = 0;
+    setBaseWidth(0);
+  }, [activeDocId]);
+
+  // ── Wrap onImageLoad to capture fixed base width ──
+  const handleImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    onImageLoad(e);
+    if (baseWidthRef.current === 0) {
+      const w = e.currentTarget.offsetWidth;
+      if (w > 0) {
+        baseWidthRef.current = w;
+        setBaseWidth(w);
+      }
+    }
+  }, [onImageLoad]);
+
   // ── Responsive sidebar: shrink right sidebar first when window gets narrow ──
   const RIGHT_SIDEBAR_MIN_WIDTH = 200;
   const TOOLBAR_MIN_CONTENT_WIDTH = 400; // Minimum width for toolbar buttons + page nav + zoom
@@ -279,7 +303,7 @@ export default function DocumentViewer() {
         </div>
       );
     }
-    return <div style={styles.empty}>No document loaded</div>;
+    return <div style={styles.empty}>{t("viewer.noDocumentLoaded")}</div>;
   }
 
   // Block the viewer while loading OR detecting
@@ -294,7 +318,7 @@ export default function DocumentViewer() {
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
               <Loader2 size={36} color="var(--accent-primary)" style={{ animation: "spin 1s linear infinite" }} />
               <div style={{ fontSize: 14, color: "var(--text-secondary)" }}>
-                {docLoadingMessage || "Loading document\u2026"}
+                {docLoadingMessage || t("viewer.loadingDocument")}
               </div>
             </div>
           </div>
@@ -342,7 +366,7 @@ export default function DocumentViewer() {
           }}
         >
           <Upload size={14} />
-          Upload
+          {t("common.upload")}
         </button>
         <button
           className="btn-primary"
@@ -358,7 +382,7 @@ export default function DocumentViewer() {
           }}
         >
           <ScanSearch size={14} />
-          Detect
+          {t("common.detect")}
         </button>
 
         {showAutodetect && (
@@ -395,7 +419,7 @@ export default function DocumentViewer() {
           }
         >
           <Shield size={14} />
-          Export
+          {t("common.export")}
         </button>
 
         {/* Center section: Zoom controls */}
@@ -408,17 +432,17 @@ export default function DocumentViewer() {
           overflow: "hidden",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <button className="btn-ghost btn-sm" onClick={() => setZoom(Math.max(0.1, zoom - 0.1))} title="Zoom out" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
+            <button className="btn-ghost btn-sm" onClick={() => setZoom(Math.max(0.1, zoom - 0.1))} title={t("viewer.zoomOut")} style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
               <ZoomOut size={16} />
             </button>
             <span
               style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", minWidth: 40, textAlign: "center", cursor: "pointer" }}
               onClick={() => setZoom(1)}
-              title="Reset zoom to 100%"
+              title={t("viewer.resetZoom")}
             >
               {Math.round(zoom * 100)}%
             </span>
-            <button className="btn-ghost btn-sm" onClick={() => setZoom(zoom + 0.1)} title="Zoom in" style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
+            <button className="btn-ghost btn-sm" onClick={() => setZoom(zoom + 0.1)} title={t("viewer.zoomIn")} style={{ padding: "4px 6px", color: "var(--text-secondary)" }}>
               <ZoomIn size={16} />
             </button>
           </div>
@@ -427,10 +451,10 @@ export default function DocumentViewer() {
         {/* Right section: Page navigation */}
         {pageCount > 1 && (
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <button className="btn-ghost btn-sm" onClick={() => setActivePage(1)} disabled={activePage <= 1} title="First page" style={{ padding: 6, color: "var(--text-secondary)", background: "var(--bg-tertiary)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <button className="btn-ghost btn-sm" onClick={() => setActivePage(1)} disabled={activePage <= 1} title={t("viewer.firstPage")} style={{ padding: 6, color: "var(--text-secondary)", background: "var(--bg-tertiary)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <ChevronsLeft size={16} />
             </button>
-            <button className="btn-ghost btn-sm" onClick={() => setActivePage(Math.max(1, activePage - 1))} disabled={activePage <= 1} title="Previous page" style={{ padding: 6, color: "var(--text-secondary)", background: "var(--bg-tertiary)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <button className="btn-ghost btn-sm" onClick={() => setActivePage(Math.max(1, activePage - 1))} disabled={activePage <= 1} title={t("viewer.previousPage")} style={{ padding: 6, color: "var(--text-secondary)", background: "var(--bg-tertiary)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <ChevronLeft size={16} />
             </button>
             <input
@@ -449,21 +473,21 @@ export default function DocumentViewer() {
                 background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
                 borderRadius: 4, color: "var(--text-primary)", outline: "none",
               }}
-              title="Go to page"
+              title={t("viewer.goToPage")}
             />
-            <button className="btn-ghost btn-sm" onClick={() => setActivePage(Math.min(pageCount, activePage + 1))} disabled={activePage >= pageCount} title="Next page" style={{ padding: 6, color: "var(--text-secondary)", background: "var(--bg-tertiary)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <button className="btn-ghost btn-sm" onClick={() => setActivePage(Math.min(pageCount, activePage + 1))} disabled={activePage >= pageCount} title={t("viewer.nextPage")} style={{ padding: 6, color: "var(--text-secondary)", background: "var(--bg-tertiary)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <ChevronRight size={16} />
             </button>
-            <button className="btn-ghost btn-sm" onClick={() => setActivePage(pageCount)} disabled={activePage >= pageCount} title="Last page" style={{ padding: 6, color: "var(--text-secondary)", background: "var(--bg-tertiary)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <button className="btn-ghost btn-sm" onClick={() => setActivePage(pageCount)} disabled={activePage >= pageCount} title={t("viewer.lastPage")} style={{ padding: 6, color: "var(--text-secondary)", background: "var(--bg-tertiary)", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <ChevronsRight size={16} />
             </button>
             <div style={{ padding: "4px 10px", background: "var(--bg-tertiary)", borderRadius: 14, fontSize: 12, color: "var(--text-secondary)", fontWeight: 500, marginLeft: 20 }}>
-              {pageCount} pages
+              {t("viewer.nPages", { count: pageCount })}
             </div>
             <button
               className="btn-ghost btn-sm"
               onClick={() => setPageNavCollapsed(!pageNavCollapsed)}
-              title={pageNavCollapsed ? "Show page thumbnails" : "Hide page thumbnails"}
+              title={pageNavCollapsed ? t("viewer.showThumbnails") : t("viewer.hideThumbnails")}
               style={{
                 marginLeft: 4,
                 padding: 0,
@@ -562,11 +586,18 @@ export default function DocumentViewer() {
         paddingRight: rightInset,
         transition: isSidebarDragging ? 'none' : 'padding-right 0.2s ease',
       }}>
+        {/* Scroll sizer — explicit zoomed dimensions for correct scroll range */}
+        <div style={{
+          ...(baseWidth > 0
+            ? { width: Math.ceil(imgSize.width * zoom), height: Math.ceil(imgSize.height * zoom), overflow: 'hidden' as const }
+            : {}),
+          margin: '0 auto',
+        }}>
         <div
           style={{
             ...styles.pageContainer,
             transform: `scale(${zoom})`,
-            transformOrigin: "top center",
+            transformOrigin: "top left",
           }}
         >
           <div
@@ -583,11 +614,12 @@ export default function DocumentViewer() {
               alt={`Page ${activePage}`}
               style={{
                 ...styles.pageImage,
+                ...(baseWidth > 0 ? { width: baseWidth } : { maxWidth: '100%' }),
                 cursor: cursorTool === "draw" ? CURSOR_CROSSHAIR
                   : cursorTool === "lasso" ? 'crosshair'
                   : isPanning ? 'grabbing' : 'default',
               }}
-              onLoad={onImageLoad}
+              onLoad={handleImageLoad}
               draggable={false}
             />
 
@@ -685,9 +717,9 @@ export default function DocumentViewer() {
                 const text = selRegions[0].text.replace(/\n/g, " ");
                 label = `${type}: ${text}`;
               } else if (types.size === 1) {
-                label = `${selRegions.length} × ${[...types][0]}`;
+                label = t("viewer.regionsSameType", { count: selRegions.length, type: [...types][0] });
               } else {
-                label = `${selRegions.length} regions (multiple types)`;
+                label = t("viewer.regionsMultiType", { count: selRegions.length });
               }
               return (
                 <>
@@ -727,6 +759,7 @@ export default function DocumentViewer() {
             })()}
           </div>
         </div>
+        </div>{/* end scroll sizer */}
 
       </div>
 
@@ -850,8 +883,6 @@ const styles: Record<string, React.CSSProperties> = {
     bottom: 0,
     overflow: "auto",
     background: "var(--bg-primary)",
-    display: "flex",
-    justifyContent: "center",
     paddingTop: 20,
     paddingBottom: 20,
   },
@@ -860,7 +891,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pageImage: {
     display: "block",
-    maxWidth: "100%",
     boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
   },
   empty: {

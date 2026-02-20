@@ -7,8 +7,9 @@ import {
   Redo2,
   ChevronLeft,
   ChevronRight,
-} from "lucide-react";
+} from "../icons";
 import { useRef, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 
 interface CursorToolToolbarProps {
   cursorToolbarRef: React.RefObject<HTMLDivElement | null>;
@@ -39,6 +40,7 @@ export default function CursorToolToolbar({
   undo,
   redo,
 }: CursorToolToolbarProps) {
+  const { t } = useTranslation();
   return (
     <div
       ref={cursorToolbarRef}
@@ -102,9 +104,9 @@ export default function CursorToolToolbar({
             alignItems: "center",
             color: "var(--text-secondary)",
           }}
-          title={expanded ? "Collapse" : "Expand"}
+          title={expanded ? t("tools.collapse") : t("tools.expand")}
         >
-          {expanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+          {expanded ? <ChevronLeft size={14} variant="light" /> : <ChevronRight size={14} variant="light" />}
         </button>
       </div>
 
@@ -125,6 +127,7 @@ export default function CursorToolToolbar({
             fontSize: 12,
             display: "flex",
             alignItems: "center",
+            justifyContent: expanded ? "flex-start" : "center",
             gap: 8,
             background:
               cursorTool === "pointer" ? "var(--bg-primary)" : "transparent",
@@ -141,10 +144,10 @@ export default function CursorToolToolbar({
             fontWeight: cursorTool === "pointer" ? 600 : 400,
             whiteSpace: "nowrap",
           }}
-          title="Pointer — pan & select (Esc)"
+          title={t("tools.pointerTooltip")}
         >
-          <MousePointer size={16} />
-          {expanded && "Pointer"}
+          <MousePointer size={16} variant="light" />
+          {expanded && t("tools.pointer")}
         </button>
 
         {/* Lasso */}
@@ -159,6 +162,7 @@ export default function CursorToolToolbar({
             fontSize: 12,
             display: "flex",
             alignItems: "center",
+            justifyContent: expanded ? "flex-start" : "center",
             gap: 8,
             background:
               cursorTool === "lasso" ? "var(--bg-primary)" : "transparent",
@@ -175,10 +179,10 @@ export default function CursorToolToolbar({
             fontWeight: cursorTool === "lasso" ? 600 : 400,
             whiteSpace: "nowrap",
           }}
-          title="Lasso — drag to select multiple regions"
+          title={t("tools.lassoTooltip")}
         >
-          <BoxSelect size={16} />
-          {expanded && "Lasso"}
+          <BoxSelect size={16} variant="light" />
+          {expanded && t("tools.lasso")}
         </button>
 
         {/* Draw */}
@@ -193,6 +197,7 @@ export default function CursorToolToolbar({
             fontSize: 12,
             display: "flex",
             alignItems: "center",
+            justifyContent: expanded ? "flex-start" : "center",
             gap: 8,
             background:
               cursorTool === "draw" ? "var(--bg-primary)" : "transparent",
@@ -209,10 +214,10 @@ export default function CursorToolToolbar({
             fontWeight: cursorTool === "draw" ? 600 : 400,
             whiteSpace: "nowrap",
           }}
-          title="Draw — create new anonymization region"
+          title={t("tools.drawTooltip")}
         >
-          <PenTool size={16} />
-          {expanded && "Draw"}
+          <PenTool size={16} variant="light" />
+          {expanded && t("tools.draw")}
         </button>
 
         {/* Separator */}
@@ -237,6 +242,7 @@ export default function CursorToolToolbar({
             fontSize: 12,
             display: "flex",
             alignItems: "center",
+            justifyContent: expanded ? "flex-start" : "center",
             gap: 8,
             background: "transparent",
             border: "1px solid transparent",
@@ -246,10 +252,10 @@ export default function CursorToolToolbar({
             opacity: canUndo ? 1 : 0.4,
             whiteSpace: "nowrap",
           }}
-          title="Undo (Ctrl+Z)"
+          title={t("tools.undoTooltip")}
         >
-          <Undo2 size={16} />
-          {expanded && "Undo"}
+          <Undo2 size={16} variant="light" />
+          {expanded && t("tools.undo")}
         </button>
 
         {/* Redo */}
@@ -265,6 +271,7 @@ export default function CursorToolToolbar({
             fontSize: 12,
             display: "flex",
             alignItems: "center",
+            justifyContent: expanded ? "flex-start" : "center",
             gap: 8,
             background: "transparent",
             border: "1px solid transparent",
@@ -274,10 +281,10 @@ export default function CursorToolToolbar({
             opacity: canRedo ? 1 : 0.4,
             whiteSpace: "nowrap",
           }}
-          title="Redo (Ctrl+Y)"
+          title={t("tools.redoTooltip")}
         >
-          <Redo2 size={16} />
-          {expanded && "Redo"}
+          <Redo2 size={16} variant="light" />
+          {expanded && t("tools.redo")}
         </button>
       </div>
     </div>

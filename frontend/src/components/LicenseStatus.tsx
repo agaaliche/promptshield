@@ -7,8 +7,10 @@
 import { useState } from "react";
 import { useLicenseStore, useSnackbarStore } from "../store";
 import { deactivateLicense } from "../licenseApi";
+import { useTranslation } from "react-i18next";
 
 export default function LicenseStatus() {
+  const { t } = useTranslation();
   const { licenseStatus } = useLicenseStore();
   const { addSnackbar } = useSnackbarStore();
   const [busy, setBusy] = useState(false);
@@ -21,9 +23,9 @@ export default function LicenseStatus() {
     setBusy(true);
     try {
       await deactivateLicense();
-      addSnackbar("License deactivated", "info");
+      addSnackbar(t("license.deactivated"), "info");
     } catch {
-      addSnackbar("Failed to deactivate", "error");
+      addSnackbar(t("license.failedToDeactivate"), "error");
     } finally {
       setBusy(false);
     }
@@ -31,10 +33,10 @@ export default function LicenseStatus() {
 
   const planLabel =
     payload?.plan === "free_trial"
-      ? "Free Trial"
+      ? t("license.freeTrial")
       : payload?.plan === "pro"
-        ? "Pro"
-        : payload?.plan ?? "—";
+        ? t("license.pro")
+        : payload?.plan ?? t("license.noplan");
 
   const statusColor = valid
     ? days_remaining !== null && days_remaining <= 7
@@ -49,7 +51,7 @@ export default function LicenseStatus() {
         <span style={styles.planText}>{planLabel}</span>
         {days_remaining !== null && valid && (
           <span style={styles.daysText}>
-            {days_remaining}d left
+            {t("license.daysLeft", { count: days_remaining })}
           </span>
         )}
       </div>
@@ -61,7 +63,7 @@ export default function LicenseStatus() {
         </div>
       )}
       <button onClick={handleDeactivate} disabled={busy} style={styles.deactivateBtn}>
-        {busy ? "..." : "Sign Out"}
+        {busy ? "..." : t("account.signOut")}
       </button>
     </div>
   );

@@ -1,7 +1,8 @@
 /** Upload view — drag & drop or file picker for document upload. */
 
 import { useCallback, useRef, useState } from "react";
-import { Upload, AlertCircle, FolderUp } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Upload, AlertCircle, FolderUp } from "../icons";
 import { useUIStore } from "../store";
 import { useDocumentUpload, ACCEPTED_FILE_TYPES } from "../hooks/useDocumentUpload";
 
@@ -13,6 +14,7 @@ export default function UploadView() {
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const { isProcessing } = useUIStore();
+  const { t } = useTranslation();
 
   const { handleFiles } = useDocumentUpload({
     onBeforeUpload: () => setError(""),
@@ -31,9 +33,9 @@ export default function UploadView() {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h1 style={styles.title}>prompt<span style={{ color: 'var(--accent-primary)' }}>Shield</span></h1>
+        <h1 style={styles.title}>prompt<span style={{ color: 'var(--accent-primary)' }}>{t("common.shield")}</span></h1>
         <p style={styles.subtitle}>
-          Upload documents to detect and anonymize personal information
+          {t("upload.subtitle")}
         </p>
       </div>
 
@@ -72,22 +74,22 @@ export default function UploadView() {
         {isProcessing ? (
           <div style={styles.processingContent}>
             <div style={styles.spinner} />
-            <p style={styles.processingText}>Processing documents...</p>
+            <p style={styles.processingText}>{t("upload.processing")}</p>
           </div>
         ) : (
           <>
             <Upload size={48} style={{ color: "var(--accent-primary)", marginBottom: 16 }} />
             <p style={styles.dropText}>
-              Drag & drop files here, or click to browse
+              {t("upload.dragDrop")}
             </p>
             <p style={styles.formatText}>
-              Supports: PDF, DOCX, XLSX, PPTX, JPG, PNG, TIFF, BMP
+              {t("upload.supportedFormats")}
             </p>
             <button
               style={styles.folderBtn}
               onClick={(e) => { e.stopPropagation(); folderRef.current?.click(); }}
             >
-              <FolderUp size={16} /> Upload folder
+              <FolderUp size={16} /> {t("upload.uploadFolder")}
             </button>
           </>
         )}
@@ -103,18 +105,18 @@ export default function UploadView() {
       <div style={styles.features}>
         <FeatureCard
           icon="🔒"
-          title="Fully Offline"
-          desc="All processing happens locally. Your data never leaves your machine."
+          title={t("upload.featureOffline")}
+          desc={t("upload.featureOfflineDesc")}
         />
         <FeatureCard
           icon="🤖"
-          title="AI-Powered Detection"
-          desc="Hybrid regex + NER + LLM pipeline for comprehensive PII detection."
+          title={t("upload.featureAI")}
+          desc={t("upload.featureAIDesc")}
         />
         <FeatureCard
           icon="🔑"
-          title="Reversible Tokens"
-          desc="Tokenize PII for AI workflows. De-tokenize responses to restore originals."
+          title={t("upload.featureTokens")}
+          desc={t("upload.featureTokensDesc")}
         />
       </div>
     </div>

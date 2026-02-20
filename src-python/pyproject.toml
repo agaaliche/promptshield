@@ -25,6 +25,7 @@ dependencies = [
     "psutil~=5.9.0",
     "reportlab~=4.0.0",
     "PyStemmer~=2.2.0",
+    "sentry-sdk[fastapi]>=2.0.0",
 ]
 
 [project.optional-dependencies]

@@ -1,11 +1,13 @@
 /** Top-center snackbar / toast notifications. */
 
 import { useEffect } from "react";
-import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { X } from "../icons";
 import { useAppStore } from "../store";
 import { Z_TOAST } from "../zIndex";
 
 export default function Snackbar() {
+  const { t } = useTranslation();
   const snackbars = useAppStore((s) => s.snackbars);
   const removeSnackbar = useAppStore((s) => s.removeSnackbar);
 
@@ -38,7 +40,7 @@ export default function Snackbar() {
           <button
             onClick={() => removeSnackbar(snack.id)}
             style={styles.close}
-            title="Dismiss"
+            title={t("snackbar.dismiss")}
           >
             <X size={13} />
           </button>

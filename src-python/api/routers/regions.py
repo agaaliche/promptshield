@@ -132,15 +132,30 @@ class UpdateLabelRequest(_PydanticBaseModel):
 
 
 @router.put("/documents/{doc_id}/regions/{region_id}/label")
-async def update_region_label(doc_id: str, region_id: str, req: UpdateLabelRequest) -> dict[str, str]:
-    """Update the PII type label of a region."""
+async def update_region_label(doc_id: str, region_id: str, req: UpdateLabelRequest) -> dict[str, Any]:
+    """Update the PII type label of a region and all same-text siblings."""
     doc = get_doc(doc_id)
+    target = None
     for region in doc.regions:
         if region.id == region_id:
-            region.pii_type = req.pii_type
-            save_doc(doc)
-            return {"status": "ok", "region_id": region_id}
-    raise HTTPException(404, f"Region '{region_id}' not found")
+            target = region
+            break
+    if target is None:
+        raise HTTPException(404, f"Region '{region_id}' not found")
+
+    old_text = target.text.strip().lower()
+    target.pii_type = req.pii_type
+    updated: list[dict[str, str]] = [{"id": region_id, "pii_type": req.pii_type.value if hasattr(req.pii_type, 'value') else str(req.pii_type)}]
+
+    # Propagate to all regions with the same text
+    if old_text:
+        for region in doc.regions:
+            if region.id != region_id and region.text.strip().lower() == old_text:
+                region.pii_type = req.pii_type
+                updated.append({"id": region.id, "pii_type": updated[0]["pii_type"]})
+
+    save_doc(doc)
+    return {"status": "ok", "updated": updated}
 
 
 class UpdateTextRequest(_PydanticBaseModel):
@@ -148,15 +163,30 @@ class UpdateTextRequest(_PydanticBaseModel):
 
 
 @router.put("/documents/{doc_id}/regions/{region_id}/text")
-async def update_region_text(doc_id: str, region_id: str, req: UpdateTextRequest) -> dict[str, str]:
-    """Update the detected text content of a region."""
+async def update_region_text(doc_id: str, region_id: str, req: UpdateTextRequest) -> dict[str, Any]:
+    """Update the detected text content of a region and all same-text siblings."""
     doc = get_doc(doc_id)
+    target = None
     for region in doc.regions:
         if region.id == region_id:
-            region.text = req.text
-            save_doc(doc)
-            return {"status": "ok", "region_id": region_id}
-    raise HTTPException(404, f"Region '{region_id}' not found")
+            target = region
+            break
+    if target is None:
+        raise HTTPException(404, f"Region '{region_id}' not found")
+
+    old_text = target.text.strip().lower()
+    target.text = req.text
+    updated: list[dict[str, str]] = [{"id": region_id, "text": req.text}]
+
+    # Propagate to all regions with the same text
+    if old_text:
+        for region in doc.regions:
+            if region.id != region_id and region.text.strip().lower() == old_text:
+                region.text = req.text
+                updated.append({"id": region.id, "text": req.text})
+
+    save_doc(doc)
+    return {"status": "ok", "updated": updated}
 
 
 @router.post("/documents/{doc_id}/regions/{region_id}/reanalyze")
@@ -238,8 +268,9 @@ async def batch_delete_regions(doc_id: str, req: BatchActionRequest) -> dict[str
 
 
 @router.post("/documents/{doc_id}/regions/add")
-async def add_manual_region(doc_id: str, region: PIIRegion) -> dict[str, str]:
-    """Add a manually selected PII region."""
+async def add_manual_region(doc_id: str, region: PIIRegion) -> dict[str, Any]:
+    """Add a manually selected PII region, extract overlapping text, and
+    create sibling regions for all other occurrences of the same text."""
     doc = get_doc(doc_id)
     # H4: Always generate server-side ID — never trust client-provided IDs
     region.id = uuid.uuid4().hex[:12]
@@ -249,9 +280,43 @@ async def add_manual_region(doc_id: str, region: PIIRegion) -> dict[str, str]:
     pd = page_map.get(region.page_number)
     if pd is not None:
         region.bbox = _clamp_bbox(region.bbox, pd.width, pd.height)
+
+    # Extract real text under the bbox from text blocks
+    if pd is not None:
+        overlapping_parts: list[str] = []
+        for block in pd.text_blocks:
+            bb = block.bbox
+            if (bb.x0 < region.bbox.x1 and bb.x1 > region.bbox.x0
+                    and bb.y0 < region.bbox.y1 and bb.y1 > region.bbox.y0):
+                overlapping_parts.append(block.text)
+        extracted = " ".join(overlapping_parts).strip()
+        if extracted:
+            region.text = extracted
+
     doc.regions.append(region)
     save_doc(doc)
-    return {"status": "ok", "region_id": region.id}
+
+    # If meaningful text was found, highlight all occurrences across the doc
+    new_regions_json: list[dict] = []
+    all_ids: list[str] = [region.id]
+    if region.text and region.text != "[manual selection]":
+        try:
+            result = _highlight_all_impl(
+                doc_id, HighlightAllRequest(region_id=region.id),
+            )
+            new_regions_json = result.get("new_regions", [])
+            all_ids = result.get("all_ids", [region.id])
+        except Exception as e:
+            logger.warning("Auto highlight-all after manual add failed: %s", e)
+
+    return {
+        "status": "ok",
+        "region_id": region.id,
+        "text": region.text,
+        "pii_type": region.pii_type.value if hasattr(region.pii_type, "value") else str(region.pii_type),
+        "new_regions": new_regions_json,
+        "all_ids": all_ids,
+    }
 
 
 # ---------------------------------------------------------------------------

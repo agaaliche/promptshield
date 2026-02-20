@@ -17,11 +17,14 @@ from config import settings, validate_settings
 from database import engine, async_session
 from models import Base, LicenseKey
 from rate_limit import RateLimitMiddleware
-
-logger = logging.getLogger("licensing")
+from structured_logging import setup_logging
 
 # Validate configuration on import (before server starts)
 validate_settings()
+
+# Configure structured logging (JSON in production, text in dev)
+setup_logging(log_format=settings.log_format, level=settings.log_level)
+logger = logging.getLogger("licensing")
 
 
 @asynccontextmanager
@@ -93,6 +96,32 @@ app.add_middleware(
 # S4: Rate limiting — 60 requests/minute per IP
 app.add_middleware(RateLimitMiddleware, max_requests=60, window=60)
 
+# Structured request logging middleware (logs method, path, status, duration)
+import time
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.requests import Request
+from starlette.responses import Response
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        start = time.perf_counter()
+        response = await call_next(request)
+        duration_ms = round((time.perf_counter() - start) * 1000, 1)
+        logger.info(
+            "%s %s %s (%.1fms)",
+            request.method, request.url.path, response.status_code, duration_ms,
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+                "ip": request.client.host if request.client else None,
+            },
+        )
+        return response
+
+app.add_middleware(RequestLoggingMiddleware)
+
 # ── Register routers ────────────────────────────────────────────
 
 from routers.auth import router as auth_router       # noqa: E402
@@ -118,12 +147,7 @@ async def health():
     return {"status": "ok", "db": "connected", "version": "1.0.0"}
 
 
-# ── Logging ─────────────────────────────────────────────────────
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
-)
+# Logging is configured above via setup_logging()
 
 if __name__ == "__main__":
     import uvicorn

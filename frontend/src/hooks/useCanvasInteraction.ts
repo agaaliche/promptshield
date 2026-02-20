@@ -567,11 +567,11 @@ export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
       try {
         const resp = await addManualRegion(activeDocId, newRegion);
         const fullRegion: PIIRegion = {
-          id: (resp as any).region_id ?? crypto.randomUUID().slice(0, 12),
+          id: resp.region_id,
           page_number: activePage,
           bbox: adjustedBBox,
-          text: "[manual selection]",
-          pii_type: piiType,
+          text: resp.text || "[manual selection]",
+          pii_type: (resp.pii_type as PIIType) || piiType,
           confidence: 1.0,
           source: "MANUAL",
           char_start: 0,
@@ -579,20 +579,23 @@ export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
           action: "PENDING",
         };
         pushUndo();
-        setRegions([...regions, fullRegion]);
-        setStatusMessage(`Added manual ${piiType} region`);
+        const siblings: PIIRegion[] = resp.new_regions || [];
+        setRegions([...regions, fullRegion, ...siblings]);
 
-        if (autoRefreshTimerRef.current) clearTimeout(autoRefreshTimerRef.current);
-        const regionId = fullRegion.id;
-        autoRefreshTimerRef.current = setTimeout(() => {
-          handleRefreshRegion(regionId, true);
-        }, 300);
+        if (siblings.length > 0) {
+          setSelectedRegionIds(resp.all_ids || [fullRegion.id]);
+          setStatusMessage(
+            `Added ${piiType} region — found ${1 + siblings.length} occurrences of "${(resp.text || "").slice(0, 30)}"`,
+          );
+        } else {
+          setStatusMessage(`Added manual ${piiType} region`);
+        }
       } catch (e: unknown) {
         setStatusMessage(`Failed to add region: ${toErrorMessage(e)}`);
       }
       setDrawnBBox(null);
     },
-    [activeDocId, activePage, drawnBBox, regions, setRegions, setStatusMessage, pushUndo, preventOverlap, handleRefreshRegion],
+    [activeDocId, activePage, drawnBBox, regions, setRegions, setSelectedRegionIds, setStatusMessage, pushUndo, preventOverlap],
   );
 
   return {

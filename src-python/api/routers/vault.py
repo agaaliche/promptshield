@@ -1,10 +1,14 @@
-"""Vault lifecycle: unlock, status, stats, tokens, export, import."""
+"""Vault lifecycle: status, stats, tokens, export, import.
+
+The vault no longer requires a passphrase — it auto-initialises on first
+access and stores token mappings in plaintext SQLite.  The ``/vault/unlock``
+endpoint is kept as a no-op for backward compatibility with older frontends.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -16,59 +20,24 @@ from models.schemas import VaultStatsResponse, VaultUnlockResponse, VaultStatusR
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["vault"])
 
-# ── Rate-limiting state for vault unlock ──────────────────────────
-_MAX_UNLOCK_ATTEMPTS = 5
-_LOCKOUT_SECONDS = 60
-# M6: Use a threading.Lock to protect the rate-limit list from concurrent access
-import threading
-_unlock_lock = threading.Lock()
-_unlock_attempts: list[float] = []  # timestamps of recent failures
-
 
 class _PassphraseBody(_PydanticBaseModel):
-    passphrase: str
-
-
-def _check_unlock_rate_limit() -> None:
-    """Raise 429 if too many failed unlock attempts within the lockout window."""
-    now = time.monotonic()
-    with _unlock_lock:
-        # Prune old entries outside the window
-        while _unlock_attempts and now - _unlock_attempts[0] > _LOCKOUT_SECONDS:
-            _unlock_attempts.pop(0)
-        if len(_unlock_attempts) >= _MAX_UNLOCK_ATTEMPTS:
-            wait = int(_LOCKOUT_SECONDS - (now - _unlock_attempts[0])) + 1
-            raise HTTPException(
-                429,
-                f"Too many unlock attempts. Try again in {wait}s.",
-            )
+    passphrase: str = ""
 
 
 @router.post("/vault/unlock", response_model=VaultUnlockResponse)
-async def unlock_vault(body: _PassphraseBody) -> VaultUnlockResponse:
-    """Unlock the token vault with a passphrase."""
+async def unlock_vault(body: _PassphraseBody | None = None) -> VaultUnlockResponse:
+    """No-op kept for backward compatibility — vault auto-initialises."""
     from core.vault.store import vault
-
-    _check_unlock_rate_limit()
-
-    try:
-        vault.initialize(body.passphrase)
-        # Success — clear failure history
-        with _unlock_lock:
-            _unlock_attempts.clear()
-        return VaultUnlockResponse(status="ok", message="Vault unlocked")
-    except ValueError as e:
-        with _unlock_lock:
-            _unlock_attempts.append(time.monotonic())
-        raise HTTPException(403, str(e))
-    except Exception as e:
-        raise HTTPException(500, "Failed to open vault. Check server logs for details.")
+    vault.ensure_ready()
+    return VaultUnlockResponse(status="ok", message="Vault ready")
 
 
 @router.get("/vault/status", response_model=VaultStatusResponse)
 async def vault_status() -> VaultStatusResponse:
-    """Check vault status."""
+    """Check vault status (always unlocked after first access)."""
     from core.vault.store import vault
+    vault.ensure_ready()
     return VaultStatusResponse(unlocked=vault.is_unlocked)
 
 
@@ -76,8 +45,7 @@ async def vault_status() -> VaultStatusResponse:
 async def vault_stats() -> VaultStatsResponse:
     """Get vault statistics."""
     from core.vault.store import vault
-    if not vault.is_unlocked:
-        raise HTTPException(403, "Vault is locked")
+    vault.ensure_ready()
     stats = await asyncio.to_thread(vault.get_stats)
     return VaultStatsResponse(**stats)
 
@@ -90,9 +58,7 @@ async def list_vault_tokens(
 ) -> dict[str, Any]:
     """List tokens in the vault with pagination."""
     from core.vault.store import vault
-    if not vault.is_unlocked:
-        raise HTTPException(403, "Vault is locked")
-    # M5: Pagination support
+    vault.ensure_ready()
     if limit > 1000:
         limit = 1000
     tokens = await asyncio.to_thread(vault.list_tokens, source_document=source_document)
@@ -107,13 +73,12 @@ async def list_vault_tokens(
 
 
 @router.post("/vault/export")
-async def export_vault(body: _PassphraseBody) -> JSONResponse:
-    """Export all vault tokens as encrypted JSON."""
+async def export_vault() -> JSONResponse:
+    """Export all vault tokens as JSON."""
     from core.vault.store import vault
-    if not vault.is_unlocked:
-        raise HTTPException(403, "Vault is locked")
+    vault.ensure_ready()
     try:
-        data = vault.export_vault(body.passphrase)
+        data = vault.export_vault()
         return JSONResponse(content={"export": data})
     except Exception as e:
         logger.error(f"Vault export failed: {e}")
@@ -122,17 +87,15 @@ async def export_vault(body: _PassphraseBody) -> JSONResponse:
 
 class _VaultImportBody(_PydanticBaseModel):
     export_data: str
-    passphrase: str
 
 
 @router.post("/vault/import")
 async def import_vault(body: _VaultImportBody) -> JSONResponse:
-    """Import tokens from an encrypted vault backup."""
+    """Import tokens from a vault backup JSON."""
     from core.vault.store import vault
-    if not vault.is_unlocked:
-        raise HTTPException(403, "Vault is locked")
+    vault.ensure_ready()
     try:
-        result = vault.import_vault(body.export_data, body.passphrase)
+        result = vault.import_vault(body.export_data)
         return JSONResponse(content=result)
     except ValueError as e:
         raise HTTPException(400, str(e))

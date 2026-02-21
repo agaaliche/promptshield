@@ -6,7 +6,6 @@ describe("AppStore", () => {
     // Reset store between tests
     useAppStore.setState({
       backendReady: false,
-      vaultUnlocked: false,
       documents: [],
       activeDocId: null,
       activePage: 1,
@@ -74,10 +73,5 @@ describe("AppStore", () => {
     useAppStore.getState().setRegions(mockRegions as any);
     expect(useAppStore.getState().regions).toHaveLength(1);
     expect(useAppStore.getState().regions[0].text).toBe("John Doe");
-  });
-
-  it("should set vault unlocked state", () => {
-    useAppStore.getState().setVaultUnlocked(true);
-    expect(useAppStore.getState().vaultUnlocked).toBe(true);
   });
 });

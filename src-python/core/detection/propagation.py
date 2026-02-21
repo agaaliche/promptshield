@@ -299,6 +299,40 @@ def propagate_regions_across_pages(
         page_regions = [r for r in all_regions if r.page_number == pn]
         result.extend(_resolve_bbox_overlaps(page_regions))
 
+    # Char-span containment dedup: drop any region whose char span is
+    # strictly contained within a same-type region on the same page with
+    # equal-or-higher confidence.  This acts as a safety net for cases
+    # where bbox-based dedup cannot catch sub-phrase overlaps (e.g. when
+    # a partial "GASPE INC." region nestles within a full
+    # "CLUB NAUTIQUE JACQUES-CARTIER DE GASPE INC." region).
+    if result:
+        # Group by page for efficient per-page processing
+        _page_buckets: dict[int, list[PIIRegion]] = defaultdict(list)
+        for r in result:
+            _page_buckets[r.page_number].append(r)
+        _dominated_ids: set[str] = set()
+        for _regs in _page_buckets.values():
+            # Sort by span length descending so longer spans come first
+            _regs_sorted = sorted(_regs, key=lambda r: -(r.char_end - r.char_start))
+            for i, ri in enumerate(_regs_sorted):
+                if ri.id in _dominated_ids:
+                    continue
+                for rj in _regs_sorted[:i]:
+                    if rj.id in _dominated_ids:
+                        continue
+                    if (rj.pii_type == ri.pii_type
+                            and rj.char_start <= ri.char_start
+                            and rj.char_end >= ri.char_end
+                            and rj.confidence >= ri.confidence):
+                        _dominated_ids.add(ri.id)
+                        break
+        if _dominated_ids:
+            logger.info(
+                "Char-span containment dedup dropped %d sub-phrase region(s)",
+                len(_dominated_ids),
+            )
+            result = [r for r in result if r.id not in _dominated_ids]
+
     # Clamp every region to its page bounds 
     clamped_result: list[PIIRegion] = []
     for r in result:
@@ -607,6 +641,33 @@ def propagate_partial_org_names(
     for pn in sorted(pages_with_regions):
         page_regions = [r for r in all_regions if r.page_number == pn]
         result.extend(_resolve_bbox_overlaps(page_regions))
+
+    # Char-span containment dedup: drop sub-phrase regions that are contained
+    # within a longer same-type region on the same page (safety net).
+    if result:
+        _page_bkts: dict[int, list[PIIRegion]] = defaultdict(list)
+        for r in result:
+            _page_bkts[r.page_number].append(r)
+        _dom_ids: set[str] = set()
+        for _regs in _page_bkts.values():
+            _regs_s = sorted(_regs, key=lambda r: -(r.char_end - r.char_start))
+            for i, ri in enumerate(_regs_s):
+                if ri.id in _dom_ids:
+                    continue
+                for rj in _regs_s[:i]:
+                    if rj.id in _dom_ids:
+                        continue
+                    if (rj.pii_type == ri.pii_type
+                            and rj.char_start <= ri.char_start
+                            and rj.char_end >= ri.char_end
+                            and rj.confidence >= ri.confidence):
+                        _dom_ids.add(ri.id)
+                        break
+        if _dom_ids:
+            logger.info(
+                "Partial-ORG containment dedup dropped %d region(s)", len(_dom_ids)
+            )
+            result = [r for r in result if r.id not in _dom_ids]
 
     clamped_result: list[PIIRegion] = []
     for r in result:

@@ -2,9 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { useVaultStore, useDetectionStore, useConnectionStore } from "../store";
+import { useDetectionStore, useConnectionStore } from "../store";
 import {
-  getVaultStatus,
   getVaultStats,
   getLLMStatus,
   getSettings,
@@ -26,7 +25,6 @@ type TabId = (typeof TAB_IDS)[number];
 
 export default function SettingsView() {
   const { t } = useTranslation();
-  const { vaultUnlocked, setVaultUnlocked } = useVaultStore();
   const { setLLMStatus, setDetectionSettings } = useDetectionStore();
   const { backendReady } = useConnectionStore();
 
@@ -36,7 +34,7 @@ export default function SettingsView() {
   // Load initial status
   useEffect(() => {
     if (!backendReady) return;
-    getVaultStatus().then((s) => setVaultUnlocked(s.unlocked)).catch(logError("vault-status"));
+    getVaultStats().then(setVaultStats).catch(logError("vault-stats"));
     Promise.all([getSettings(), getLLMStatus()])
       .then(([s, status]) => {
         setLLMStatus(status);
@@ -58,13 +56,7 @@ export default function SettingsView() {
         }
       })
       .catch(logError("load-settings"));
-  }, [backendReady, setVaultUnlocked, setLLMStatus, setDetectionSettings]);
-
-  useEffect(() => {
-    if (vaultUnlocked) {
-      getVaultStats().then(setVaultStats).catch(logError("vault-stats"));
-    }
-  }, [vaultUnlocked]);
+  }, [backendReady, setLLMStatus, setDetectionSettings]);
 
   return (
     <div style={styles.container}>

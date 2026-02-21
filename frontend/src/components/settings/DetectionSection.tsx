@@ -1,13 +1,14 @@
 /** Detection settings — Regex/NER/LLM toggles, NER model dropdown, language selector, fuzziness slider. */
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown } from "../../icons";
+import { ChevronDown, CircleQuestion } from "../../icons";
 import { useDetectionStore } from "../../store";
 import { toErrorMessage } from "../../errorUtils";
-import { updateSettings, logError } from "../../api";
+import { updateSettings, logError, fetchCustomPatterns } from "../../api";
 import { Section, styles } from "./settingsStyles";
-import { CustomPatternsContent } from "./CustomPatternsSection";
+import { CustomPatternsDialog, formatTemplate } from "./CustomPatternsSection";
+import type { CustomPattern } from "../../types";
 
 const NER_MODELS = [
   { value: "auto", key: "auto", lang: "Auto", hasLanguages: true },
@@ -37,55 +38,257 @@ export default function DetectionSection() {
   const [nerApplyError, setNerApplyError] = useState("");
   const [nerDropOpen, setNerDropOpen] = useState(false);
   const nerDropRef = useRef<HTMLDivElement>(null);
+  const [regionGroupingHovered, setRegionGroupingHovered] = useState(false);
+  const [regionGroupingTooltip, setRegionGroupingTooltip] = useState(false);
+  const [langHovered, setLangHovered] = useState(false);
+  const [langTooltip, setLangTooltip] = useState(false);
+  const [methodsHovered, setMethodsHovered] = useState(false);
+  const [methodsTooltip, setMethodsTooltip] = useState(false);
+  const [patternHovered, setPatternHovered] = useState(false);
+  const [patternTooltip, setPatternTooltip] = useState(false);
+  const [customPatternsHovered, setCustomPatternsHovered] = useState(false);
+  const [customPatternsTooltip, setCustomPatternsTooltip] = useState(false);
+  const [aiHovered, setAiHovered] = useState(false);
+  const [aiTooltip, setAiTooltip] = useState(false);
+  const [deepHovered, setDeepHovered] = useState(false);
+  const [deepTooltip, setDeepTooltip] = useState(false);
+  const [customPatternsDialogOpen, setCustomPatternsDialogOpen] = useState(false);
+  const [activePatterns, setActivePatterns] = useState<CustomPattern[]>([]);
+
+  useEffect(() => {
+    if (detectionSettings.regex_enabled && detectionSettings.custom_patterns_enabled) {
+      fetchCustomPatterns()
+        .then((all) => setActivePatterns(all.filter((p) => p.enabled)))
+        .catch(() => setActivePatterns([]));
+    }
+  }, [detectionSettings.regex_enabled, detectionSettings.custom_patterns_enabled]);
 
   return (
-    <Section>
-      <p style={styles.hint}>
-        {t("settingsDetection.description")}
-      </p>
+    <>
+      <Section>
+        <div
+          style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, position: "relative", cursor: "default" }}
+          onMouseEnter={() => setMethodsHovered(true)}
+          onMouseLeave={() => setMethodsHovered(false)}
+        >
+          <p style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>
+            {t("settingsDetection.detectionMethods")}
+          </p>
+          <CircleQuestion
+            size={16}
+            style={{
+              color: "#ffffff",
+              opacity: methodsHovered ? 1 : 0,
+              transition: "opacity 0.15s",
+              flexShrink: 0,
+              cursor: "pointer",
+            }}
+            onMouseEnter={() => setMethodsTooltip(true)}
+            onMouseLeave={() => setMethodsTooltip(false)}
+          />
+          {methodsTooltip && (
+            <div style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: 0,
+              zIndex: 100,
+              background: "var(--bg-primary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 6,
+              padding: "8px 10px",
+              fontSize: 11,
+              color: "var(--text-secondary)",
+              lineHeight: 1.5,
+              minWidth: 200,
+              maxWidth: 320,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+              pointerEvents: "none",
+            }}>
+              {t("settingsDetection.detectionMethodsTooltip")}
+            </div>
+          )}
+        </div>
       <div style={styles.checkboxGroup}>
-        <label style={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={detectionSettings.regex_enabled}
-            onChange={(e) => {
-              const v = e.target.checked;
-              setDetectionSettings({ regex_enabled: v });
-              updateSettings({ regex_enabled: v }).catch(logError("update-settings"));
+        <div
+          style={{ display: "flex", alignItems: "center", position: "relative" }}
+          onMouseEnter={() => setPatternHovered(true)}
+          onMouseLeave={() => setPatternHovered(false)}
+        >
+          <label style={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={detectionSettings.regex_enabled}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setDetectionSettings({ regex_enabled: v });
+                updateSettings({ regex_enabled: v }).catch(logError("update-settings"));
+              }}
+            />{" "}
+            {t("settingsDetection.patternMatching")}
+          </label>
+          <CircleQuestion
+            size={14}
+            style={{
+              color: "#ffffff",
+              opacity: patternHovered ? 1 : 0,
+              transition: "opacity 0.15s",
+              flexShrink: 0,
+              cursor: "pointer",
+              marginLeft: 4,
             }}
-          />{" "}
-          {t("settingsDetection.patternMatching")}
-        </label>
-        <label style={{ ...styles.checkboxLabel, marginLeft: 24, opacity: detectionSettings.regex_enabled ? 1 : 0.5 }}>
-          <input
-            type="checkbox"
-            checked={detectionSettings.custom_patterns_enabled}
-            disabled={!detectionSettings.regex_enabled}
-            onChange={(e) => {
-              const v = e.target.checked;
-              setDetectionSettings({ custom_patterns_enabled: v });
-              updateSettings({ custom_patterns_enabled: v }).catch(logError("update-settings"));
+            onMouseEnter={() => setPatternTooltip(true)}
+            onMouseLeave={() => setPatternTooltip(false)}
+          />
+          {patternTooltip && (
+            <div style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: 0,
+              zIndex: 100,
+              background: "var(--bg-primary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 6,
+              padding: "8px 10px",
+              fontSize: 11,
+              color: "var(--text-secondary)",
+              lineHeight: 1.5,
+              minWidth: 200,
+              maxWidth: 320,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+              pointerEvents: "none",
+            }}>
+              {t("settingsDetection.patternMatchingTooltip")}
+            </div>
+          )}
+        </div>
+        <div
+          style={{ display: "flex", alignItems: "center", position: "relative", marginLeft: 24, opacity: detectionSettings.regex_enabled ? 1 : 0.5 }}
+          onMouseEnter={() => setCustomPatternsHovered(true)}
+          onMouseLeave={() => setCustomPatternsHovered(false)}
+        >
+          <label style={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={detectionSettings.custom_patterns_enabled}
+              disabled={!detectionSettings.regex_enabled}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setDetectionSettings({ custom_patterns_enabled: v });
+                updateSettings({ custom_patterns_enabled: v }).catch(logError("update-settings"));
+              }}
+            />{" "}
+            {t("settingsDetection.customPatterns")}
+          </label>
+          <CircleQuestion
+            size={14}
+            style={{
+              color: "#ffffff",
+              opacity: customPatternsHovered ? 1 : 0,
+              transition: "opacity 0.15s",
+              flexShrink: 0,
+              cursor: "pointer",
+              marginLeft: 4,
             }}
-          />{" "}
-          {t("settingsDetection.customPatterns")}
-        </label>
+            onMouseEnter={() => setCustomPatternsTooltip(true)}
+            onMouseLeave={() => setCustomPatternsTooltip(false)}
+          />
+          {customPatternsTooltip && (
+            <div style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: 0,
+              zIndex: 100,
+              background: "var(--bg-primary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 6,
+              padding: "8px 10px",
+              fontSize: 11,
+              color: "var(--text-secondary)",
+              lineHeight: 1.5,
+              minWidth: 200,
+              maxWidth: 320,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+              pointerEvents: "none",
+            }}>
+              {t("settingsDetection.customPatternsTooltip")}
+            </div>
+          )}
+        </div>
         {detectionSettings.regex_enabled && detectionSettings.custom_patterns_enabled && (
-          <div style={{ marginLeft: 24, marginTop: 4, marginBottom: 8 }}>
-            <CustomPatternsContent />
+          <div style={{ marginLeft: 24, marginTop: 6 }}>
+            {activePatterns.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+                {activePatterns.map((p) => (
+                  <div key={p.id} style={{ paddingLeft: 4 }}>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500 }}>{p.name}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", fontFamily: "monospace", marginTop: 1 }}>
+                      {p.template ? formatTemplate(p.template) : (p.pattern ?? p._generated_pattern ?? "")}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              className="btn-primary btn-sm"
+              onClick={() => setCustomPatternsDialogOpen(true)}
+            >
+              {t("customPatterns.manage")}
+            </button>
           </div>
         )}
-        <label style={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={detectionSettings.ner_enabled}
-            onChange={(e) => {
-              const v = e.target.checked;
-              setDetectionSettings({ ner_enabled: v });
-              updateSettings({ ner_enabled: v }).catch(logError("update-settings"));
+        <div
+          style={{ display: "flex", alignItems: "center", position: "relative" }}
+          onMouseEnter={() => setAiHovered(true)}
+          onMouseLeave={() => setAiHovered(false)}
+        >
+          <label style={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={detectionSettings.ner_enabled}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setDetectionSettings({ ner_enabled: v });
+                updateSettings({ ner_enabled: v }).catch(logError("update-settings"));
+              }}
+            />{" "}
+            {t("settingsDetection.aiRecognition")}
+          </label>
+          <CircleQuestion
+            size={14}
+            style={{
+              color: "#ffffff",
+              opacity: aiHovered ? 1 : 0,
+              transition: "opacity 0.15s",
+              flexShrink: 0,
+              cursor: "pointer",
+              marginLeft: 4,
             }}
-          />{" "}
-          {t("settingsDetection.aiRecognition")}
-        </label>
+            onMouseEnter={() => setAiTooltip(true)}
+            onMouseLeave={() => setAiTooltip(false)}
+          />
+          {aiTooltip && (
+            <div style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: 0,
+              zIndex: 100,
+              background: "var(--bg-primary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 6,
+              padding: "8px 10px",
+              fontSize: 11,
+              color: "var(--text-secondary)",
+              lineHeight: 1.5,
+              minWidth: 200,
+              maxWidth: 320,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+              pointerEvents: "none",
+            }}>
+              {t("settingsDetection.aiRecognitionTooltip")}
+            </div>
+          )}
+        </div>
 
         {detectionSettings.ner_enabled && (
           <div style={{ marginLeft: 24, marginTop: 4, marginBottom: 8 }}>
@@ -227,101 +430,222 @@ export default function DetectionSection() {
             )}
           </div>
         )}
-        <label style={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={detectionSettings.llm_detection_enabled}
-            onChange={(e) => {
-              const v = e.target.checked;
-              setDetectionSettings({ llm_detection_enabled: v });
-              updateSettings({ llm_detection_enabled: v }).catch(logError("update-settings"));
-            }}
-          />{" "}
-          {t("settingsDetection.deepAnalysis")}
-        </label>
-
-        {/* Detection language selector */}
-        <div style={{ marginTop: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-            <span style={{ fontSize: 13, color: "var(--text-primary)" }}>
-              {t("settingsDetection.detectionLanguage")}
-            </span>
-          </div>
-          <select
-            value={detectionSettings.detection_language ?? "auto"}
-            onChange={async (e) => {
-              const v = e.target.value;
-              setDetectionSettings({ detection_language: v });
-              try {
-                await updateSettings({ detection_language: v });
-              } catch (err: unknown) {
-                console.error("Failed to update detection language:", err);
-              }
-            }}
+        <div
+          style={{ display: "flex", alignItems: "center", position: "relative" }}
+          onMouseEnter={() => setDeepHovered(true)}
+          onMouseLeave={() => setDeepHovered(false)}
+        >
+          <label style={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={detectionSettings.llm_detection_enabled}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setDetectionSettings({ llm_detection_enabled: v });
+                updateSettings({ llm_detection_enabled: v }).catch(logError("update-settings"));
+              }}
+            />{" "}
+            {t("settingsDetection.deepAnalysis")}
+          </label>
+          <CircleQuestion
+            size={14}
             style={{
-              width: "100%",
-              padding: "6px 8px",
-              borderRadius: 6,
-              border: "1px solid var(--border-color)",
-              background: "var(--bg-secondary)",
-              color: "var(--text-primary)",
-              fontSize: 13,
+              color: "#ffffff",
+              opacity: deepHovered ? 1 : 0,
+              transition: "opacity 0.15s",
+              flexShrink: 0,
               cursor: "pointer",
+              marginLeft: 4,
             }}
-          >
-            <option value="auto">{t("settingsDetection.autoDetectPerPage")}</option>
-            <option value="en">{t("settingsDetection.lang.english")}</option>
-            <option value="fr">{t("settingsDetection.lang.french")}</option>
-            <option value="de">{t("settingsDetection.lang.german")}</option>
-            <option value="es">{t("settingsDetection.lang.spanish")}</option>
-            <option value="it">{t("settingsDetection.lang.italian")}</option>
-            <option value="nl">{t("settingsDetection.lang.dutch")}</option>
-            <option value="pt">{t("settingsDetection.lang.portuguese")}</option>
-          </select>
-          <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
-            {t("settingsDetection.languageFilterHint")}
-          </p>
-        </div>
-
-        {/* Detection fuzziness slider */}
-        <div style={{ marginTop: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-            <span style={{ fontSize: 13, color: "var(--text-primary)" }}>
-              {t("settingsDetection.regionGrouping")}
-            </span>
-            <span style={{ fontSize: 12, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
-              {Math.round(detectionSettings.detection_fuzziness * 100)}%
-            </span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={5}
-            value={Math.round(detectionSettings.detection_fuzziness * 100)}
-            onChange={(e) => {
-              const v = parseInt(e.target.value, 10) / 100;
-              setDetectionSettings({ detection_fuzziness: v });
-            }}
-            onMouseUp={() => {
-              updateSettings({ detection_fuzziness: detectionSettings.detection_fuzziness })
-                .catch(logError("update-settings"));
-            }}
-            onTouchEnd={() => {
-              updateSettings({ detection_fuzziness: detectionSettings.detection_fuzziness })
-                .catch(logError("update-settings"));
-            }}
-            style={{ width: "100%", accentColor: "var(--accent-primary)" }}
+            onMouseEnter={() => setDeepTooltip(true)}
+            onMouseLeave={() => setDeepTooltip(false)}
           />
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
-            <span>{t("settingsDetection.strictSplit")}</span>
-            <span>{t("settingsDetection.permissiveGroup")}</span>
-          </div>
-          <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
-            {t("settingsDetection.regionGroupingHint")}
-          </p>
+          {deepTooltip && (
+            <div style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: 0,
+              zIndex: 100,
+              background: "var(--bg-primary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 6,
+              padding: "8px 10px",
+              fontSize: 11,
+              color: "var(--text-secondary)",
+              lineHeight: 1.5,
+              minWidth: 200,
+              maxWidth: 320,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+              pointerEvents: "none",
+            }}>
+              {t("settingsDetection.deepAnalysisTooltip")}
+            </div>
+          )}
         </div>
       </div>
     </Section>
+
+    {/* Detection language card */}
+    <Section>
+      <div
+        style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, position: "relative", cursor: "default" }}
+        onMouseEnter={() => setLangHovered(true)}
+        onMouseLeave={() => setLangHovered(false)}
+      >
+        <p style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>
+          {t("settingsDetection.detectionLanguage")}
+        </p>
+        <CircleQuestion
+          size={16}
+          style={{
+            color: "#ffffff",
+            opacity: langHovered ? 1 : 0,
+            transition: "opacity 0.15s",
+            flexShrink: 0,
+            cursor: "pointer",
+          }}
+          onMouseEnter={() => setLangTooltip(true)}
+          onMouseLeave={() => setLangTooltip(false)}
+        />
+        {langTooltip && (
+          <div style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            left: 0,
+            zIndex: 100,
+            background: "var(--bg-primary)",
+            border: "1px solid var(--border-color)",
+            borderRadius: 6,
+            padding: "8px 10px",
+            fontSize: 11,
+            color: "var(--text-secondary)",
+            lineHeight: 1.5,
+            minWidth: 200,
+            maxWidth: 320,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+            pointerEvents: "none",
+          }}>
+            {t("settingsDetection.languageFilterHint")}
+          </div>
+        )}
+      </div>
+      <select
+        value={detectionSettings.detection_language ?? "auto"}
+        onChange={async (e) => {
+          const v = e.target.value;
+          setDetectionSettings({ detection_language: v });
+          try {
+            await updateSettings({ detection_language: v });
+          } catch (err: unknown) {
+            console.error("Failed to update detection language:", err);
+          }
+        }}
+        style={{
+          width: "100%",
+          padding: "6px 8px",
+          borderRadius: 6,
+          border: "1px solid var(--border-color)",
+          background: "var(--bg-secondary)",
+          color: "var(--text-primary)",
+          fontSize: 13,
+          cursor: "pointer",
+        }}
+      >
+        <option value="auto">{t("settingsDetection.autoDetectPerPage")}</option>
+        <option value="en">{t("settingsDetection.lang.english")}</option>
+        <option value="fr">{t("settingsDetection.lang.french")}</option>
+        <option value="de">{t("settingsDetection.lang.german")}</option>
+        <option value="es">{t("settingsDetection.lang.spanish")}</option>
+        <option value="it">{t("settingsDetection.lang.italian")}</option>
+        <option value="nl">{t("settingsDetection.lang.dutch")}</option>
+        <option value="pt">{t("settingsDetection.lang.portuguese")}</option>
+      </select>
+    </Section>
+
+    {/* Region grouping card */}
+    <Section>
+      <div
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, cursor: "default" }}
+        onMouseEnter={() => setRegionGroupingHovered(true)}
+        onMouseLeave={() => setRegionGroupingHovered(false)}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 6, position: "relative" }}>
+          <p style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>
+            {t("settingsDetection.regionGrouping")}
+          </p>
+          <CircleQuestion
+            size={16}
+            style={{
+              color: "#ffffff",
+              opacity: regionGroupingHovered ? 1 : 0,
+              transition: "opacity 0.15s",
+              flexShrink: 0,
+              cursor: "pointer",
+              position: "relative",
+            }}
+            onMouseEnter={() => setRegionGroupingTooltip(true)}
+            onMouseLeave={() => setRegionGroupingTooltip(false)}
+          />
+          {regionGroupingTooltip && (
+            <div style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: 0,
+              zIndex: 100,
+              background: "var(--bg-primary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 6,
+              padding: "8px 10px",
+              fontSize: 11,
+              color: "var(--text-secondary)",
+              lineHeight: 1.5,
+              minWidth: 200,
+              maxWidth: 320,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+              pointerEvents: "none",
+            }}>
+              {t("settingsDetection.regionGroupingHint")}
+            </div>
+          )}
+        </div>
+        <span style={{ fontSize: 12, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
+          {Math.round(detectionSettings.detection_fuzziness * 100)}%
+        </span>
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={5}
+        value={Math.round(detectionSettings.detection_fuzziness * 100)}
+        onChange={(e) => {
+          const v = parseInt(e.target.value, 10) / 100;
+          setDetectionSettings({ detection_fuzziness: v });
+        }}
+        onMouseUp={() => {
+          updateSettings({ detection_fuzziness: detectionSettings.detection_fuzziness })
+            .catch(logError("update-settings"));
+        }}
+        onTouchEnd={() => {
+          updateSettings({ detection_fuzziness: detectionSettings.detection_fuzziness })
+            .catch(logError("update-settings"));
+        }}
+        style={{ width: "100%", accentColor: "var(--accent-primary)" }}
+      />
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
+        <span>{t("settingsDetection.strictSplit")}</span>
+        <span>{t("settingsDetection.permissiveGroup")}</span>
+      </div>
+    </Section>
+    <CustomPatternsDialog
+      open={customPatternsDialogOpen}
+      onClose={() => {
+        setCustomPatternsDialogOpen(false);
+        fetchCustomPatterns()
+          .then((all) => setActivePatterns(all.filter((p) => p.enabled)))
+          .catch(() => {});
+      }}
+    />
+    </>
   );
 }

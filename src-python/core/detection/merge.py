@@ -460,17 +460,22 @@ def _merge_detections(
         if cand["start"] < last["end"]:
             same_type = cand["pii_type"] == last["pii_type"]
             prev_start = last["start"]
+            prev_end = last["end"]  # save before potential replacement
 
             if cand["priority"] > last["priority"]:
                 merged[-1] = cand
             elif cand["priority"] == last["priority"] and cand["confidence"] > last["confidence"]:
                 merged[-1] = cand
 
-            # For same-type overlaps, keep the earliest start (union of spans)
+            # For same-type overlaps, always take the UNION of spans so that
+            # a shorter high-confidence candidate cannot silently drop a
+            # legal suffix (e.g. "INC.") that a longer lower-confidence one
+            # already captured.
             if same_type and prev_start < merged[-1]["start"]:
                 merged[-1]["start"] = prev_start
-
-            # Only extend end for same-type merges to prevent hybrid regions
+            if same_type and prev_end > merged[-1]["end"]:
+                merged[-1]["end"] = prev_end
+            # Also extend if the *incoming* candidate itself is longer.
             if same_type and cand["end"] > merged[-1]["end"]:
                 merged[-1]["end"] = cand["end"]
 
@@ -1021,6 +1026,20 @@ def _merge_detections(
     # ── FINAL safety net (uses same combined filter as earlier pass) ──
     _before_final = len(regions)
 
+    # Preserve the visual-boost exception from the first-pass noise filter
+    # (S7).  PIIRegion objects don't carry the has_visual_boost flag, so we
+    # record the candidate char_start positions here while `merged` is still
+    # in scope.  ORG regions whose origin span had a visual boost are exempt
+    # from the heuristic noise check (same exception applied in S7).
+    # Only protect multi-word ORGs: a single-word boosted ORG (e.g. "Acme" in
+    # quotes) still passes through _is_region_noise because its visual
+    # evidence is too weak to override the heuristic noise filter.
+    _boosted_char_starts: frozenset[int] = frozenset(
+        item["start"] for item in merged
+        if item.get("has_visual_boost")
+        and len(item.get("text", "").split()) >= 2
+    )
+
     def _is_region_noise(r: PIIRegion) -> bool:
         stripped = r.text.strip()
 
@@ -1042,7 +1061,10 @@ def _merge_detections(
         if r.pii_type == PIIType.ORG and (
             len(stripped) <= 2
             or stripped.isdigit()
-            or _is_org_pipeline_noise(r.text)
+            # Heuristic noise check: skip for regions derived from visually-
+            # boosted candidates (same exception as S7 _is_candidate_noise).
+            or (r.char_start not in _boosted_char_starts
+                and _is_org_pipeline_noise(r.text))
         ):
             return True
         if r.pii_type == PIIType.LOCATION and _is_loc_pipeline_noise(r.text):

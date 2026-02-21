@@ -5,10 +5,10 @@
 
 import { useState, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Shield, X, Search, FileText, Download, Package, Lock } from "../icons";
+import { Shield, X, Search, FileText, Download, Package } from "../icons";
 import { useAppStore } from "../store";
 import { toErrorMessage } from "../errorUtils";
-import { exportToDownloads, syncRegions, unlockVault } from "../api";
+import { exportToDownloads, syncRegions } from "../api";
 import type { ExportSaveResult } from "../api";
 import type { DocumentInfo } from "../types";
 import { Z_TOP_DIALOG } from "../zIndex";
@@ -25,8 +25,6 @@ export default function ExportDialog({ open, onClose }: Props) {
   const regions = useAppStore((s) => s.regions);
   const activeDocId = useAppStore((s) => s.activeDocId);
   const setStatusMessage = useAppStore((s) => s.setStatusMessage);
-  const vaultUnlocked = useAppStore((s) => s.vaultUnlocked);
-  const setVaultUnlocked = useAppStore((s) => s.setVaultUnlocked);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
     // Pre-select the active document
@@ -34,9 +32,6 @@ export default function ExportDialog({ open, onClose }: Props) {
   });
   const [search, setSearch] = useState("");
   const [isExporting, setIsExporting] = useState(false);
-  const [needsVault, setNeedsVault] = useState(false);
-  const [vaultPass, setVaultPass] = useState("");
-  const [vaultError, setVaultError] = useState("");
   const [exportId, setExportId] = useState<string | null>(null);
   const [exportResult, setExportResult] = useState<ExportSaveResult | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -78,16 +73,6 @@ export default function ExportDialog({ open, onClose }: Props) {
     setSelectedIds(new Set());
   }, []);
 
-  // Check if any selected doc has TOKENIZE regions needing vault
-  const selectedNeedsVault = useMemo(() => {
-    return documents.some((d) => {
-      if (!selectedIds.has(d.doc_id)) return false;
-      // For active doc, check store regions; for others, check doc.regions
-      const docRegions = d.doc_id === activeDocId ? regions : (d.regions || []);
-      return docRegions.some((r) => r.action === "TOKENIZE");
-    });
-  }, [selectedIds, documents, activeDocId, regions]);
-
   const doExport = useCallback(async () => {
     if (selectedIds.size === 0) return;
 
@@ -128,29 +113,8 @@ export default function ExportDialog({ open, onClose }: Props) {
   }, [onClose]);
 
   const handleExport = useCallback(async () => {
-    if (selectedNeedsVault && !vaultUnlocked) {
-      setNeedsVault(true);
-      return;
-    }
     await doExport();
-  }, [selectedNeedsVault, vaultUnlocked, doExport]);
-
-  const handleVaultUnlockAndExport = useCallback(async () => {
-    try {
-      setVaultError("");
-      await unlockVault(vaultPass);
-      setVaultUnlocked(true);
-      setNeedsVault(false);
-      setVaultPass("");
-      await doExport();
-    } catch (e: unknown) {
-      if (toErrorMessage(e).includes("403") || toErrorMessage(e).includes("passphrase")) {
-        setVaultError(t("exportDialog.invalidPassphrase"));
-      } else {
-        setVaultError(toErrorMessage(e));
-      }
-    }
-  }, [vaultPass, setVaultUnlocked, doExport]);
+  }, [doExport]);
 
   if (!open) return null;
 
@@ -298,53 +262,6 @@ export default function ExportDialog({ open, onClose }: Props) {
             ))
           )}
         </div>
-
-        {/* Vault unlock prompt */}
-        {needsVault && (
-          <div style={{
-            padding: "12px 16px",
-            borderTop: "1px solid var(--border-color)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-            background: "rgba(0,0,0,0.1)",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)" }}>
-              <Lock size={12} />
-              {t("exportDialog.vaultPassphraseRequired")}
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                type="password"
-                placeholder={t("exportDialog.enterPassphrase")}
-                value={vaultPass}
-                onChange={(e) => setVaultPass(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleVaultUnlockAndExport()}
-                style={{
-                  flex: 1,
-                  padding: "6px 10px",
-                  fontSize: 13,
-                  background: "var(--bg-primary)",
-                  border: "1px solid var(--border-color)",
-                  borderRadius: 6,
-                  color: "var(--text-primary)",
-                  outline: "none",
-                }}
-                autoFocus
-              />
-              <button
-                className="btn-primary btn-sm"
-                onClick={handleVaultUnlockAndExport}
-                disabled={!vaultPass}
-              >
-                {t("exportDialog.unlockAndExport")}
-              </button>
-            </div>
-            {vaultError && (
-              <div style={{ fontSize: 11, color: "#f44336" }}>{vaultError}</div>
-            )}
-          </div>
-        )}
 
         {/* Footer */}
         <div style={{

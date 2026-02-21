@@ -121,8 +121,12 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
       try {
         pushUndo();
         const resp = await highlightAllRegions(activeDocId, regionId);
-        if (resp.new_regions.length > 0) {
-          setRegions(resolveAllOverlaps([...regions, ...resp.new_regions]));
+        const cancelledIds = new Set(resp.cancelled_ids || []);
+        const baseRegions = cancelledIds.size > 0
+          ? regions.filter((r) => !cancelledIds.has(r.id))
+          : regions;
+        if (resp.new_regions.length > 0 || cancelledIds.size > 0) {
+          setRegions(resolveAllOverlaps([...baseRegions, ...resp.new_regions]));
         }
         setSelectedRegionIds(resp.all_ids);
         const msg =

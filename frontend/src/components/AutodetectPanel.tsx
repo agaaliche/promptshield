@@ -2,7 +2,12 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X, Save, Trash2, Plus, Pin } from "../icons";
+import { ScanSearch, SlidersHorizontal, Maximize2, Minimize2, X, Save, Trash2, Plus, Pin,
+  Envelope, Phone, IdCard, CreditCard, BuildingColumns, Calendar,
+  NetworkWired, Passport, IdBadge, House,
+  User, Building, LocationDot, Crosshairs,
+  Brain, Bullseye,
+} from "../icons";
 import { Z_TOP_DIALOG } from "../zIndex";
 import BlacklistGrid, { type BlacklistAction } from "./BlacklistGrid";
 import { createEmptyGrid } from "./blacklistUtils";
@@ -827,7 +832,7 @@ export default function AutodetectPanel({
 
       {/* Detection settings tabs (collapsible via gear) */}
       {showTabs && (
-      <div style={{ padding: 6, margin: 12, background: "rgba(0,0,0,0.15)", borderRadius: 6 }}>
+      <div style={{ padding: 6, margin: 12, background: "rgba(0,0,0,0.15)", borderRadius: 6, flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {/* 4-tab bar: Patterns | Expressions | AI Recognition | Deep Analysis */}
         <div style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-color)", flexShrink: 0, padding: "0 10px" }}>
           {([
@@ -896,17 +901,17 @@ export default function AutodetectPanel({
               );
             })()}
             {([
-              { key: "EMAIL", icon: "✉", label: "Email addresses" },
-              { key: "PHONE", icon: "📞", label: "Phone numbers" },
-              { key: "SSN", icon: "🆔", label: "Social Security / National ID" },
-              { key: "CREDIT_CARD", icon: "💳", label: "Credit card numbers" },
-              { key: "IBAN", icon: "🏦", label: "Bank accounts (IBAN)" },
-              { key: "DATE", icon: "📅", label: "Dates of birth" },
-              { key: "IP_ADDRESS", icon: "🌐", label: "IP addresses" },
-              { key: "PASSPORT", icon: "🛂", label: "Passport numbers" },
-              { key: "DRIVER_LICENSE", icon: "🪪", label: "Driver license numbers" },
-              { key: "ADDRESS", icon: "🏠", label: "Physical addresses" },
-            ] as const).map(({ key, icon, label }) => (
+              { key: "EMAIL" as const, icon: <Envelope size={14} />, label: "Email addresses" },
+              { key: "PHONE" as const, icon: <Phone size={14} />, label: "Phone numbers" },
+              { key: "SSN" as const, icon: <IdCard size={14} />, label: "Social Security / National ID" },
+              { key: "CREDIT_CARD" as const, icon: <CreditCard size={14} />, label: "Credit card numbers" },
+              { key: "IBAN" as const, icon: <BuildingColumns size={14} />, label: "Bank accounts (IBAN)" },
+              { key: "DATE" as const, icon: <Calendar size={14} />, label: "Dates of birth" },
+              { key: "IP_ADDRESS" as const, icon: <NetworkWired size={14} />, label: "IP addresses" },
+              { key: "PASSPORT" as const, icon: <Passport size={14} />, label: "Passport numbers" },
+              { key: "DRIVER_LICENSE" as const, icon: <IdBadge size={14} />, label: "Driver license numbers" },
+              { key: "ADDRESS" as const, icon: <House size={14} />, label: "Physical addresses" },
+            ]).map(({ key, icon, label }) => (
               <label key={key} style={{
                 display: "flex", alignItems: "center", gap: 8,
                 fontSize: 13, color: "var(--text-primary)", cursor: "pointer",
@@ -918,7 +923,7 @@ export default function AutodetectPanel({
                   onChange={(e) => setRegexTypes(prev => ({ ...prev, [key]: e.target.checked }))}
                   style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
                 />
-                <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>{icon}</span>
+                <span style={{ width: 22, display: "flex", justifyContent: "center", color: "var(--text-muted)" }}>{icon}</span>
                 {label}
               </label>
             ))}
@@ -932,7 +937,7 @@ export default function AutodetectPanel({
                   borderTop: "1px solid var(--border-color)",
                   display: "flex", alignItems: "center", gap: 6,
                 }}>
-                  🎯 {t("detection.customPatterns")}
+                  <Bullseye size={12} /> {t("detection.customPatterns")}
                   <span style={{
                     fontSize: 10, color: "var(--text-muted)", fontWeight: 400,
                     marginLeft: "auto",
@@ -952,7 +957,7 @@ export default function AutodetectPanel({
                       onChange={(e) => setCustomToggles(prev => { const next = { ...prev, [cp.id]: e.target.checked }; saveCustomTogglesLS(next); return next; })}
                       style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
                     />
-                    <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>🎯</span>
+                    <span style={{ width: 22, display: "flex", justifyContent: "center", color: "var(--text-muted)" }}><Bullseye size={14} /></span>
                     <span style={{ flex: 1 }}>{cp.name}</span>
                     <span style={{
                       fontSize: 10, padding: "1px 6px",
@@ -991,11 +996,11 @@ export default function AutodetectPanel({
               {t("detection.aiTitle")}
             </div>
             {([
-              { key: "PERSON", icon: "👤", label: t("detection.aiPeople") },
-              { key: "ORG", icon: "🏢", label: t("detection.aiOrgs") },
-              { key: "LOCATION", icon: "📍", label: t("detection.aiPlaces") },
-              { key: "CUSTOM", icon: "🔎", label: t("detection.aiCatchAll") },
-            ] as const).map(({ key, icon, label }) => (
+              { key: "PERSON" as const, icon: <User size={14} variant="light" />, label: t("detection.aiPeople") },
+              { key: "ORG" as const, icon: <Building size={14} />, label: t("detection.aiOrgs") },
+              { key: "LOCATION" as const, icon: <LocationDot size={14} />, label: t("detection.aiPlaces") },
+              { key: "CUSTOM" as const, icon: <Crosshairs size={14} />, label: t("detection.aiCatchAll") },
+            ]).map(({ key, icon, label }) => (
               <label key={key} style={{
                 display: "flex", alignItems: "center", gap: 8,
                 fontSize: 13, color: "var(--text-primary)", cursor: "pointer",
@@ -1007,7 +1012,7 @@ export default function AutodetectPanel({
                   onChange={(e) => setNerTypes(prev => ({ ...prev, [key]: e.target.checked }))}
                   style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
                 />
-                <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>{icon}</span>
+                <span style={{ width: 22, display: "flex", justifyContent: "center", color: "var(--text-muted)" }}>{icon}</span>
                 {label}
               </label>
             ))}
@@ -1041,7 +1046,7 @@ export default function AutodetectPanel({
                     disabled={!llmReady}
                     style={{ accentColor: "var(--accent-primary)", width: 15, height: 15 }}
                   />
-                  <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>🧠</span>
+                  <span style={{ width: 22, display: "flex", justifyContent: "center", color: "var(--text-muted)" }}><Brain size={14} variant="light" /></span>
                   {t("detection.deepEnable")}
                 </label>
                 {!llmReady && (

@@ -1,4 +1,4 @@
-"""Tests for the token vault (encryption, store, retrieve, resolve)."""
+"""Tests for the token vault (plaintext store, retrieve, resolve)."""
 
 import tempfile
 from pathlib import Path
@@ -28,7 +28,7 @@ def vault(tmp_path: Path):
     """Create a temporary vault for each test."""
     db_path = tmp_path / "test_vault.db"
     v = TokenVault(db_path=db_path)
-    v.initialize("test-passphrase-123!")
+    v.initialize()
     return v
 
 

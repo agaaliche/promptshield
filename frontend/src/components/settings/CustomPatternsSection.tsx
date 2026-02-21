@@ -1,6 +1,6 @@
 /** Custom Patterns — user-defined regex patterns for PII detection. */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2, Play, ToggleLeft, ToggleRight, AlertCircle, Check, X } from "../../icons";
 import { styles } from "./settingsStyles";
@@ -49,7 +49,7 @@ function templateToRegex(blocks: PatternTemplateBlock[]): string {
 }
 
 // Format template blocks for display
-function formatTemplate(blocks: PatternTemplateBlock[]): string {
+export function formatTemplate(blocks: PatternTemplateBlock[]): string {
   return blocks.map(block => {
     const count = block.count ?? 1;
     switch (block.type) {
@@ -776,6 +776,274 @@ export function CustomPatternsContent() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// ─── Dialog ───────────────────────────────────────────────────────────────────
+
+interface CustomPatternsDialogProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+export function CustomPatternsDialog({ open, onClose }: CustomPatternsDialogProps) {
+  const { t } = useTranslation();
+  const [patterns, setPatterns] = useState<CustomPattern[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [tab, setTab] = useState<"list" | "add">("list");
+  const [editingPattern, setEditingPattern] = useState<CustomPattern | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setTab("list");
+      setEditingPattern(null);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    fetchCustomPatterns()
+      .then(setPatterns)
+      .catch((err) => setError(toErrorMessage(err)))
+      .finally(() => setLoading(false));
+  }, [open]);
+
+  if (!open) return null;
+
+  const handleSavePattern = async (patternData: Omit<CustomPattern, "id">) => {
+    try {
+      if (editingPattern) {
+        const updated = patterns.map(p =>
+          p.id === editingPattern.id ? { ...p, ...patternData } : p
+        );
+        await saveCustomPatterns(updated);
+        setPatterns(updated);
+      } else {
+        const newPattern: CustomPattern = {
+          ...patternData,
+          id: Math.random().toString(36).substring(2, 10),
+        };
+        const updated = [...patterns, newPattern];
+        await saveCustomPatterns(updated);
+        setPatterns(updated);
+      }
+      setTab("list");
+      setEditingPattern(null);
+    } catch (err) {
+      setError(toErrorMessage(err));
+    }
+  };
+
+  const handleDeletePattern = async (patternId: string) => {
+    if (!confirm(t("customPatterns.deleteConfirm"))) return;
+    try {
+      await deleteCustomPattern(patternId);
+      setPatterns(patterns.filter(p => p.id !== patternId));
+    } catch (err) {
+      setError(toErrorMessage(err));
+    }
+  };
+
+  const handleToggleEnabled = async (patternId: string) => {
+    const updated = patterns.map(p =>
+      p.id === patternId ? { ...p, enabled: !p.enabled } : p
+    );
+    setPatterns(updated);
+    try {
+      await saveCustomPatterns(updated);
+    } catch (err) {
+      setPatterns(patterns);
+      setError(toErrorMessage(err));
+    }
+  };
+
+  const TAB_STYLE_BASE: CSSProperties = {
+    padding: "11px 18px",
+    fontSize: 13,
+    background: "none",
+    border: "none",
+    borderBottom: "2px solid transparent",
+    cursor: "pointer",
+    marginBottom: -1,
+    transition: "color 0.15s",
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.55)",
+        zIndex: 200,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{
+        background: "var(--bg-secondary)",
+        border: "1px solid var(--border-color)",
+        borderRadius: 10,
+        width: 520,
+        maxWidth: "92vw",
+        height: 580,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        boxShadow: "0 16px 48px rgba(0,0,0,0.5)",
+      }}>
+        {/* Tab bar + close */}
+        <div style={{
+          display: "flex",
+          alignItems: "stretch",
+          borderBottom: "1px solid var(--border-color)",
+          flexShrink: 0,
+          paddingLeft: 4,
+        }}>
+          <button
+            type="button"
+            onClick={() => { setTab("list"); }}
+            style={{
+              ...TAB_STYLE_BASE,
+              fontWeight: tab === "list" ? 600 : 400,
+              color: tab === "list" ? "var(--text-primary)" : "var(--text-muted)",
+              borderBottomColor: tab === "list" ? "var(--accent-primary)" : "transparent",
+            }}
+          >
+            {t("customPatterns.tabList")}
+          </button>
+          <button
+            type="button"
+            onClick={() => { if (tab !== "add") { setEditingPattern(null); } setTab("add"); }}
+            style={{
+              ...TAB_STYLE_BASE,
+              fontWeight: tab === "add" ? 600 : 400,
+              color: tab === "add" ? "var(--text-primary)" : "var(--text-muted)",
+              borderBottomColor: tab === "add" ? "var(--accent-primary)" : "transparent",
+            }}
+          >
+            {tab === "add" && editingPattern ? t("customPatterns.tabEdit") : t("customPatterns.tabAdd")}
+          </button>
+          <div style={{ flex: 1 }} />
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "var(--text-muted)",
+              padding: "0 14px",
+              display: "flex",
+              alignItems: "center",
+              borderRadius: 4,
+              flexShrink: 0,
+            }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Tab: Patterns list */}
+        {tab === "list" && (
+          <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+            {error && (
+              <div style={{ marginBottom: 12, color: "var(--accent-danger)", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                <AlertCircle size={14} /> {error}
+                <button onClick={() => setError("")} style={{ marginLeft: "auto", background: "none", border: "none", color: "inherit", cursor: "pointer" }}>
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+            {loading ? (
+              <p style={{ fontSize: 13, color: "var(--text-muted)" }}>{t("customPatterns.loadingPatterns")}</p>
+            ) : (
+              <>
+                {patterns.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {patterns.map(pattern => (
+                      <div
+                        key={pattern.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 12,
+                          padding: "10px 12px",
+                          background: "var(--bg-primary)",
+                          borderRadius: 6,
+                          border: "1px solid var(--border-color)",
+                          opacity: pattern.enabled ? 1 : 0.6,
+                        }}
+                      >
+                        <button
+                          onClick={() => handleToggleEnabled(pattern.id)}
+                          style={{ background: "none", border: "none", cursor: "pointer", color: pattern.enabled ? "var(--accent-success)" : "var(--text-muted)", padding: 0, display: "flex" }}
+                          title={pattern.enabled ? t("customPatterns.disable") : t("customPatterns.enable")}
+                        >
+                          {pattern.enabled ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+                        </button>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{pattern.name}</div>
+                          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                            {pattern.template ? (
+                              <span title={pattern._generated_pattern}>{formatTemplate(pattern.template)}</span>
+                            ) : (
+                              <code style={{ fontFamily: "monospace" }}>{pattern.pattern}</code>
+                            )}
+                            <span style={{ marginLeft: 8, padding: "1px 6px", background: "var(--bg-secondary)", borderRadius: 3, fontSize: 10 }}>
+                              {pattern.pii_type}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => { setEditingPattern(pattern); setTab("add"); }}
+                          style={{ padding: "4px 10px", borderRadius: 4, border: "1px solid var(--border-color)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer", fontSize: 12 }}
+                        >
+                          {t("common.edit")}
+                        </button>
+                        <button
+                          onClick={() => handleDeletePattern(pattern.id)}
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--accent-danger)", padding: 4, display: "flex" }}
+                          title={t("customPatterns.deletePattern")}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {patterns.length === 0 && (
+                  <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8, textAlign: "center" }}>
+                    {t("customPatterns.emptyState")}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Tab: Add / Edit */}
+        {tab === "add" && (
+          <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+            {error && (
+              <div style={{ marginBottom: 12, color: "var(--accent-danger)", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                <AlertCircle size={14} /> {error}
+                <button onClick={() => setError("")} style={{ marginLeft: "auto", background: "none", border: "none", color: "inherit", cursor: "pointer" }}>
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+            <PatternEditor
+              key={editingPattern?.id ?? "new"}
+              initial={editingPattern ?? undefined}
+              onSave={handleSavePattern}
+              onCancel={() => { setTab("list"); setEditingPattern(null); }}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

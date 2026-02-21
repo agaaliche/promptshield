@@ -2,22 +2,32 @@
 
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { X } from "../icons";
+import { X, CheckCircle2, AlertCircle, InfoCircle } from "../icons";
 import { useAppStore } from "../store";
 import { Z_TOAST } from "../zIndex";
+import type { SnackbarItem } from "../types";
+
+const TYPE_CONFIG: Record<
+  SnackbarItem["type"],
+  { bg: string; Icon: React.ComponentType<{ size?: number }> }
+> = {
+  success: { bg: "#2e7d32", Icon: CheckCircle2 },
+  error:   { bg: "#c62828", Icon: AlertCircle },
+  info:    { bg: "#1565c0", Icon: InfoCircle },
+};
 
 export default function Snackbar() {
   const { t } = useTranslation();
   const snackbars = useAppStore((s) => s.snackbars);
   const removeSnackbar = useAppStore((s) => s.removeSnackbar);
 
-  // Auto-dismiss non-error snackbars after 3 seconds
+  // Auto-dismiss non-error snackbars after 4 seconds
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
     for (const snack of snackbars) {
       if (snack.type !== "error") {
         const age = Date.now() - snack.createdAt;
-        const remaining = Math.max(0, 3000 - age);
+        const remaining = Math.max(0, 4000 - age);
         timers.push(setTimeout(() => removeSnackbar(snack.id), remaining));
       }
     }
@@ -28,24 +38,23 @@ export default function Snackbar() {
 
   return (
     <div style={styles.container}>
-      {snackbars.map((snack) => (
-        <div
-          key={snack.id}
-          style={{
-            ...styles.snackbar,
-            borderLeft: `3px solid ${snack.type === "error" ? "#f44336" : snack.type === "success" ? "#4caf50" : "var(--accent-primary)"}`,
-          }}
-        >
-          <span style={styles.message}>{snack.message}</span>
-          <button
-            onClick={() => removeSnackbar(snack.id)}
-            style={styles.close}
-            title={t("snackbar.dismiss")}
-          >
-            <X size={13} />
-          </button>
-        </div>
-      ))}
+      {snackbars.map((snack) => {
+        const { bg, Icon } = TYPE_CONFIG[snack.type];
+        return (
+          <div key={snack.id} style={{ ...styles.snackbar, background: bg }}>
+            <Icon size={16} />
+            <span style={styles.message}>{snack.message}</span>
+            <button
+              onClick={() => removeSnackbar(snack.id)}
+              style={styles.close}
+              title={t("snackbar.dismiss")}
+              aria-label={t("snackbar.dismiss")}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -53,45 +62,44 @@ export default function Snackbar() {
 const styles: Record<string, React.CSSProperties> = {
   container: {
     position: "fixed",
-    top: 12,
+    // Position below the top toolbar (~49 px tall)
+    top: 50,
     left: "50%",
     transform: "translateX(-50%)",
     zIndex: Z_TOAST,
     display: "flex",
     flexDirection: "column",
-    gap: 6,
+    gap: 8,
     pointerEvents: "none",
-    maxWidth: "80vw",
+    width: "min(480px, calc(100vw - 48px))",
   },
   snackbar: {
     pointerEvents: "auto",
     display: "flex",
     alignItems: "center",
-    gap: 10,
-    padding: "8px 12px",
-    background: "var(--bg-secondary)",
-    border: "1px solid var(--border-color)",
+    gap: 12,
+    padding: "12px 14px",
     borderRadius: 6,
-    boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
-    minWidth: 240,
-    maxWidth: 500,
+    boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+    color: "#fff",
   },
   message: {
     flex: 1,
-    fontSize: 12,
-    color: "var(--text-primary)",
+    fontSize: 13,
+    color: "#fff",
     lineHeight: 1.4,
+    fontWeight: 500,
   },
   close: {
     flexShrink: 0,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    padding: 4,
-    background: "transparent",
+    padding: "3px 5px",
+    background: "rgba(255,255,255,0.18)",
     border: "none",
-    color: "var(--text-muted)",
+    color: "#fff",
     cursor: "pointer",
-    borderRadius: 3,
+    borderRadius: 4,
   },
 };

@@ -180,18 +180,10 @@ class TestLLM:
 
 class TestDetokenize:
     @pytest.mark.asyncio
-    async def test_detokenize_locked(self, client: AsyncClient):
-        """Detokenize should 403 when vault is locked."""
-        resp = await client.post(
-            "/api/detokenize",
-            json={"text": "Hello [ANON_PERSON_ABCD12]"},
-        )
-        assert resp.status_code == 403
-
-    @pytest.mark.asyncio
     async def test_detokenize_no_tokens(self, client: AsyncClient):
         mock_vault = type("MockVault", (), {
             "is_unlocked": True,
+            "ensure_ready": lambda self: None,
             "resolve_all_tokens": lambda self, text: (text, 0, []),
         })()
         with patch("core.vault.store.vault", mock_vault):

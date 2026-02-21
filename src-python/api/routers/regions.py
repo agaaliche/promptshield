@@ -341,12 +341,81 @@ async def add_manual_region(doc_id: str, region: PIIRegion) -> dict[str, Any]:
                 y1=round(max(b.bbox.y1 for b in best), 2),
             )
 
+    # ── Dedup guard: if an existing (non-cancelled) region on the same page
+    # already has the same normalised text and overlaps the same y-band, reuse it
+    # rather than creating a duplicate.  We use y-range overlap (not full bbox IoU)
+    # because auto-detected regions and manually-snapped regions compute bboxes via
+    # different methods and may have zero x/area intersection for the same text.
+    #
+    # We also reuse when the new text is a substring of an existing region's text
+    # (or vice versa) AND the bboxes have real x+y intersection — e.g. the user
+    # draws "A129980" inside an auto-detected "publique n° A129980" region.
+    region_norm = _normalize(region.text)
+    existing_match: Any = None
+    if region_norm:
+        for er in doc.regions:
+            if er.action == RegionAction.CANCEL or er.page_number != region.page_number:
+                continue
+            er_norm = _normalize(er.text)
+            # Case 1: exact text match + y-band overlap
+            if er_norm == region_norm:
+                if er.bbox.y0 <= region.bbox.y1 and er.bbox.y1 >= region.bbox.y0:
+                    existing_match = er
+                    break
+            # Case 2: the NEW text is contained within an EXISTING region's text
+            # + real bbox intersection → reuse the bigger existing region.
+            # We intentionally do NOT match when the existing text is a substring
+            # of the new text (er_norm in region_norm), because that would
+            # silently discard the user's broader selection in favour of a
+            # shorter auto-detected region (e.g. user draws "Club Nautique
+            # Jacques-Cartier", existing has "Nautique Jacques-Cartier" →
+            # user would lose "Club").
+            elif er_norm and region_norm in er_norm:
+                ix0 = max(region.bbox.x0, er.bbox.x0)
+                iy0 = max(region.bbox.y0, er.bbox.y0)
+                ix1 = min(region.bbox.x1, er.bbox.x1)
+                iy1 = min(region.bbox.y1, er.bbox.y1)
+                if ix0 < ix1 and iy0 < iy1:
+                    existing_match = er
+                    break
+
+    if existing_match is not None:
+        # Reuse the existing region — update its pii_type if the user picked
+        # a different one, then run highlight-all against it.
+        if existing_match.pii_type != region.pii_type:
+            existing_match.pii_type = region.pii_type
+            save_doc(doc)
+        new_regions_json: list[dict] = []
+        all_ids: list[str] = [existing_match.id]
+        cancelled_ids_list: list[str] = []
+        if existing_match.text and existing_match.text != "[manual selection]":
+            try:
+                result = _highlight_all_impl(
+                    doc_id, HighlightAllRequest(region_id=existing_match.id),
+                )
+                new_regions_json = result.get("new_regions", [])
+                all_ids = result.get("all_ids", [existing_match.id])
+                cancelled_ids_list = result.get("cancelled_ids", [])
+            except Exception as e:
+                logger.warning("Auto highlight-all after manual add (reuse) failed: %s", e)
+        return {
+            "status": "ok",
+            "region_id": existing_match.id,
+            "text": existing_match.text,
+            "pii_type": existing_match.pii_type.value if hasattr(existing_match.pii_type, "value") else str(existing_match.pii_type),
+            "bbox": existing_match.bbox.model_dump(mode="json"),
+            "new_regions": new_regions_json,
+            "all_ids": all_ids,
+            "cancelled_ids": cancelled_ids_list,
+        }
+
     doc.regions.append(region)
     save_doc(doc)
 
     # If meaningful text was found, highlight all occurrences across the doc
     new_regions_json: list[dict] = []
     all_ids: list[str] = [region.id]
+    cancelled_ids_list: list[str] = []
     if region.text and region.text != "[manual selection]":
         try:
             result = _highlight_all_impl(
@@ -354,6 +423,7 @@ async def add_manual_region(doc_id: str, region: PIIRegion) -> dict[str, Any]:
             )
             new_regions_json = result.get("new_regions", [])
             all_ids = result.get("all_ids", [region.id])
+            cancelled_ids_list = result.get("cancelled_ids", [])
         except Exception as e:
             logger.warning("Auto highlight-all after manual add failed: %s", e)
 
@@ -365,6 +435,7 @@ async def add_manual_region(doc_id: str, region: PIIRegion) -> dict[str, Any]:
         "bbox": region.bbox.model_dump(mode="json"),
         "new_regions": new_regions_json,
         "all_ids": all_ids,
+        "cancelled_ids": cancelled_ids_list,
     }
 
 
@@ -633,6 +704,7 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
         )
 
     new_regions: list[PIIRegion] = []
+    cancelled_ids: set[str] = set()
 
     for page in doc.pages:
         full_text = page.full_text
@@ -648,11 +720,39 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
         full_norm = _normalize(full_text)
 
         # Build a mapping from normalized-string index → original char index.
+        #
+        # The chain is:
+        #   full_norm position  (ws-collapsed, lower, accent-stripped)
+        #       → tmp3 position  (same chars, NOT ws-collapsed; len == len(full_text))
+        #       → tmp  position  (raw NFKD; longer because combining marks are present)
+        #       → full_text position  (via nfkd_to_orig)
+        #
+        # Bug in previous code: _norm_chars[i] is a tmp3 index, but was fed
+        # directly into nfkd_to_orig (indexed by NFKD positions).  After the
+        # first accented char the two arrays diverge → wrong offsets → wrong
+        # bboxes for regions with accented multi-word names.  Fix: build
+        # tmp2_to_nfkd to bridge tmp3/tmp2 positions → NFKD positions.
         import unicodedata, re as _re
         tmp = unicodedata.normalize("NFKD", full_text)
-        tmp2 = "".join(c for c in tmp if not unicodedata.combining(c))
-        tmp3 = tmp2.lower()
+        tmp3 = "".join(c for c in tmp if not unicodedata.combining(c)).lower()
 
+        # tmp2_to_nfkd[i] = NFKD position corresponding to tmp2/tmp3 position i
+        _tmp2_to_nfkd: list[int] = []
+        _nfkd_i = 0
+        for _c in tmp:
+            if not unicodedata.combining(_c):
+                _tmp2_to_nfkd.append(_nfkd_i)
+            _nfkd_i += 1
+
+        # nfkd_to_orig[j] = position in full_text for NFKD position j
+        nfkd_to_orig: list[int] = []
+        _ni = 0
+        for _oi, _orig_c in enumerate(full_text):
+            for _ in unicodedata.normalize("NFKD", _orig_c):
+                nfkd_to_orig.append(_oi)
+                _ni += 1
+
+        # _norm_chars[i] = position in tmp3 that corresponds to full_norm[i]
         _norm_chars: list[int] = []
         in_space = False
         stripped_leading = False
@@ -669,23 +769,14 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
                 _norm_chars.append(ci)
                 in_space = False
 
-        # map from tmp3 index -> original full_text index
-        orig_to_nfkd: list[int] = []
-        nfkd_to_orig: list[int] = []
-        ni = 0
-        for oi_c, orig_c in enumerate(full_text):
-            nfkd_of_c = unicodedata.normalize("NFKD", orig_c)
-            orig_to_nfkd.append(ni)
-            for _ in nfkd_of_c:
-                nfkd_to_orig.append(oi_c)
-                ni += 1
-
         def norm_idx_to_orig(ni_: int) -> int:
-            """Map normalized string index to original full_text index."""
+            """Map normalized-string index → original full_text index."""
             if ni_ < len(_norm_chars):
-                nfkd_idx = _norm_chars[ni_]
-                if nfkd_idx < len(nfkd_to_orig):
-                    return nfkd_to_orig[nfkd_idx]
+                tmp3_idx = _norm_chars[ni_]                    # position in tmp3 (== tmp2)
+                if tmp3_idx < len(_tmp2_to_nfkd):
+                    nfkd_idx = _tmp2_to_nfkd[tmp3_idx]        # position in NFKD (tmp)
+                    if nfkd_idx < len(nfkd_to_orig):
+                        return nfkd_to_orig[nfkd_idx]          # position in full_text
             return len(full_text)
 
         # Try exact normalized match first (fast path)
@@ -702,8 +793,9 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
             orig_end = norm_idx_to_orig(orig_end_idx) if orig_end_idx < len(full_norm) else len(full_text)
             matches.append((orig_start, orig_end))
 
-        # Also try fuzzy sliding window to catch OCR variations
-        # Only if exact matching found fewer than expected matches
+        # Also try fuzzy sliding window to catch OCR/encoding variations.
+        # Only run when exact matching found nothing — apostrophe/quote variants
+        # are now handled by normalize_for_matching so they hit the exact path.
         if needle_len >= 2 and len(matches) == 0:
             window = needle_len
             # Pre-compute needle character frequency for fast pre-filter
@@ -763,11 +855,31 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
 
                 page_existing = existing_spans.get(page.page_number, [])
                 already_covered = False
+                matched_text_norm = _normalize(matched_text)
                 for ex0, ey0, ex1, ey1, etxt in page_existing:
-                    ix0 = max(bx0, ex0)
-                    iy0 = max(by0, ey0)
-                    ix1 = min(bx1, ex1)
-                    iy1 = min(by1, ey1)
+                    # Same normalised text + y-ranges overlap → same occurrence.
+                    # We intentionally DON'T require x/area overlap here because
+                    # add_manual_region snaps bboxes via word-centre logic while
+                    # _char_offsets_to_line_bboxes uses a different line-level
+                    # method; the two can have zero bbox intersection for the same
+                    # text, but they will always share the same y-range.
+                    if _normalize(etxt) == matched_text_norm:
+                        if ey0 <= by1 and ey1 >= by0:   # any y-overlap
+                            already_covered = True
+                            break
+                        continue   # same text but different line → don't skip
+                    # Different text: fall back to area-coverage threshold.
+                    # BUT don't skip when the existing region's text is
+                    # significantly shorter than the match — that means the
+                    # existing region is a partial (e.g. auto-detected
+                    # "Nautique Jacques-Cartier" inside the new match
+                    # "Club Nautique Jacques-Cartier").  The new match
+                    # represents a broader selection and must be created.
+                    etxt_norm = _normalize(etxt)
+                    if len(etxt_norm) < len(matched_text_norm) * 0.85:
+                        continue
+                    ix0 = max(bx0, ex0); iy0 = max(by0, ey0)
+                    ix1 = min(bx1, ex1); iy1 = min(by1, ey1)
                     if ix0 < ix1 and iy0 < iy1:
                         inter_area = (ix1 - ix0) * (iy1 - iy0)
                         new_area = max((bx1 - bx0) * (by1 - by0), 1e-6)
@@ -776,6 +888,33 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
                             break
                 if already_covered:
                     continue
+
+                # Cancel any existing regions whose text is a strict subset of
+                # this match AND whose bbox intersects with the new region.  These
+                # are partial auto-detections superseded by the broader match (e.g.
+                # "Nautique Jacques-Cartier" cancelled when the new match is
+                # "Club Nautique Jacques-Cartier").  Adjacent regions are safe
+                # because they won't have a real bbox intersection.
+                for _er in list(doc.regions):
+                    if _er.action == RegionAction.CANCEL or _er.page_number != page.page_number:
+                        continue
+                    _er_norm = _normalize(_er.text)
+                    if not _er_norm or _er_norm == matched_text_norm:
+                        continue
+                    if _er_norm not in matched_text_norm:
+                        continue
+                    _ix0 = max(bx0, _er.bbox.x0); _iy0 = max(by0, _er.bbox.y0)
+                    _ix1 = min(bx1, _er.bbox.x1); _iy1 = min(by1, _er.bbox.y1)
+                    if _ix0 < _ix1 and _iy0 < _iy1:
+                        _er.action = RegionAction.CANCEL
+                        cancelled_ids.add(_er.id)
+                        # Remove from existing_spans so it no longer blocks
+                        # future match iterations on this page
+                        existing_spans[page.page_number] = [
+                            _s for _s in existing_spans.get(page.page_number, [])
+                            if not (abs(_s[0] - _er.bbox.x0) < 1.0
+                                    and abs(_s[1] - _er.bbox.y0) < 1.0)
+                        ]
 
                 region = PIIRegion(
                     page_number=page.page_number,
@@ -795,7 +934,12 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
                     (bx0, by0, bx1, by1, needle_lower)
                 )
 
-    # Collect all matching region IDs (existing + new) using fuzzy match
+    # Collect all matching region IDs (existing + new) using fuzzy match.
+    # We require the texts to be approximately EQUAL (not just substring matches)
+    # to avoid selecting pre-existing regions that merely CONTAIN the needle
+    # (e.g. an existing "publique n° A129980" auto-detection getting pulled in
+    # when the user just drew "A129980").
+    new_ids = {r.id for r in new_regions}
     all_ids = []
     for r in doc.regions:
         if r.action == RegionAction.CANCEL:
@@ -803,7 +947,12 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
         r_norm = _normalize(r.text.strip())
         if not r_norm:
             continue
-        if needle_norm in r_norm or r_norm in needle_norm or _fuzzy_ratio(needle_norm, r_norm) >= _FUZZY_THRESHOLD:
+        # Keep the source region and any newly created siblings unconditionally,
+        # then accept existing regions only when their text is similar in length
+        # AND fuzzy-matches the needle (prevents false substring inclusions).
+        if r.id == source_region.id or r.id in new_ids:
+            all_ids.append(r.id)
+        elif _fuzzy_ratio(needle_norm, r_norm) >= _FUZZY_THRESHOLD:
             all_ids.append(r.id)
 
     save_doc(doc)
@@ -812,4 +961,5 @@ def _highlight_all_impl(doc_id: str, req: HighlightAllRequest) -> dict[str, Any]
         "created": len(new_regions),
         "new_regions": [r.model_dump(mode="json") for r in new_regions],
         "all_ids": all_ids,
+        "cancelled_ids": list(cancelled_ids),
     }

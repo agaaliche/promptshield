@@ -37,10 +37,6 @@ interface AppState {
   backendReady: boolean;
   setBackendReady: (v: boolean) => void;
 
-  // ── Vault ──
-  vaultUnlocked: boolean;
-  setVaultUnlocked: (v: boolean) => void;
-
   // ── Documents ──
   documents: DocumentEntry[];
   setDocuments: (docs: DocumentEntry[]) => void;
@@ -192,10 +188,6 @@ export const useAppStore = create<AppState>()(devtools((set, get) => ({
   // Sidebar drag
   isSidebarDragging: false,
   setIsSidebarDragging: (v) => set({ isSidebarDragging: v }),
-
-  // Vault
-  vaultUnlocked: false,
-  setVaultUnlocked: (v) => set({ vaultUnlocked: v }),
 
   // Documents
   documents: [],
@@ -535,11 +527,11 @@ export const useConnectionStore = () =>
     setBackendReady: s.setBackendReady,
   })));
 
-/** Vault selectors. */
+/** Vault selectors (kept for backward compatibility, always unlocked). */
 export const useVaultStore = () =>
-  useAppStore(useShallow((s) => ({
-    vaultUnlocked: s.vaultUnlocked,
-    setVaultUnlocked: s.setVaultUnlocked,
+  useAppStore(useShallow((_s) => ({
+    vaultUnlocked: true as const,
+    setVaultUnlocked: (_v: boolean) => { /* no-op */ },
   })));
 
 /** Document-loading state selectors. */

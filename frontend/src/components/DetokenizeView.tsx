@@ -14,7 +14,7 @@ import {
 } from "../icons";
 import { detokenize, detokenizeFile, type DetokenizeFileResult } from "../api";
 import { toErrorMessage } from "../errorUtils";
-import { useVaultStore, useUIStore } from "../store";
+import { useUIStore } from "../store";
 
 type Mode = "text" | "file";
 
@@ -39,7 +39,6 @@ export default function DetokenizeView() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { vaultUnlocked } = useVaultStore();
   const { isProcessing, setIsProcessing } = useUIStore();
 
   // ── Text de-tokenization ──────────────────────────────────────────
@@ -125,19 +124,6 @@ export default function DetokenizeView() {
     },
     [handleFilePick],
   );
-
-  // ── Vault locked guard ────────────────────────────────────────────
-  if (!vaultUnlocked) {
-    return (
-      <div style={S.container}>
-        <div style={S.lockMessage}>
-          <AlertTriangle size={48} style={{ color: "var(--accent-warning)" }} />
-          <h2>{t("detokenize.vaultLocked")}</h2>
-          <p>{t("detokenize.unlockVaultHint")}</p>
-        </div>
-      </div>
-    );
-  }
 
   // ── Render ────────────────────────────────────────────────────────
   return (

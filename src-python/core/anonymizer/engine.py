@@ -37,40 +37,21 @@ XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 # Shared finalization helpers (eliminate duplication across handlers)
 # ---------------------------------------------------------------------------
 
-def _save_encrypted_manifest(
+def _save_manifest(
     output_dir: Path,
     doc_id: str,
     original_filename: str,
     token_manifest: list[dict],
 ) -> None:
-    """Save the token manifest encrypted with the vault key.
-
-    The manifest maps tokens → original text.  Storing it in plaintext
-    would undermine the vault encryption, so we encrypt it with the
-    same Fernet key.
-    """
-    manifest_data = json.dumps({
+    """Save the token manifest as plaintext JSON alongside the output."""
+    manifest = {
         "doc_id": doc_id,
         "original_filename": original_filename,
         "tokens": token_manifest,
-    }).encode("utf-8")
-
-    # Encrypt using the vault's public encryption API
-    if vault.can_encrypt:
-        encrypted = vault.encrypt_blob(manifest_data)
-        manifest_path = output_dir / "token_manifest.enc"
-        manifest_path.write_bytes(encrypted)
-    else:
-        # Fallback: save only token strings (no originals) if vault key is unavailable
-        safe_manifest = {
-            "doc_id": doc_id,
-            "original_filename": original_filename,
-            "tokens": [{"token_string": t["token_string"]} for t in token_manifest],
-        }
-        manifest_path = output_dir / "token_manifest.json"
-        manifest_path.write_text(json.dumps(safe_manifest, indent=2), encoding="utf-8")
-
-    logger.info(f"Saved token manifest with {len(token_manifest)} entries (encrypted)")
+    }
+    manifest_path = output_dir / "token_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    logger.info(f"Saved token manifest with {len(token_manifest)} entries")
 
 
 def _finalize_anonymization(
@@ -83,8 +64,8 @@ def _finalize_anonymization(
     """Common finalization: save manifest, register document, return response."""
     output_dir = output_path.parent
 
-    # Save encrypted manifest
-    _save_encrypted_manifest(output_dir, doc.doc_id, doc.original_filename, token_manifest)
+    # Save token manifest
+    _save_manifest(output_dir, doc.doc_id, doc.original_filename, token_manifest)
 
     # Register in vault
     vault.register_document(
@@ -118,8 +99,7 @@ async def anonymize_document(doc: DocumentInfo) -> AnonymizeResponse:
     - XLSX: Text replacement in cells
     - Images: Bitmap manipulation
     """
-    if not vault.is_unlocked:
-        raise RuntimeError("Vault must be unlocked before anonymization")
+    vault.ensure_ready()
 
     original_path = Path(doc.file_path)
     if not original_path.exists():

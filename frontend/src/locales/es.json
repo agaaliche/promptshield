@@ -331,10 +331,6 @@
     "nOfSelected": "",
     "maxFiles": "",
     "noDocumentsFound": "",
-    "vaultPassphraseRequired": "",
-    "enterPassphrase": "",
-    "unlockAndExport": "",
-    "invalidPassphrase": "",
     "exportsAsZip": "",
     "exporting": "",
     "exportNFiles": "",
@@ -393,8 +389,6 @@
   },
 
   "detokenize": {
-    "vaultLocked": "",
-    "unlockVaultHint": "",
     "title": "",
     "description": "",
     "tabPasteText": "",
@@ -580,7 +574,6 @@
     "vaultSize": "",
     "kb": "",
     "exportHint": "",
-    "exportPassphrase": "",
     "exportVault": "",
     "exportedSuccessfully": "",
     "exportFailed": "",
@@ -589,18 +582,7 @@
     "importing": "",
     "restoreBackup": "",
     "importResult": "",
-    "importFailed": "",
-    "lockedHint": "",
-    "vaultPassphrase": "",
-    "unlock": "",
-    "failedToUnlock": ""
-  },
-
-  "vaultUnlock": {
-    "title": "",
-    "description": "",
-    "passphrasePlaceholder": "",
-    "unlockAndAnonymize": ""
+    "importFailed": ""
   },
 
   "updates": {

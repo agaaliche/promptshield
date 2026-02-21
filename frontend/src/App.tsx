@@ -11,7 +11,7 @@ import { useEffect, useState, Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "./i18n";
-import { useAppStore, useUIStore, useConnectionStore, useVaultStore, useDetectionStore, useDocumentStore, useRegionStore, useDocLoadingStore, useLicenseStore, useSnackbarStore } from "./store";
+import { useAppStore, useUIStore, useConnectionStore, useDetectionStore, useDocumentStore, useRegionStore, useDocLoadingStore, useLicenseStore, useSnackbarStore } from "./store";
 import { validateLocalLicense, startBackend, revalidateLicense } from "./licenseApi";
 import { warmupModels } from "./api";
 import { toErrorMessage } from "./errorUtils";
@@ -60,7 +60,7 @@ class ErrorBoundary extends Component<EBProps, EBState> {
   }
 }
 
-import { checkHealth, getVaultStatus, getLLMStatus, listDocuments, getRegions, getDocument, logError, setBaseUrl } from "./api";
+import { checkHealth, getLLMStatus, listDocuments, getRegions, getDocument, logError, setBaseUrl } from "./api";
 import { resolveAllOverlaps } from "./regionUtils";
 import Sidebar from "./components/Sidebar";
 import Snackbar from "./components/Snackbar";
@@ -81,7 +81,6 @@ function App() {
   const { t } = useTranslation();
   const { currentView, setCurrentView } = useUIStore();
   const { backendReady, setBackendReady } = useConnectionStore();
-  const { setVaultUnlocked } = useVaultStore();
   const { setLLMStatus } = useDetectionStore();
   const { activeDocId, setActiveDocId, updateDocument, setDocuments } = useDocumentStore();
   const { setRegions } = useRegionStore();
@@ -191,9 +190,6 @@ function App() {
       // Preload NLP models in background so first detection is fast
       warmupModels();
 
-      getVaultStatus()
-        .then((s) => setVaultUnlocked(s.unlocked))
-        .catch(logError("vault-status"));
       getLLMStatus().then(setLLMStatus).catch(logError("llm-status"));
 
       try {
@@ -228,7 +224,7 @@ function App() {
 
     init();
     return () => { cancelled = true; };
-  }, [backendReady, setVaultUnlocked, setLLMStatus, setDocuments, setActiveDocId, setCurrentView, setRegions]);
+  }, [backendReady, setLLMStatus, setDocuments, setActiveDocId, setCurrentView, setRegions]);
 
   // Load full document data + regions when the active document changes
   useEffect(() => {

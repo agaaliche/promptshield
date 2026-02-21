@@ -390,7 +390,7 @@ export async function updateRegionText(
 export async function highlightAllRegions(
   docId: string,
   regionId: string,
-): Promise<{ created: number; new_regions: PIIRegion[]; all_ids: string[] }> {
+): Promise<{ created: number; new_regions: PIIRegion[]; all_ids: string[]; cancelled_ids: string[] }> {
   return request(`/api/documents/${docId}/regions/highlight-all`, {
     method: "POST",
     body: JSON.stringify({ region_id: regionId }),
@@ -602,10 +602,10 @@ export async function detokenizeFile(file: File): Promise<DetokenizeFileResult> 
 // Vault
 // ──────────────────────────────────────────────
 
-export async function unlockVault(passphrase: string): Promise<void> {
+export async function unlockVault(_passphrase?: string): Promise<void> {
   await request("/api/vault/unlock", {
     method: "POST",
-    body: JSON.stringify({ passphrase }),
+    body: JSON.stringify({}),
   });
 }
 
@@ -740,13 +740,13 @@ export async function updateSettings(
 // Vault export
 // ──────────────────────────────────────────────
 
-export async function exportVault(passphrase: string): Promise<string> {
+export async function exportVault(): Promise<string> {
   const res = await request<{ export: string }>(
     `/api/vault/export`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ passphrase }),
+      body: JSON.stringify({}),
     }
   );
   return res.export;
@@ -754,12 +754,11 @@ export async function exportVault(passphrase: string): Promise<string> {
 
 export async function importVault(
   exportData: string,
-  passphrase: string
 ): Promise<{ imported: number; skipped: number; errors: number }> {
   return request(`/api/vault/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ export_data: exportData, passphrase }),
+    body: JSON.stringify({ export_data: exportData }),
   });
 }
 

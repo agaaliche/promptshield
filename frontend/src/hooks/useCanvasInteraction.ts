@@ -580,7 +580,25 @@ export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
         };
         pushUndo();
         const siblings: PIIRegion[] = resp.new_regions || [];
-        setRegions([...regions, fullRegion, ...siblings]);
+        // Filter out any regions the server cancelled (subset regions superseded
+        // by the new broader match, e.g. "Nautique Jacques-Cartier" removed when
+        // "Club Nautique Jacques-Cartier" is now the canonical region).
+        const cancelledIds = new Set(resp.cancelled_ids || []);
+        const baseRegions = cancelledIds.size > 0
+          ? regions.filter((r) => !cancelledIds.has(r.id))
+          : regions;
+        // The server may have reused an existing region (dedup) instead of
+        // creating a new one.  Only append fullRegion if its ID isn't already
+        // present in the current regions list; otherwise update in place.
+        const alreadyInList = baseRegions.some((r) => r.id === fullRegion.id);
+        if (alreadyInList) {
+          setRegions([
+            ...baseRegions.map((r) => r.id === fullRegion.id ? fullRegion : r),
+            ...siblings,
+          ]);
+        } else {
+          setRegions([...baseRegions, fullRegion, ...siblings]);
+        }
 
         if (siblings.length > 0) {
           setSelectedRegionIds(resp.all_ids || [fullRegion.id]);

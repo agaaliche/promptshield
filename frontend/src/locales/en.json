@@ -331,10 +331,6 @@
     "nOfSelected": "{{selected}} / {{total}} selected",
     "maxFiles": "(max 50)",
     "noDocumentsFound": "No documents found",
-    "vaultPassphraseRequired": "Vault passphrase required for tokenized regions",
-    "enterPassphrase": "Enter vault passphrase…",
-    "unlockAndExport": "Unlock & Export",
-    "invalidPassphrase": "Invalid passphrase",
     "exportsAsZip": "Exports as ZIP",
     "exporting": "Exporting…",
     "exportNFiles": "Export {{count}} file(s)",
@@ -393,8 +389,6 @@
   },
 
   "detokenize": {
-    "vaultLocked": "Vault Locked",
-    "unlockVaultHint": "Unlock the vault in Settings to use de-tokenization.",
     "title": "Token Swap",
     "description": "Replace anonymization tokens with original values from your vault.",
     "tabPasteText": "Paste Text",
@@ -423,12 +417,18 @@
   },
 
   "settingsDetection": {
-    "description": "Choose which methods are used to find personal information in your documents.",
-    "patternMatching": "Pattern matching (finds IDs, emails, phone numbers, etc.)",
+    "detectionMethods": "Detection methods",
+    "detectionMethodsTooltip": "Combines multiple methods to find sensitive information. Enable only what you need to balance speed and accuracy.",
+    "description": "",
+    "patternMatching": "Pattern matching",
+    "patternMatchingTooltip": "Uses regular expressions to find structured data such as email addresses, phone numbers, postal codes, and national IDs. Fast and works completely offline.",
     "customPatterns": "Custom patterns",
-    "aiRecognition": "AI recognition (finds names, organizations, locations)",
-    "deepAnalysis": "Deep analysis (uses an LLM for harder-to-find information)",
-    "aiModel": "AI recognition model",
+    "customPatternsTooltip": "Define your own regex patterns to detect organization-specific identifiers not covered by the built-in rules.",
+    "aiRecognition": "AI recognition",
+    "aiRecognitionTooltip": "Uses a machine learning model to find names, organizations, and locations. More accurate than patterns but slower and requires a model download.",
+    "deepAnalysis": "Deep analysis",
+    "deepAnalysisTooltip": "Runs an LLM pass over text that other methods may have missed. Highest accuracy for complex or ambiguous information, but significantly slower.",
+    "aiModel": "Choose a model",
     "applying": "Applying…",
     "detectionLanguage": "Detection language",
     "autoDetectPerPage": "Auto-detect per page",
@@ -515,6 +515,11 @@
     "updatePattern": "Update Pattern",
     "addPattern": "Add Pattern",
     "addCustomPattern": "Add custom pattern",
+    "manageTitle": "Custom patterns",
+    "tabList": "Patterns",
+    "tabAdd": "Add",
+    "tabEdit": "Edit",
+    "manage": "Edit",
     "deleteConfirm": "Delete this pattern?",
     "blockTypes": {
       "letters": "Letters (a-z)",
@@ -579,28 +584,16 @@
     "documents": "Documents",
     "vaultSize": "Vault size",
     "kb": "KB",
-    "exportHint": "Export all tokens as an encrypted backup file.",
-    "exportPassphrase": "Export passphrase",
+    "exportHint": "Export all tokens as a backup file.",
     "exportVault": "Export vault",
     "exportedSuccessfully": "Exported successfully",
     "exportFailed": "Export failed: {{error}}",
-    "importHint": "Restore tokens from an encrypted backup file.",
+    "importHint": "Restore tokens from a backup file.",
     "chooseFile": "Choose file",
     "importing": "Importing…",
     "restoreBackup": "Restore backup",
     "importResult": "Imported {{imported}} token(s), {{skipped}} skipped (duplicates), {{errors}} errors",
-    "importFailed": "Import failed: {{error}}",
-    "lockedHint": "Enter a passphrase to unlock or create the token vault. All token mappings are encrypted with this passphrase.",
-    "vaultPassphrase": "Vault passphrase",
-    "unlock": "Unlock",
-    "failedToUnlock": "Failed to unlock vault"
-  },
-
-  "vaultUnlock": {
-    "title": "Unlock Vault",
-    "description": "Tokenization requires the vault to store reversible mappings. Enter your passphrase to unlock or create the vault.",
-    "passphrasePlaceholder": "Vault passphrase",
-    "unlockAndAnonymize": "Unlock & Anonymize"
+    "importFailed": "Import failed: {{error}}"
   },
 
   "updates": {

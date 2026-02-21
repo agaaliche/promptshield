@@ -25,9 +25,7 @@ router = APIRouter(prefix="/api", tags=["detokenize"])
 async def detokenize(req: DetokenizeRequest) -> DetokenizeResponse:
     """Replace tokens in text with their original values."""
     from core.vault.store import vault
-
-    if not vault.is_unlocked:
-        raise HTTPException(403, "Vault is locked. Unlock it first.")
+    vault.ensure_ready()
 
     result_text, count, unresolved = await asyncio.to_thread(
         vault.resolve_all_tokens, req.text
@@ -45,8 +43,7 @@ async def detokenize_file_endpoint(file: UploadFile = File(...)) -> FileResponse
     from core.vault.store import vault
     from core.detokenize_file import detokenize_file, SUPPORTED_EXTENSIONS
 
-    if not vault.is_unlocked:
-        raise HTTPException(403, "Vault is locked. Unlock it first.")
+    vault.ensure_ready()
 
     filename = file.filename or "unknown.txt"
 

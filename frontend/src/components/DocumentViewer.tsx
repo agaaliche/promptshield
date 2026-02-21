@@ -16,7 +16,7 @@ import {
   LayoutGrid,
   X,
 } from "../icons";
-import { useDocumentStore, useRegionStore, useUIStore, useVaultStore, useDocLoadingStore, useSidebarStore, useDetectionStore, useUploadStore } from "../store";
+import { useDocumentStore, useRegionStore, useUIStore, useDocLoadingStore, useSidebarStore, useDetectionStore, useUploadStore } from "../store";
 import {
   getPageBitmapUrl,
   batchRegionAction,
@@ -32,7 +32,7 @@ import PIITypePicker from "./PIITypePicker";
 import RegionSidebar from "./RegionSidebar";
 import PageNavigator from "./PageNavigator";
 import AutodetectPanel from "./AutodetectPanel";
-import VaultUnlockDialog from "./VaultUnlockDialog";
+
 import CursorToolToolbar from "./CursorToolToolbar";
 import MultiSelectToolbar from "./MultiSelectToolbar";
 import useRegionActions from "../hooks/useRegionActions";
@@ -48,7 +48,6 @@ export default function DocumentViewer() {
   const { activeDocId, documents, activePage, setActivePage } = useDocumentStore();
   const { regions, updateRegionAction, removeRegion, setRegions, updateRegionBBox, updateRegion, selectedRegionIds, setSelectedRegionIds, toggleSelectedRegionId, clearSelection, pushUndo, undo, redo, canUndo, canRedo } = useRegionStore();
   const { zoom, setZoom, isProcessing, setIsProcessing, setStatusMessage, setDrawMode } = useUIStore();
-  const { vaultUnlocked, setVaultUnlocked } = useVaultStore();
   const { docLoading, docLoadingMessage, docDetecting, uploadProgressId, uploadProgressDocId, uploadProgressDocName, uploadProgressPhase } = useDocLoadingStore();
   const { rightSidebarWidth, setRightSidebarWidth, isSidebarDragging, leftSidebarWidth } = useSidebarStore();
   const { llmStatus } = useDetectionStore();
@@ -120,16 +119,11 @@ export default function DocumentViewer() {
 
   // ── Export / anonymize ──
   const {
-    showVaultPrompt, setShowVaultPrompt,
-    vaultPass, setVaultPass,
-    vaultError, setVaultError,
     showExportDialog, setShowExportDialog,
-    handleVaultUnlockAndAnonymize,
+    handleAnonymize,
   } = useDocumentExport({
     activeDocId: activeDocId ?? null,
     regions,
-    vaultUnlocked,
-    setVaultUnlocked,
     setIsProcessing,
     setStatusMessage,
   });
@@ -567,18 +561,6 @@ export default function DocumentViewer() {
         open={showExportDialog}
         onClose={() => setShowExportDialog(false)}
       />
-
-      {/* Vault unlock prompt overlay */}
-      {showVaultPrompt && (
-        <VaultUnlockDialog
-          vaultPass={vaultPass}
-          vaultError={vaultError}
-          isProcessing={isProcessing}
-          onPassChange={setVaultPass}
-          onUnlock={handleVaultUnlockAndAnonymize}
-          onCancel={() => { setShowVaultPrompt(false); setVaultPass(""); setVaultError(""); }}
-        />
-      )}
 
       {/* Canvas area */}
       <div ref={containerRef} style={{

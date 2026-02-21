@@ -177,9 +177,9 @@ class TestAnonymizeDocumentDispatch:
             file_path=str(tmp_path / "test.pdf"),
             mime_type="application/pdf",
         )
-        # Vault not unlocked → should raise
+        # Vault ensure_ready mock — should call ensure_ready
         with patch("core.anonymizer.engine.vault") as mock_vault:
-            mock_vault.is_unlocked = False
+            mock_vault.ensure_ready.side_effect = RuntimeError("Vault must be unlocked")
             with pytest.raises(RuntimeError, match="Vault must be unlocked"):
                 await anonymize_document(doc)
 
@@ -191,7 +191,7 @@ class TestAnonymizeDocumentDispatch:
             mime_type="application/pdf",
         )
         with patch("core.anonymizer.engine.vault") as mock_vault:
-            mock_vault.is_unlocked = True
+            mock_vault.ensure_ready.return_value = None
             with pytest.raises(RuntimeError, match="Original file not found"):
                 await anonymize_document(doc)
 
@@ -205,7 +205,7 @@ class TestAnonymizeDocumentDispatch:
             mime_type="application/octet-stream",
         )
         with patch("core.anonymizer.engine.vault") as mock_vault:
-            mock_vault.is_unlocked = True
+            mock_vault.ensure_ready.return_value = None
             with pytest.raises(ValueError, match="Unsupported file type"):
                 await anonymize_document(doc)
 

@@ -74,12 +74,57 @@ def ws_collapse(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def normalize_for_matching(text: str) -> str:
-    """Lowercase, strip accents (NFKD), collapse whitespace.
+    """Lowercase, strip accents (NFKD), normalize quotes/apostrophes, collapse whitespace.
 
     Intended for fuzzy / highlight-all matching where offsets are
     not important.
+
+    Apostrophe/quote normalisation is done BEFORE NFKD because several
+    Unicode quote chars (e.g. U+2019 RIGHT SINGLE QUOTATION MARK) do NOT
+    have a NFKD decomposition, so without this step "L\u2019Esprit" and
+    "L'Esprit" would not match.
     """
+    # Normalise apostrophe / single-quote variants → ASCII apostrophe (U+0027)
+    text = text.translate(_QUOTE_MAP)
+    # Normalise hyphen / dash variants → ASCII hyphen (U+002D)
+    text = text.translate(_DASH_MAP)
     text = _unicodedata.normalize("NFKD", text)
     text = "".join(c for c in text if not _unicodedata.combining(c))
     text = text.lower()
     return _re.sub(r"\s+", " ", text).strip()
+
+
+# ---------------------------------------------------------------------------
+# Quote / dash normalisation maps (built once at import time)
+# ---------------------------------------------------------------------------
+
+_QUOTE_MAP: dict[int, int] = {
+    ord(c): ord("'")
+    for c in (
+        "\u2018",  # LEFT SINGLE QUOTATION MARK       '
+        "\u2019",  # RIGHT SINGLE QUOTATION MARK      '
+        "\u201A",  # SINGLE LOW-9 QUOTATION MARK      ‚
+        "\u201B",  # SINGLE HIGH-REVERSED-9 QUOT MARK ‛
+        "\u02BC",  # MODIFIER LETTER APOSTROPHE       ʼ
+        "\u02B9",  # MODIFIER LETTER PRIME             ʹ
+        "\u02C8",  # MODIFIER LETTER VERTICAL LINE    ˈ
+        "\u0060",  # GRAVE ACCENT                     `
+        "\u00B4",  # ACUTE ACCENT                     ´
+        "\uFF07",  # FULLWIDTH APOSTROPHE             ＇
+    )
+}
+
+_DASH_MAP: dict[int, int] = {
+    ord(c): ord("-")
+    for c in (
+        "\u2010",  # HYPHEN
+        "\u2011",  # NON-BREAKING HYPHEN
+        "\u2012",  # FIGURE DASH
+        "\u2013",  # EN DASH
+        "\u2014",  # EM DASH
+        "\u2015",  # HORIZONTAL BAR
+        "\uFE58",  # SMALL EM DASH
+        "\uFE63",  # SMALL HYPHEN-MINUS
+        "\uFF0D",  # FULLWIDTH HYPHEN-MINUS
+    )
+}

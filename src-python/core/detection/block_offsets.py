@@ -209,15 +209,23 @@ def _compute_block_offsets_clustered(
         line_top = min(b.bbox.y0 for b in line_blocks)
         lh = max(b.bbox.y1 for b in line_blocks) - line_top
 
+        # Mirror column-gap logic from _build_full_text.
+        avg_h = (
+            sum(b.bbox.y1 - b.bbox.y0 for b in line_blocks)
+            / len(line_blocks)
+        )
+        col_gap_threshold = max(avg_h * 3, 15.0)
+
         for i, block in enumerate(line_blocks):
             if prev_y is not None or i > 0:
                 if i == 0:
                     gap = line_top - prev_y if prev_y is not None else 0
                     if line_height > 0 and gap > line_height * 0.6:
-                        pos += 1
+                        pos += 1  # newline
                     else:
-                        pos += 1
+                        pos += 1  # space
                 else:
+                    # Column gap or normal space — both 1 char
                     pos += 1
             bstart = pos
             pos += len(block.text)
@@ -370,12 +378,35 @@ def _char_offsets_to_line_bboxes(
         if y_spread <= max_h:
             lines = [sorted(all_blocks, key=lambda b: b.bbox.x0)]
 
+    # Compute average word height across all overlapping blocks — used as a
+    # reference for detecting large horizontal gaps within a single visual
+    # line that indicate different columns.
+    all_overlapping = [b for line in lines for b in line]
+    avg_h = (
+        sum(b.bbox.y1 - b.bbox.y0 for b in all_overlapping) / len(all_overlapping)
+        if all_overlapping
+        else 10.0
+    )
+    col_gap_threshold = avg_h * 5  # gap > 5× word height → column break
+
     bboxes: list[BBox] = []
     for line_blocks in lines:
-        x0 = min(b.bbox.x0 for b in line_blocks)
-        y0 = min(b.bbox.y0 for b in line_blocks)
-        x1 = max(b.bbox.x1 for b in line_blocks)
-        y1 = max(b.bbox.y1 for b in line_blocks)
-        bboxes.append(BBox(x0=x0, y0=y0, x1=x1, y1=y1))
+        # line_blocks are already sorted left-to-right by x0.
+        # Split into sub-groups whenever there is a large horizontal gap.
+        groups: list[list[TextBlock]] = [[line_blocks[0]]]
+        for b in line_blocks[1:]:
+            prev = groups[-1][-1]
+            gap = b.bbox.x0 - prev.bbox.x1
+            if gap > col_gap_threshold:
+                groups.append([b])
+            else:
+                groups[-1].append(b)
+
+        for grp in groups:
+            x0 = min(b.bbox.x0 for b in grp)
+            y0 = min(b.bbox.y0 for b in grp)
+            x1 = max(b.bbox.x1 for b in grp)
+            y1 = max(b.bbox.y1 for b in grp)
+            bboxes.append(BBox(x0=x0, y0=y0, x1=x1, y1=y1))
 
     return bboxes

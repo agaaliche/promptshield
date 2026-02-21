@@ -55,6 +55,37 @@ _MAX_Y_GAP_FACTOR = det_cfg.MAX_Y_GAP_FACTOR
 _MIN_Y_GAP_ABS = det_cfg.MIN_Y_GAP_ABS
 
 
+def _reconstruct_text_from_blocks(blocks: list[TextBlock]) -> str:
+    """Join block texts respecting visual line structure.
+
+    Blocks on the same visual line (y-centres within half a line-height)
+    are joined with spaces; distinct lines are joined with newlines.
+    Within each line blocks are ordered left-to-right by x0.
+    """
+    if not blocks:
+        return ""
+    # Cluster into visual lines by y-centre proximity
+    sorted_blks = sorted(blocks, key=lambda b: (b.bbox.y0, b.bbox.x0))
+    lines: list[list[TextBlock]] = [[sorted_blks[0]]]
+    for blk in sorted_blks[1:]:
+        prev_line = lines[-1]
+        prev_yc = sum((b.bbox.y0 + b.bbox.y1) / 2 for b in prev_line) / len(prev_line)
+        prev_h = max(b.bbox.y1 - b.bbox.y0 for b in prev_line)
+        cur_yc = (blk.bbox.y0 + blk.bbox.y1) / 2
+        cur_h = blk.bbox.y1 - blk.bbox.y0
+        tol = max(prev_h, cur_h) * 0.6
+        if abs(cur_yc - prev_yc) <= tol:
+            prev_line.append(blk)
+        else:
+            lines.append([blk])
+    # Within each line sort by x0, then join
+    result_lines: list[str] = []
+    for line in lines:
+        line.sort(key=lambda b: b.bbox.x0)
+        result_lines.append(" ".join(b.text for b in line))
+    return "\n".join(result_lines)
+
+
 def _split_bboxes_by_proximity(
     bboxes: list[BBox],
 ) -> list[list[int]]:
@@ -63,22 +94,54 @@ def _split_bboxes_by_proximity(
     Returns a list of index-lists.  Bboxes are sorted by y0;
     a new group starts whenever the vertical gap between consecutive
     bboxes exceeds ``_MAX_Y_GAP_FACTOR × avg_line_height``.
+
+    Additionally, within each group, bboxes are checked for large
+    horizontal x-centre gaps (>5× avg line height) indicating different
+    page columns.  When detected, the group is split into one sub-group
+    per column.
     """
     if len(bboxes) <= 1:
         return [list(range(len(bboxes)))]
 
     indexed = sorted(range(len(bboxes)), key=lambda i: (bboxes[i].y0, bboxes[i].x0))
     avg_h = sum(b.y1 - b.y0 for b in bboxes) / len(bboxes)
-    threshold = max(avg_h * _MAX_Y_GAP_FACTOR, _MIN_Y_GAP_ABS)
+    y_threshold = max(avg_h * _MAX_Y_GAP_FACTOR, _MIN_Y_GAP_ABS)
 
-    groups: list[list[int]] = [[indexed[0]]]
+    # Step 1: vertical proximity grouping
+    v_groups: list[list[int]] = [[indexed[0]]]
     for k in range(1, len(indexed)):
         prev_y1 = bboxes[indexed[k - 1]].y1
         curr_y0 = bboxes[indexed[k]].y0
-        if curr_y0 - prev_y1 > threshold:
-            groups.append([])
-        groups[-1].append(indexed[k])
-    return groups
+        if curr_y0 - prev_y1 > y_threshold:
+            v_groups.append([])
+        v_groups[-1].append(indexed[k])
+
+    # Step 2: within each vertical group, detect column splits by
+    # sorting bbox x-centres and finding a large gap.
+    x_col_threshold = avg_h * 5
+    final_groups: list[list[int]] = []
+    for grp in v_groups:
+        if len(grp) <= 1:
+            final_groups.append(grp)
+            continue
+        # Sort group members by x-centre
+        cx_sorted = sorted(grp, key=lambda i: (bboxes[i].x0 + bboxes[i].x1) / 2)
+        max_gap = 0.0
+        split_at = 0
+        for gi in range(1, len(cx_sorted)):
+            prev_cx = (bboxes[cx_sorted[gi - 1]].x0 + bboxes[cx_sorted[gi - 1]].x1) / 2
+            cur_cx = (bboxes[cx_sorted[gi]].x0 + bboxes[cx_sorted[gi]].x1) / 2
+            gap = cur_cx - prev_cx
+            if gap > max_gap:
+                max_gap = gap
+                split_at = gi
+        if max_gap > x_col_threshold:
+            final_groups.append(cx_sorted[:split_at])
+            final_groups.append(cx_sorted[split_at:])
+        else:
+            final_groups.append(grp)
+
+    return final_groups
 
 
 def _merge_detections(
@@ -572,6 +635,7 @@ def _merge_detections(
                     prev_line.append(cb)
                 else:
                     lines.append([cb])
+
             if len(lines) <= 1:
                 continue
             # Check vertical gaps between consecutive lines
@@ -717,6 +781,30 @@ def _merge_detections(
                             if y_gap > max(avg_h * _MAX_Y_GAP_FACTOR, _MIN_Y_GAP_ABS):
                                 _addr_merged.append(item)
                                 continue
+
+                        # ── Column-safe text reconstruction ──
+                        # Use the merged spatial bbox to find blocks,
+                        # excluding blocks from other columns whose char
+                        # offsets are interleaved in full_text.
+                        all_bbs = (prev_bbs or []) + (cur_bbs or [])
+                        if all_bbs and block_offsets:
+                            merged_x0 = min(b.x0 for b in all_bbs)
+                            merged_y0 = min(b.y0 for b in all_bbs)
+                            merged_x1 = max(b.x1 for b in all_bbs)
+                            merged_y1 = max(b.y1 for b in all_bbs)
+                            spatial_blocks = [
+                                blk for bs, be, blk in block_offsets
+                                if (be > prev["start"] and bs < item["end"]
+                                    and blk.bbox.x1 >= merged_x0
+                                    and blk.bbox.x0 <= merged_x1
+                                    and blk.bbox.y1 >= merged_y0
+                                    and blk.bbox.y0 <= merged_y1)
+                            ]
+                            if spatial_blocks:
+                                combined_text = _reconstruct_text_from_blocks(
+                                    spatial_blocks,
+                                )
+
                         prev["end"] = item["end"]
                         prev["text"] = combined_text
                         prev["pii_type"] = PIIType.ADDRESS
@@ -788,7 +876,28 @@ def _merge_detections(
                 all_char_ranges.append((pos, pos + len(part)))
                 pos += len(part) + 1
         else:
-            all_char_ranges = [(item["start"], item["end"])] * len(line_bboxes)
+            # Column-gap splitting may produce more bboxes than text lines.
+            # Assign each bbox a char-range from the blocks it covers
+            # spatially so that downstream shape enforcement only sees
+            # same-column blocks.
+            all_char_ranges = []
+            for lb in line_bboxes:
+                ov_starts: list[int] = []
+                ov_ends: list[int] = []
+                for bs, be, blk in block_offsets:
+                    if be <= item["start"] or bs >= item["end"]:
+                        continue
+                    bb = blk.bbox
+                    # Check spatial overlap with this line bbox
+                    if (bb.x1 < lb.x0 or bb.x0 > lb.x1
+                            or bb.y1 < lb.y0 or bb.y0 > lb.y1):
+                        continue
+                    ov_starts.append(max(bs, item["start"]))
+                    ov_ends.append(min(be, item["end"]))
+                if ov_starts:
+                    all_char_ranges.append((min(ov_starts), max(ov_ends)))
+                else:
+                    all_char_ranges.append((item["start"], item["end"]))
 
         # ── Split bboxes into spatially contiguous clusters ───────────
         spatial_groups = _split_bboxes_by_proximity(line_bboxes)
@@ -797,13 +906,39 @@ def _merge_detections(
             sg_bboxes = [line_bboxes[i] for i in sg_indices]
             sg_ranges = [all_char_ranges[i] for i in sg_indices]
 
+            # Compute group char range and text from it
+            group_cs = min(cs for cs, _ in sg_ranges)
+            group_ce = max(ce for _, ce in sg_ranges)
+            if len(spatial_groups) > 1 and block_offsets:
+                # Column-safe text: reconstruct from blocks that
+                # spatially overlap ANY bbox in this group instead
+                # of slicing full_text (which interleaves columns).
+                sg_x0 = min(b.x0 for b in sg_bboxes)
+                sg_y0 = min(b.y0 for b in sg_bboxes)
+                sg_x1 = max(b.x1 for b in sg_bboxes)
+                sg_y1 = max(b.y1 for b in sg_bboxes)
+                sg_blocks = [
+                    blk for bs, be, blk in block_offsets
+                    if (be > item["start"] and bs < item["end"]
+                        and blk.bbox.x1 >= sg_x0 and blk.bbox.x0 <= sg_x1
+                        and blk.bbox.y1 >= sg_y0 and blk.bbox.y0 <= sg_y1)
+                ]
+                if sg_blocks:
+                    group_text = _reconstruct_text_from_blocks(sg_blocks)
+                else:
+                    group_text = page_data.full_text[group_cs:group_ce]
+            elif len(spatial_groups) > 1:
+                group_text = page_data.full_text[group_cs:group_ce]
+            else:
+                group_text = item["text"]
+
             if len(sg_bboxes) == 1:
                 cs, ce = sg_ranges[0]
                 regions.append(PIIRegion(
                     id=uuid.uuid4().hex[:12],
                     page_number=page_data.page_number,
                     bbox=sg_bboxes[0],
-                    text=item["text"],
+                    text=group_text,
                     pii_type=item["pii_type"],
                     confidence=item["confidence"],
                     source=item["source"],
@@ -818,7 +953,7 @@ def _merge_detections(
                         id=uuid.uuid4().hex[:12],
                         page_number=page_data.page_number,
                         bbox=lb,
-                        text=item["text"],
+                        text=group_text,
                         pii_type=item["pii_type"],
                         confidence=item["confidence"],
                         source=item["source"],
@@ -837,7 +972,7 @@ def _merge_detections(
                             id=uuid.uuid4().hex[:12],
                             page_number=page_data.page_number,
                             bbox=lb,
-                            text=item["text"],
+                            text=group_text,
                             pii_type=item["pii_type"],
                             confidence=item["confidence"],
                             source=item["source"],

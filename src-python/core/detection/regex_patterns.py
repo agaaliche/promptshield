@@ -475,10 +475,11 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     # ──────────────────────────────────────────────────────────────────
     # English: "123 Main Street", "45 Oak Ave", "1200 N Broadway Blvd"
     # NOTE: {0,2} limited to avoid ReDoS on nested quantifiers.
+    # [^\S\n] = whitespace-except-newline so pattern never crosses lines.
     (
-        r"\b\d{1,5}\s+(?:[NSEW]\.?\s+)?[A-Z][a-z]+"
-        r"(?:\s+[A-Z][a-z]+){0,2}"
-        r"\s+(?:Street|St|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Road|Rd|"
+        r"\b\d{1,5}[^\S\n]+(?:[NSEW]\.?[^\S\n]+)?[A-Z][a-z]+"
+        r"(?:[^\S\n]+[A-Z][a-z]+){0,2}"
+        r"[^\S\n]+(?:Street|St|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Road|Rd|"
         r"Lane|Ln|Way|Court|Ct|Circle|Cir|Place|Pl|Terrace|Ter|"
         r"Parkway|Pkwy|Highway|Hwy|Trail|Trl)\b\.?",
         PIIType.ADDRESS, 0.80, _IC, _ALL,
@@ -487,15 +488,16 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     # French: "42 rue de la Paix", "12 avenue des Champs-Élysées",
     #          "19 rue Adams Bureau 208", "2898, Montée Sandy-Beach"
     # NOTE: Trailing word group limited to {0,3} (was {0,4}) to limit backtracking.
-    # The \s+ before [A-ZÀ-Ü] ensures the space after the street type is always
-    # consumed, even when there is no prepositional phrase (de/du/des/d').
+    # The [^\S\n]+ before [A-ZÀ-Ü] ensures the space after the street type is
+    # always consumed.  [^\S\n] = whitespace-except-newline so the pattern
+    # never crosses line/column boundaries.
     (
-        r"\b\d{1,5}(?:\s*(?:bis|ter))?,?\s+"
+        r"\b\d{1,5}(?:[^\S\n]*(?:bis|ter))?,?[^\S\n]+"
         r"(?:rue|avenue|av\.|boulevard|blvd|impasse|all[ée]e|chemin|place|"
         r"cours|passage|square|quai|route|voie|sentier|"
         r"mont[ée]e|rang|c[ôo]te|ruelle|croissant|promenade)"
-        r"(?:\s+(?:de\s+(?:la\s+|l[''])?|du\s+|des\s+|d['']\s*))?\s*[A-ZÀ-Ü]"
-        r"[a-zà-ü\-]+(?:[\s,]+[A-ZÀ-Üa-zà-ü0-9\-]+){0,6}\b",
+        r"(?:[^\S\n]+(?:de[^\S\n]+(?:la[^\S\n]+|l[''])?|du[^\S\n]+|des[^\S\n]+|d[''][^\S\n]*))?[^\S\n]*[A-ZÀ-Ü]"
+        r"[a-zà-ü\-]+(?:[^\S\n,]+[A-ZÀ-Üa-zà-ü0-9\-]+){0,6}\b",
         PIIType.ADDRESS, 0.82, _IC, _ALL,
     ),
 

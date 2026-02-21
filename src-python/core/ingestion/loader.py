@@ -75,6 +75,12 @@ def _build_full_text(text_blocks: list[TextBlock]) -> str:
     differences from ascenders, descenders, or OCR noise) and sorted
     left-to-right within each line, producing correct reading order.
 
+    Within each visual line, a large horizontal gap between consecutive
+    blocks (> 3× average block height) is treated as a **column
+    boundary** and a newline is inserted instead of a space.  This
+    prevents regex / NER from seeing text in separate columns as one
+    continuous phrase (works even for single-line columns).
+
     This gives NER/regex much better input than a flat space-joined
     string because sentence boundaries are preserved.
     """
@@ -91,6 +97,14 @@ def _build_full_text(text_blocks: list[TextBlock]) -> str:
         line_top = min(b.bbox.y0 for b in line_blocks)
         lh = max(b.bbox.y1 for b in line_blocks) - line_top
 
+        # Column-gap threshold: a horizontal gap > 3× average block
+        # height on this line indicates a column boundary.
+        avg_h = (
+            sum(b.bbox.y1 - b.bbox.y0 for b in line_blocks)
+            / len(line_blocks)
+        )
+        col_gap_threshold = max(avg_h * 3, 15.0)
+
         for i, block in enumerate(line_blocks):
             if prev_y is not None or i > 0:
                 if i == 0:
@@ -100,7 +114,13 @@ def _build_full_text(text_blocks: list[TextBlock]) -> str:
                     else:
                         parts.append(" ")
                 else:
-                    parts.append(" ")
+                    # Detect column gap within the same visual line
+                    prev_block = line_blocks[i - 1]
+                    h_gap = block.bbox.x0 - prev_block.bbox.x1
+                    if h_gap > col_gap_threshold:
+                        parts.append("\n")
+                    else:
+                        parts.append(" ")
             parts.append(block.text)
 
         prev_y = line_top

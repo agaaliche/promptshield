@@ -74,6 +74,31 @@ class TestPersonNoise:
     def test_real_name_not_noise(self):
         assert _is_person_pipeline_noise("John Smith") is False
 
+    def test_single_firstname_not_noise(self):
+        """Single capital first names must NOT be filtered.
+
+        Regression for: word-frequency dictionaries include common first names
+        (Robert, Stefan, Dagmar…), which caused _is_single_word_dict_noise to
+        falsely flag them as common nouns and drop them from NER detections.
+        """
+        for name in ["Dagmar", "Stefan", "Robert", "Viktor", "Kaspar", "Alfred"]:
+            assert _is_person_pipeline_noise(name) is False, (
+                f"{name!r} should NOT be noise — it's a person first name"
+            )
+
+    def test_single_surname_not_noise(self):
+        """Slavic/unusual surnames must NOT be filtered."""
+        for name in ["Vymetalova", "Kowalski", "Dubois", "Müller"]:
+            assert _is_person_pipeline_noise(name) is False, (
+                f"{name!r} should NOT be noise — it's a person surname"
+            )
+
+    def test_short_abbreviations_still_noise(self):
+        """Short tokens (≤4 chars) that end in consonants → noise."""
+        assert _is_person_pipeline_noise("Jr") is True
+        assert _is_person_pipeline_noise("Corp") is True
+        assert _is_person_pipeline_noise("Att") is True
+
 
 # ── ADDRESS number-only filter ───────────────────────────────────────────
 

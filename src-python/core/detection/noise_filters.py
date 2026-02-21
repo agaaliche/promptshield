@@ -1312,7 +1312,10 @@ def _is_person_pipeline_noise(text: str) -> bool:
     # After stripping article, check dictionary too — catches
     # "La compagnie", "Le Producteur", "L'Emprunteur" where the
     # remaining word is a common noun in any supported language.
-    if stripped and _is_single_word_dict_noise(stripped):
+    # Guard: only run when an article was actually removed.  Without that
+    # guard the check fires on standalone words ("Dagmar", "Robert", …)
+    # because word-frequency dictionaries include proper first names.
+    if stripped and stripped != clean and _is_single_word_dict_noise(stripped):
         return True
     if len(clean) <= 2:
         return True
@@ -1328,8 +1331,13 @@ def _is_person_pipeline_noise(text: str) -> bool:
         return True
     if _re.fullmatch(r'[A-ZÀ-Ü](?:\.[A-ZÀ-Ü])+\.?', clean):
         return True
-    if len(clean) <= 6 and clean[0].isupper() and clean[-1] in 'bcdfghjklmnpqrstvwxzç':
+    if len(clean) <= 4 and clean[0].isupper() and clean[-1] in 'bcdfghjklmnpqrstvwxzç':
         # Bypass for known first names ending in consonants
+        # Threshold is 4, not 6: 5-6 char names ending in consonants are very
+        # common (Dagmar, Stefan, Robert, Kaspar, Oskar, Viktor, Alfred…) and
+        # must not be suppressed.  Short tokens ≤4 (Corp, Inc, Ltd, Jr, Sr…)
+        # are still caught here; anything longer falls through to the
+        # single-word dictionary check below.
         if clean.lower() not in _PERSON_SHORT_NAME_WHITELIST:
             return True
     words = clean.split()
@@ -1344,12 +1352,19 @@ def _is_person_pipeline_noise(text: str) -> bool:
     # Uses the same _in_dict() infrastructure as the ORG filter —
     # handles accents, PDF encoding, stemming, contractions.
     #
-    # Safety:  Multi-language first-name whitelist ← any name in there
-    # is NOT filtered (Pierre, Simon, Louis, etc.).  Names that don't
-    # appear in dictionaries (Amine, Dagmar, Vymetalova) pass through
-    # naturally.
+    # Safety:  Skip the dictionary check for proper-noun-shaped words
+    # (initial capital, mixed case, ≥5 chars) because word-frequency
+    # dictionaries include common first names and surnames (Robert,
+    # Stefan, Dagmar, Viktor, Kaspar, …) and would incorrectly filter
+    # them.  Curated-set filtering (_PERSON_PIPELINE_NOISE, above)
+    # already handles domain false-positives for such words.
     if len(words) == 1:
-        if _is_single_word_dict_noise(clean):
+        _proper_noun_shaped = (
+            len(clean) >= 5
+            and clean[0].isupper()
+            and not clean.isupper()   # not an ALL-CAPS abbreviation
+        )
+        if not _proper_noun_shaped and _is_single_word_dict_noise(clean):
             return True
     if len(words) >= 2 and all(
         w.lower() in _PERSON_PIPELINE_NOISE

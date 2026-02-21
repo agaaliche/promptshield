@@ -33,6 +33,7 @@ interface UseKeyboardShortcutsOptions {
   setStatusMessage: (msg: string) => void;
   handlePasteRegions: () => void;
   batchDeleteRegions: (docId: string, ids: string[]) => Promise<any>;
+  handleClearRegion: (id: string) => void;
 }
 
 export default function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) {
@@ -123,10 +124,17 @@ export default function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) 
         case "Delete":
           if (o.selectedRegionIds.length > 0 && o.activeDocId) {
             e.preventDefault();
-            o.pushUndo();
-            const delIds = [...o.selectedRegionIds];
-            delIds.forEach((id) => o.removeRegion(id));
-            o.batchDeleteRegions(o.activeDocId, delIds).catch(logError("delete-regions"));
+            if (o.selectedRegionIds.length === 1) {
+              // Single region: route through handleClearRegion so the
+              // delete-similar dialog is shown (respects user's pref).
+              o.handleClearRegion(o.selectedRegionIds[0]);
+            } else {
+              // Multi-select: batch delete directly, no dialog.
+              o.pushUndo();
+              const delIds = [...o.selectedRegionIds];
+              delIds.forEach((id) => o.removeRegion(id));
+              o.batchDeleteRegions(o.activeDocId, delIds).catch(logError("delete-regions"));
+            }
           }
           break;
         case "Backspace":

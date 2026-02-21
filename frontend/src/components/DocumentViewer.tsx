@@ -197,6 +197,7 @@ export default function DocumentViewer() {
     setSelectedRegionIds, clearSelection, setCursorTool, prevCursorToolRef,
     cancelTypePicker, handleRegionAction, undo, redo, pushUndo, removeRegion,
     setCopiedRegions, setStatusMessage, handlePasteRegions, batchDeleteRegions,
+    handleClearRegion,
   });
 
   // ── Reset base width when switching documents ──

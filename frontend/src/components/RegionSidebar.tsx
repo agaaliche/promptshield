@@ -612,13 +612,14 @@ export default function RegionSidebar({
               }
             }}
             onMouseEnter={(e) => {
-              const tb = e.currentTarget.querySelector('[data-region-toolbar]') as HTMLElement | null;
-              if (tb) tb.style.opacity = '1';
+              e.currentTarget.querySelectorAll('[data-dim-btn]').forEach(el => {
+                (el as HTMLElement).style.opacity = '1';
+              });
             }}
             onMouseLeave={(e) => {
-              const isActioned = r.action === 'TOKENIZE' || r.action === 'REMOVE';
-              const tb = e.currentTarget.querySelector('[data-region-toolbar]') as HTMLElement | null;
-              if (tb) tb.style.opacity = isActioned ? '1' : '0.6';
+              e.currentTarget.querySelectorAll('[data-dim-btn]').forEach(el => {
+                (el as HTMLElement).style.opacity = '0.6';
+              });
             }}
           >
             {/* Clear — top-right close button */}
@@ -650,52 +651,53 @@ export default function RegionSidebar({
             <p style={styles.regionText}>"{r.text}"</p>
             <div
               data-region-toolbar
-              style={{
-                ...styles.regionActions,
-                opacity: (r.action === 'TOKENIZE' || r.action === 'REMOVE') ? 1 : 0.6,
-              }}
+              style={{ ...styles.regionActions, opacity: 1 }}
             >
               {/* Replace all */}
               <button
+                data-dim-btn
                 className="btn-ghost btn-sm"
                 onClick={(e) => {
                   e.stopPropagation();
                   onHighlightAll(r.id);
                 }}
                 title={t("regions.replaceAllMatching")}
-                style={styles.sidebarBtn}
+                style={{ ...styles.sidebarBtn, opacity: 0.6 }}
               >
                 <ReplaceAll size={13} variant="light" />
               </button>
               {/* Detect */}
               <button
+                data-dim-btn
                 className="btn-ghost btn-sm"
                 onClick={(e) => {
                   e.stopPropagation();
                   onRefresh(r.id);
                 }}
                 title={t("regions.redetect")}
-                style={styles.sidebarBtn}
+                style={{ ...styles.sidebarBtn, opacity: 0.6 }}
               >
                 <RefreshCw size={13} variant="light" />
               </button>
               {/* Edit */}
               <button
+                data-dim-btn
                 className="btn-ghost btn-sm"
                 onClick={(e) => {
                   e.stopPropagation();
                   onSelect([r.id]);
                 }}
                 title={t("regions.editLabelContent")}
-                style={styles.sidebarBtn}
+                style={{ ...styles.sidebarBtn, opacity: 0.6 }}
               >
                 <Edit3 size={13} variant="light" />
               </button>
               {/* Separator */}
-              <div style={{ width: 1, height: 18, background: "rgba(255,255,255,0.15)", margin: "0 2px" }} />
+              <div data-dim-btn style={{ width: 1, height: 18, background: "rgba(255,255,255,0.15)", margin: "0 2px", opacity: 0.6 }} />
 
               {/* Tokenize */}
               <button
+                {...(r.action !== "TOKENIZE" ? { 'data-dim-btn': true } : {})}
                 className="btn-tokenize btn-sm"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -704,6 +706,7 @@ export default function RegionSidebar({
                 title={r.action === "TOKENIZE" ? t("regions.undoTokenize") : t("regions.tokenize")}
                 style={{
                   ...styles.sidebarBtn,
+                  opacity: r.action === "TOKENIZE" ? 1 : 0.6,
                   border: r.action === "TOKENIZE" ? "1px solid #9c27b0" : "1px solid transparent",
                   background: r.action === "TOKENIZE" ? "rgba(156,39,176,0.15)" : "transparent",
                   color: "#9c27b0",
@@ -725,6 +728,7 @@ export default function RegionSidebar({
               </button>
               {/* Remove */}
               <button
+                {...(r.action !== "REMOVE" ? { 'data-dim-btn': true } : {})}
                 className="btn-danger btn-sm"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -733,6 +737,7 @@ export default function RegionSidebar({
                 title={r.action === "REMOVE" ? t("regions.undoRemove") : t("regions.remove")}
                 style={{
                   ...styles.sidebarBtn,
+                  opacity: r.action === "REMOVE" ? 1 : 0.6,
                   border: r.action === "REMOVE" ? "1px solid #f44336" : "1px solid transparent",
                   background: r.action === "REMOVE" ? "rgba(244,67,54,0.15)" : "transparent",
                   color: "#f44336",

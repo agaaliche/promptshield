@@ -96,6 +96,8 @@ class TextBlock(BaseModel):
     is_ocr: bool = False
     is_bold: bool = False            # True when font weight ≥ 700
     is_italic: bool = False           # True when font has italic flag
+    font_size: float = 0.0           # Font size in points (0 = unknown)
+    font_family: str = ""            # Raw font family name from PDF
 
 
 class PageData(BaseModel):

@@ -48,6 +48,10 @@ from models.schemas import (
 
 # Sub-module imports for local use
 from core.detection.cross_line import _detect_cross_line_orgs
+from core.detection.layout import (
+    build_detection_text as _build_detection_text,
+    translate_match as _translate_match,
+)
 from core.detection.merge import (                # noqa: F401
     _merge_detections,
     _split_bboxes_by_proximity,
@@ -180,6 +184,24 @@ def detect_pii_on_page(
         )
         return []
 
+    # Build detection text: joins adjacent lines within each column with a
+    # space instead of \n so NER / GLiNER recognises entity names that span
+    # two visual lines.  The dt_to_ft map translates matches back to
+    # full_text coordinates for all downstream code.
+    _block_offsets_early = _compute_block_offsets(page_data.text_blocks, text)
+    _om = _build_detection_text(page_data, _block_offsets_early)
+    det_text = _om.detection_text
+    _dt_to_ft = _om.dt_to_ft
+
+    def _xlate(matches):
+        """Translate detection_text match positions → full_text coordinates."""
+        out = []
+        for m in matches:
+            tm = _translate_match(m, _dt_to_ft, text)
+            if tm is not None:
+                out.append(tm)
+        return out
+
     page_t0 = time.perf_counter()
     timings: dict[str, float] = {}
 
@@ -205,8 +227,9 @@ def detect_pii_on_page(
                 )
             else:
                 effective_regex_types = None
-        regex_matches = detect_regex(text, allowed_types=effective_regex_types,
+        regex_matches = detect_regex(det_text, allowed_types=effective_regex_types,
                                       detection_language=page_lang)
+        regex_matches = _xlate(regex_matches)
         timings["regex"] = (time.perf_counter() - t0) * 1000
         logger.info(
             "Page %d: Regex found %d matches",
@@ -239,21 +262,21 @@ def detect_pii_on_page(
 
         if config.ner_backend == "auto" and is_bert_ner_available():
             auto_model, detected_lang = resolve_auto_model(text)
-            bert_results = detect_bert_ner(text, model_id=auto_model)
-            ner_matches = [NERMatch(*m) for m in bert_results]
+            bert_results = detect_bert_ner(det_text, model_id=auto_model)
+            ner_matches = _xlate([NERMatch(*m) for m in bert_results])
             logger.info(
                 "Page %d: Auto NER — lang=%s, model=%s, found %d matches",
                 page_data.page_number, detected_lang, auto_model, len(ner_matches),
             )
         elif config.ner_backend not in ("spacy", "auto") and is_bert_ner_available():
-            bert_results = detect_bert_ner(text)
-            ner_matches = [NERMatch(*m) for m in bert_results]
+            bert_results = detect_bert_ner(det_text)
+            ner_matches = _xlate([NERMatch(*m) for m in bert_results])
             logger.info(
                 "Page %d: BERT NER (%s) found %d matches",
                 page_data.page_number, config.ner_backend, len(ner_matches),
             )
         elif is_ner_available():
-            ner_matches = detect_ner(text)
+            ner_matches = _xlate(detect_ner(det_text))
             logger.info(
                 "Page %d: spaCy NER found %d matches",
                 page_data.page_number, len(ner_matches),
@@ -262,7 +285,7 @@ def detect_pii_on_page(
 
         # Heuristic name supplement
         t0 = time.perf_counter()
-        heuristic_matches = detect_names_heuristic(text)
+        heuristic_matches = _xlate(detect_names_heuristic(det_text))
         if heuristic_matches:
             ner_span_idx = SpanIndex([(m.start, m.end) for m in ner_matches])
             for hm in heuristic_matches:
@@ -282,7 +305,7 @@ def detect_pii_on_page(
                 if entry.is_text(text) and entry.is_available():
                     t0 = time.perf_counter()
                     try:
-                        lang_matches = entry.detect(text)
+                        lang_matches = _xlate(entry.detect(det_text))
                         if lang_matches:
                             added = 0
                             for lm in lang_matches:
@@ -304,7 +327,7 @@ def detect_pii_on_page(
         _report("gliner")
         t0 = time.perf_counter()
         try:
-            gliner_matches = detect_gliner(text)
+            gliner_matches = _xlate(detect_gliner(det_text))
             logger.info(
                 "Page %d: GLiNER found %d matches",
                 page_data.page_number, len(gliner_matches),
@@ -318,7 +341,7 @@ def detect_pii_on_page(
     if config.llm_detection_enabled and llm_engine is not None:
         _report("llm")
         t0 = time.perf_counter()
-        llm_matches = detect_llm(text, llm_engine)
+        llm_matches = _xlate(detect_llm(det_text, llm_engine))
         timings["llm"] = (time.perf_counter() - t0) * 1000
         logger.info(
             "Page %d: LLM found %d matches",

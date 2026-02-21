@@ -28,6 +28,10 @@ export interface TextBlock {
   line_index: number;
   word_index: number;
   is_ocr: boolean;
+  is_bold: boolean;
+  is_italic: boolean;
+  font_size: number;      // font size in points (0 = unknown)
+  font_family: string;   // raw font family name from PDF
 }
 
 export interface PageData {

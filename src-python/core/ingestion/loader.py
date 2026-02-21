@@ -584,15 +584,16 @@ def _extract_text_blocks_from_page(pdf_page: pdfium.PdfPage, page_index: int) ->
     if n_chars == 0:
         return blocks
 
-    # ── Helper: query font weight / italic for a character index ───
+    # ── Helper: query font weight / italic / name / size for a character index ───
     _raw_tp = textpage.raw  # underlying FPDF_TEXTPAGE handle
     _fw_func = pdfium.raw.FPDFText_GetFontWeight
     _fi_func = pdfium.raw.FPDFText_GetFontInfo
+    _fs_func = pdfium.raw.FPDFText_GetFontSize
     _fi_buf = ctypes.create_string_buffer(256)
     _fi_flags = ctypes.c_int(0)
 
-    def _char_font_style(idx: int) -> tuple[bool, bool]:
-        """Return (is_bold, is_italic) for character *idx*."""
+    def _char_font_style(idx: int) -> tuple[bool, bool, str, float]:
+        """Return (is_bold, is_italic, font_name, font_size) for character *idx*."""
         weight = _fw_func(_raw_tp, idx)
         bold = weight >= 700
         _fi_flags.value = 0
@@ -603,7 +604,9 @@ def _extract_text_blocks_from_page(pdf_page: pdfium.PdfPage, page_index: int) ->
             ctypes.byref(_fi_flags),
         )
         italic = bool(_fi_flags.value & 0x01)
-        return bold, italic
+        font_name = _fi_buf.value.decode("utf-8", errors="replace").strip()
+        font_size = float(_fs_func(_raw_tp, idx))
+        return bold, italic, font_name, font_size
 
     current_word = ""
     word_x0 = word_y0 = word_x1 = word_y1 = 0.0
@@ -617,6 +620,9 @@ def _extract_text_blocks_from_page(pdf_page: pdfium.PdfPage, page_index: int) ->
     word_bold_votes = 0
     word_italic_votes = 0
     word_char_count = 0
+    # Font name / size — sampled from the first character of each word
+    word_font_name: str = ""
+    word_font_size: float = 0.0
 
     for i in range(n_chars):
         char = textpage.get_text_range(index=i, count=1)
@@ -649,6 +655,8 @@ def _extract_text_blocks_from_page(pdf_page: pdfium.PdfPage, page_index: int) ->
                         is_ocr=False,
                         is_bold=w_bold,
                         is_italic=w_italic,
+                        font_size=word_font_size,
+                        font_family=word_font_name,
                     ))
                 word_index += 1
                 current_word = ""
@@ -657,6 +665,8 @@ def _extract_text_blocks_from_page(pdf_page: pdfium.PdfPage, page_index: int) ->
                 word_bold_votes = 0
                 word_italic_votes = 0
                 word_char_count = 0
+                word_font_name = ""
+                word_font_size = 0.0
         else:
             left, bottom, right, top = charbox
             if not current_word:
@@ -673,11 +683,14 @@ def _extract_text_blocks_from_page(pdf_page: pdfium.PdfPage, page_index: int) ->
             current_word += char
             char_y_centers.append((bottom + top) / 2.0)
             char_heights.append(top - bottom)
-            # Track font style
+            # Track font style (sample first char for name/size)
             try:
-                cb, ci = _char_font_style(i)
+                cb, ci, fname, fsize = _char_font_style(i)
                 word_bold_votes += int(cb)
                 word_italic_votes += int(ci)
+                if word_char_count == 0:  # first char of word
+                    word_font_name = fname
+                    word_font_size = fsize
             except Exception:
                 pass  # pdfium may fail on some exotic fonts
             word_char_count += 1
@@ -705,6 +718,8 @@ def _extract_text_blocks_from_page(pdf_page: pdfium.PdfPage, page_index: int) ->
                 is_ocr=False,
                 is_bold=w_bold,
                 is_italic=w_italic,
+                font_size=word_font_size,
+                font_family=word_font_name,
             ))
 
     if rotated_skipped:

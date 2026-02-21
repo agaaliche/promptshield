@@ -188,6 +188,206 @@ def _redact_scanned_page(page: fitz.Page, replacements: list[tuple["PIIRegion", 
     page.insert_image(page_rect, stream=png_bytes)
 
 
+# ---------------------------------------------------------------------------
+# Deep metadata / revision-data scrubbers
+# ---------------------------------------------------------------------------
+
+def _strip_pdf_deep_metadata(pdf_doc: "fitz.Document") -> None:
+    """Remove PDF page thumbnails and AcroForm field values.
+
+    Page thumbnails are small images stored in each page's /Thumb entry.
+    They are generated BEFORE redaction by many PDF viewers, so they can
+    expose the un-redacted content to any tool that reads them (e.g. macOS
+    Preview, Acrobat, exiftool).  We remove them unconditionally.
+
+    AcroForm fields (interactive forms) may contain pre-filled default values
+    with PII (names, addresses, SSNs).  We clear every field value.
+    """
+    # 1. Remove /Thumb from every page dictionary
+    try:
+        for page in pdf_doc:
+            xref = page.xref
+            if "Thumb" in pdf_doc.xref_get_keys(xref):
+                pdf_doc.xref_set_key(xref, "Thumb", "null")
+                logger.debug(f"Removed page thumbnail from page {page.number + 1}")
+    except Exception:
+        logger.debug("Could not remove PDF page thumbnails")
+
+    # 2. Clear AcroForm widget (form-field) values
+    try:
+        for page in pdf_doc:
+            for widget in page.widgets():
+                if widget.field_value:
+                    widget.field_value = ""
+                    widget.update()
+    except Exception:
+        logger.debug("Could not clear PDF AcroForm field values")
+
+    # 3. Remove PDF-level JavaScript (Names/JavaScript tree)
+    #    JS is rarely PII but may contain hard-coded values like employee IDs.
+    try:
+        catalog = pdf_doc.pdf_catalog()
+        names_obj = pdf_doc.xref_get_key(catalog, "Names")
+        if names_obj and names_obj[0] not in ("null", "none", ""):
+            # Clear JavaScript sub-tree if it resolves to a dict
+            names_xref_str = names_obj[1]
+            if names_xref_str.endswith(" R"):
+                names_xref = int(names_xref_str.split()[0])
+                js_entry = pdf_doc.xref_get_key(names_xref, "JavaScript")
+                if js_entry and js_entry[0] not in ("null", "none", ""):
+                    pdf_doc.xref_set_key(names_xref, "JavaScript", "null")
+                    logger.debug("Removed PDF JavaScript names tree")
+    except Exception:
+        logger.debug("Could not inspect/remove PDF JavaScript")
+
+
+def _strip_docx_tracked_changes(docx_doc) -> None:
+    """Permanently remove tracked-change revision data from a DOCX document.
+
+    Microsoft Word stores the *original* text of deletions in ``<w:del>``
+    elements and wraps insertions in ``<w:ins>`` elements.  Both are fully
+    readable in the raw XML — even content the user believes was "deleted".
+
+    We:
+      * Remove every ``<w:del>`` subtree (discarded text disappears entirely).
+      * Unwrap every ``<w:ins>`` (keep the inserted run children, drop the
+        tracking envelope).
+      * Blank out ``w:author`` / ``w:date`` attributes on any surviving
+        revision markup (e.g. format-change ``<w:rPrChange>``).
+      * Strip ``rsidR`` / ``rsidRPr`` / ``rsidDel`` etc. attributes that leak
+        editor session identities.
+    """
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+    body = docx_doc.element
+
+    # 1. Remove <w:del> blocks entirely (deleted-but-preserved text).
+    for del_elem in list(body.iter(f"{{{W}}}del")):
+        parent = del_elem.getparent()
+        if parent is not None:
+            parent.remove(del_elem)
+
+    # 2. Unwrap <w:ins> — preserve child runs, strip the tracking wrapper.
+    for ins_elem in list(body.iter(f"{{{W}}}ins")):
+        parent = ins_elem.getparent()
+        if parent is None:
+            continue
+        idx = list(parent).index(ins_elem)
+        for child in list(ins_elem):
+            parent.insert(idx, child)
+            idx += 1
+        parent.remove(ins_elem)
+
+    # 3. Blank out w:author and w:date on any remaining revision elements
+    #    (e.g. <w:rPrChange w:author="John Smith" ...>).
+    author_attr = f"{{{W}}}author"
+    date_attr = f"{{{W}}}date"
+    for elem in body.iter():
+        if author_attr in elem.attrib:
+            elem.attrib[author_attr] = ""
+        if date_attr in elem.attrib:
+            elem.attrib[date_attr] = ""
+
+    # 4. Strip rsid* attributes (revision save IDs — encode editor session).
+    rsid_attrs = {
+        f"{{{W}}}rsidR", f"{{{W}}}rsidRPr", f"{{{W}}}rsidDel",
+        f"{{{W}}}rsidDefault", f"{{{W}}}rsidSect", f"{{{W}}}rsidTr",
+        f"{{{W}}}rsidRDel",
+    }
+    for elem in body.iter():
+        for attr in list(rsid_attrs):
+            elem.attrib.pop(attr, None)
+
+    logger.debug("Stripped DOCX tracked changes and revision attributes")
+
+
+def _strip_docx_comment_annotations(docx_doc) -> None:
+    """Remove all inline review-comment annotations from a DOCX document.
+
+    Comments in Word can contain PII discussed by reviewers (names, addresses,
+    personal notes).  We remove the comment reference markers from the body
+    *and* clear the comments.xml part so nothing leaks from either location.
+    """
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    COMMENTS_REL = (
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
+    )
+
+    body = docx_doc.element
+
+    # Remove comment reference elements from the document body
+    for tag in ("commentRangeStart", "commentRangeEnd", "commentReference"):
+        for elem in list(body.iter(f"{{{W}}}{tag}")):
+            parent = elem.getparent()
+            if parent is not None:
+                parent.remove(elem)
+
+    # Clear the comments.xml part (wipe all <w:comment> children)
+    try:
+        comments_part = docx_doc.part.part_related_by(COMMENTS_REL)
+        root = comments_part._element
+        for child in list(root):
+            root.remove(child)
+        logger.debug("Cleared DOCX comments.xml")
+    except Exception:
+        pass  # Document has no comments part — nothing to do
+
+
+def _strip_docx_app_properties(docx_doc) -> None:
+    """Clear the docProps/app.xml extended properties that may expose author identity.
+
+    Fields like Company, Manager, Template, HyperlinkBase can contain the
+    original author's employer or personal file-system paths.  We parse the
+    raw blob, blank the sensitive fields, and write it back.
+    """
+    APP_REL = (
+        "http://schemas.openxmlformats.org/officeDocument/2006/"
+        "relationships/extended-properties"
+    )
+    APP_NS = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"
+
+    try:
+        from lxml import etree as _etree
+
+        app_part = docx_doc.part.package.part_related_by(APP_REL)
+        root = _etree.fromstring(app_part.blob)
+        for tag in ("Company", "Manager", "HyperlinkBase", "Template"):
+            elem = root.find(f"{{{APP_NS}}}{tag}")
+            if elem is not None:
+                elem.text = ""
+        # Write the modified XML back into the part blob
+        app_part._blob = _etree.tostring(
+            root,
+            xml_declaration=True,
+            encoding="UTF-8",
+            standalone=True,
+        )
+        logger.debug("Cleared DOCX app.xml extended properties")
+    except Exception:
+        pass  # present in most DOCX but not mandatory
+
+
+def _strip_xlsx_defined_names(wb) -> None:
+    """Remove workbook-level defined names (named ranges) that may contain PII.
+
+    Excel's Name Manager can store named formulas or constants with PII
+    strings.  We delete all defined names that are not standard Excel
+    built-ins (which start with ``_xlnm.``).
+    """
+    try:
+        # defined_names is a dict subclass; iterate over a snapshot of keys
+        names_to_remove = [
+            name for name in list(wb.defined_names.keys())
+            if not name.startswith("_xlnm.")
+        ]
+        for name in names_to_remove:
+            del wb.defined_names[name]
+        if names_to_remove:
+            logger.debug(f"Removed {len(names_to_remove)} XLSX defined names")
+    except Exception:
+        logger.debug("Could not remove XLSX defined names")
+
+
 def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResponse:
     """Anonymize a PDF file using text-based redactions or image manipulation for scanned pages."""
     tokens_created = 0
@@ -327,7 +527,10 @@ def _anonymize_pdf_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeResp
         except Exception:
             logger.debug("Could not enumerate/remove embedded files")
 
-        logger.info("Scrubbed PDF metadata, annotations, TOC, and attachments")
+        # 6. Deep scrub: page thumbnails, AcroForm field values, JavaScript
+        _strip_pdf_deep_metadata(pdf_doc)
+
+        logger.info("Scrubbed PDF metadata, annotations, TOC, attachments, thumbnails, and form fields")
 
         # Save anonymized PDF
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -590,7 +793,14 @@ def _anonymize_docx_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeRes
         props.keywords = ""
         props.comments = ""
         props.category = ""
-        logger.info("Scrubbed DOCX metadata, headers, footers, and footnotes")
+
+        # Deep scrub: tracked changes (<w:del> / <w:ins>), inline comment
+        # annotations, and app.xml extended properties (Company, Manager, etc.)
+        _strip_docx_tracked_changes(docx)
+        _strip_docx_comment_annotations(docx)
+        _strip_docx_app_properties(docx)
+
+        logger.info("Scrubbed DOCX metadata, tracked changes, comments, headers, footers, and footnotes")
 
         # Save anonymized DOCX
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -701,7 +911,11 @@ def _anonymize_xlsx_sync(doc: DocumentInfo, original_path: Path) -> AnonymizeRes
         wb.properties.description = ""
         wb.properties.keywords = ""
         wb.properties.category = ""
-        logger.info("Scrubbed XLSX metadata and cell comments")
+
+        # Deep scrub: defined names (named ranges/formulas) may contain PII
+        _strip_xlsx_defined_names(wb)
+
+        logger.info("Scrubbed XLSX metadata, cell comments, and defined names")
 
         # Save anonymized XLSX
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

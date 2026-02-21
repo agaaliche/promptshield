@@ -647,15 +647,7 @@ export default function RegionSidebar({
                 {Math.round(r.confidence * 100)}%
               </span>
               <span style={styles.sourceTag}>{r.source}</span>
-              <span style={{
-                fontSize: 10,
-                color: "var(--text-muted)",
-                background: "var(--bg-primary)",
-                padding: "1px 5px",
-                borderRadius: 10,
-                border: "1px solid var(--border-color)",
-                letterSpacing: "0.02em",
-              }}>p.{r.page_number}</span>
+              <span style={styles.sourceTag}>p.{r.page_number}</span>
             </div>
             <p style={styles.regionText}>"{r.text}"</p>
             <div

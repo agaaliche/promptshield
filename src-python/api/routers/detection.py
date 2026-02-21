@@ -264,6 +264,7 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
 
     try:
         from core.detection.pipeline import detect_pii_on_page, propagate_regions_across_pages
+        from core.detection.propagation import propagate_partial_org_names as _prop_partial_orgs_r
         from core.detection.language import detect_language as _detect_lang_r
 
         # Thread-safe config override for this detection run
@@ -614,6 +615,10 @@ async def redetect_pii(doc_id: str, body: RedetectRequest) -> dict[str, Any]:
 
         # Propagate newly detected text across all pages
         all_regions = propagate_regions_across_pages(merged_regions, doc.pages)
+
+        # Partial ORG propagation: flag 2+-word sub-phrases and single-word
+        # subsets of known ORG names across all pages
+        all_regions = _prop_partial_orgs_r(all_regions, doc.pages)
 
         # Post-propagation: strip excluded types from the scanned pages
         # (propagation may re-create them from templates on other pages)

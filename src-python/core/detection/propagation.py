@@ -213,10 +213,13 @@ def propagate_regions_across_pages(
         logger.debug("Propagation: no propagatable PII texts found")
         return regions
 
-    # X2: Per-page interval index for O(log n) overlap check
-    page_intervals: dict[int, _PageIntervals] = defaultdict(_PageIntervals)
+    # X2: Per-page interval index for O(log n) overlap check.
+    # Keyed by (pii_type, page_number) so that a PERSON/LOCATION region
+    # covering the same chars as an ORG word does NOT block ORG propagation
+    # (and vice-versa).  Each type's interval set is independent.
+    page_intervals: dict[tuple, _PageIntervals] = defaultdict(_PageIntervals)
     for r in regions:
-        page_intervals[r.page_number].add(r.char_start, r.char_end)
+        page_intervals[(r.pii_type, r.page_number)].add(r.char_start, r.char_end)
 
     # X1: Cache block offsets per page (computed once, reused for all texts)
     block_offsets_cache: dict[int, list] = {}
@@ -235,7 +238,7 @@ def propagate_regions_across_pages(
                 continue
 
             pn = page_data.page_number
-            intervals = page_intervals[pn]
+            intervals = page_intervals[(template.pii_type, pn)]
 
             # Accent-agnostic search: compare stripped versions
             if pn not in norm_full_cache:
@@ -282,7 +285,7 @@ def propagate_regions_across_pages(
                         action=template.action,
                     )
                     propagated.append(new_region)
-                intervals.add(char_start, char_end)
+                intervals.add(char_start, char_end)  # type-scoped: won't block other types
 
     if propagated:
         logger.info(
@@ -541,10 +544,12 @@ def propagate_partial_org_names(
             _retyped,
         )
 
-    # 3b. Build per-page interval index from existing regions
-    page_intervals: dict[int, _PageIntervals] = defaultdict(_PageIntervals)
+    # 3b. Build per-page interval index from existing regions.
+    # Keyed by (pii_type, page_number) — same-type isolation as in
+    # propagate_regions_across_pages.
+    page_intervals: dict[tuple, _PageIntervals] = defaultdict(_PageIntervals)
     for r in regions:
-        page_intervals[r.page_number].add(r.char_start, r.char_end)
+        page_intervals[(r.pii_type, r.page_number)].add(r.char_start, r.char_end)
 
     # Block-offset cache
     block_offsets_cache: dict[int, list] = {}
@@ -568,7 +573,7 @@ def propagate_partial_org_names(
                 continue
 
             pn = page_data.page_number
-            intervals = page_intervals[pn]
+            intervals = page_intervals[(PIIType.ORG, pn)]
 
             # Accent-agnostic search
             if pn not in norm_full_cache:

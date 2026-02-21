@@ -301,6 +301,54 @@ class TestNoiseFilters:
         persons = [r for r in result if r.pii_type == PIIType.PERSON]
         assert len(persons) >= 1
 
+    def test_adjacent_person_tokens_merged_into_full_name(self):
+        """Two adjacent PERSON tokens separated by a space are merged.
+
+        Regression for: NER models sometimes detect "Dagmar" and
+        "Vymetalova" as two separate PERSON entities even though they
+        form a single full name.  The merge pass must combine adjacent
+        same-type PERSON candidates into one unified region.
+        """
+        # Preamble text ensures the name is well past offset 5 so the
+        # page-header heuristic (PERSON at char <= 5) does not discard it.
+        text = "Rimouski, le 3 septembre 2025\nAtt. Dagmar Vymetalova\n24, Rue Leclerc"
+        offset = text.find("Dagmar")  # well past offset 5
+        page = _make_page(text)
+        nm1 = NERMatch(
+            start=offset, end=offset + 6, text="Dagmar",
+            pii_type=PIIType.PERSON, confidence=0.78,
+        )
+        nm2 = NERMatch(
+            start=offset + 7, end=offset + 17, text="Vymetalova",
+            pii_type=PIIType.PERSON, confidence=0.78,
+        )
+        result = _merge_detections([], [nm1, nm2], [], page)
+        persons = [r for r in result if r.pii_type == PIIType.PERSON]
+        # Must produce exactly ONE region covering the full name
+        assert len(persons) == 1, (
+            f"Expected 1 merged PERSON, got {len(persons)}: {[r.text for r in persons]}"
+        )
+        assert persons[0].text == "Dagmar Vymetalova"
+
+    def test_adjacent_person_tokens_not_merged_across_paragraph(self):
+        """PERSON tokens separated by a newline are NOT merged."""
+        text = "The lead is Ingrid\nBorgen runs operations at the plant site here"
+        page = _make_page(text)
+        ingrid_off = text.find("Ingrid")
+        borgen_off = text.find("Borgen")
+        nm1 = NERMatch(
+            start=ingrid_off, end=ingrid_off + 6, text="Ingrid",
+            pii_type=PIIType.PERSON, confidence=0.78,
+        )
+        nm2 = NERMatch(
+            start=borgen_off, end=borgen_off + 6, text="Borgen",
+            pii_type=PIIType.PERSON, confidence=0.78,
+        )
+        result = _merge_detections([], [nm1, nm2], [], page)
+        persons = [r for r in result if r.pii_type == PIIType.PERSON]
+        # Should NOT be merged because gap character is \n, not a space
+        assert not any(r.text == "Ingrid\nBorgen" for r in persons)
+
 
 # ---------------------------------------------------------------------------
 # Structured post-merge filters

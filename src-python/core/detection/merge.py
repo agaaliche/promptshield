@@ -450,6 +450,8 @@ def _merge_detections(
     # ── Sort and merge overlapping regions ────────────────────────────
     candidates.sort(key=lambda x: (x["start"], -x["priority"]))
 
+    _MAX_PERSON_WORDS = 4  # same as _MAX_WORDS_BY_TYPE["PERSON"]
+
     merged: list[dict] = []
     for cand in candidates:
         if not merged:
@@ -457,6 +459,23 @@ def _merge_detections(
             continue
 
         last = merged[-1]
+
+        # ── Adjacent PERSON merge ────────────────────────────────────
+        # Two consecutive PERSON tokens separated by exactly one space
+        # (e.g. "Dagmar" + "Vymetalova") are parts of the same full name.
+        # Merge them so the whole name surfaces as a single region.
+        if (
+            cand["pii_type"] == PIIType.PERSON
+            and last["pii_type"] == PIIType.PERSON
+            and cand["start"] == last["end"] + 1
+            and page_data.full_text[last["end"]:cand["start"]] == " "
+            and len(page_data.full_text[last["start"]:cand["end"]].split()) <= _MAX_PERSON_WORDS
+        ):
+            last["end"] = cand["end"]
+            last["text"] = page_data.full_text[last["start"]:last["end"]]
+            last["confidence"] = max(last["confidence"], cand["confidence"])
+            continue
+
         if cand["start"] < last["end"]:
             same_type = cand["pii_type"] == last["pii_type"]
             prev_start = last["start"]

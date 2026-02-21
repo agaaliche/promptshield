@@ -37,6 +37,12 @@ interface UseRegionActionsOpts {
   setSelectedRegionIds: (ids: string[]) => void;
 }
 
+/**
+ * Preference key stored in localStorage.
+ * Values: "ask" (default) | "one" | "all"
+ */
+export const DELETE_SIMILAR_PREF_KEY = "singleDeleteMode";
+
 export default function useRegionActions(opts: UseRegionActionsOpts) {
   const {
     activeDocId, activePage, regions,
@@ -47,6 +53,9 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
   const [copiedRegions, setCopiedRegions] = useState<PIIRegion[]>([]);
   const [showAutodetect, setShowAutodetect] = useState(false);
   const [redetecting, setRedetecting] = useState(false);
+
+  /** Non-null while the "delete similar?" dialog is open for a single region delete. */
+  const [pendingDeleteRegionId, setPendingDeleteRegionId] = useState<string | null>(null);
 
   const handleRegionAction = useCallback(
     async (regionId: string, action: RegionAction) => {
@@ -96,7 +105,8 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
     [activeDocId, pushUndo, updateRegion, setStatusMessage],
   );
 
-  const handleClearRegion = useCallback(
+  /** Delete exactly one region (no dialog). */
+  const _deleteOne = useCallback(
     async (regionId: string) => {
       if (!activeDocId) return;
       try {
@@ -111,6 +121,75 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
     },
     [activeDocId, pushUndo, removeRegion, setStatusMessage],
   );
+
+  /** Delete all regions whose normalised text matches the given region. */
+  const _deleteAll = useCallback(
+    async (regionId: string) => {
+      if (!activeDocId) return;
+      const target = regions.find((r) => r.id === regionId);
+      if (!target) return;
+      const normTarget = target.text.trim().toLowerCase();
+      const matching = regions.filter((r) => r.text.trim().toLowerCase() === normTarget);
+      const ids = matching.map((r) => r.id);
+      if (ids.length === 0) return;
+      try {
+        pushUndo();
+        setRegions(regions.filter((r) => !ids.includes(r.id)));
+        await batchDeleteRegions(activeDocId, ids);
+      } catch (e: unknown) {
+        if (toErrorMessage(e).includes("404")) return;
+        console.error("Failed to delete similar regions:", e);
+        setStatusMessage(`Delete failed: ${toErrorMessage(e)}`);
+      }
+    },
+    [activeDocId, regions, pushUndo, setRegions, setStatusMessage],
+  );
+
+  /**
+   * Entry point for single-region deletion (X button on overlay or sidebar).
+   * Checks the stored preference:
+   *   "ask"  → show the DeleteSimilarDialog
+   *   "one"  → silently delete just this occurrence
+   *   "all"  → silently delete all occurrences
+   */
+  const handleClearRegion = useCallback(
+    (regionId: string) => {
+      if (!activeDocId) return;
+      const mode = localStorage.getItem(DELETE_SIMILAR_PREF_KEY) ?? "ask";
+      if (mode === "one") {
+        _deleteOne(regionId);
+      } else if (mode === "all") {
+        _deleteAll(regionId);
+      } else {
+        // mode === "ask": open confirmation dialog
+        setPendingDeleteRegionId(regionId);
+      }
+    },
+    [activeDocId, _deleteOne, _deleteAll],
+  );
+
+  /** Called when the user confirms the delete-similar dialog. */
+  const handleConfirmDelete = useCallback(
+    (deleteAll: boolean, neverAsk: boolean) => {
+      const id = pendingDeleteRegionId;
+      setPendingDeleteRegionId(null);
+      if (!id) return;
+      if (neverAsk) {
+        localStorage.setItem(DELETE_SIMILAR_PREF_KEY, deleteAll ? "all" : "one");
+      }
+      if (deleteAll) {
+        _deleteAll(id);
+      } else {
+        _deleteOne(id);
+      }
+    },
+    [pendingDeleteRegionId, _deleteOne, _deleteAll],
+  );
+
+  /** Called when the user cancels the delete-similar dialog. */
+  const handleCancelDelete = useCallback(() => {
+    setPendingDeleteRegionId(null);
+  }, []);
 
   const handleHighlightAll = useCallback(
     async (regionId: string) => {
@@ -359,5 +438,9 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
     handleResetPage,
     handleAutodetect,
     handleResetDetection,
+    // Delete-similar dialog
+    pendingDeleteRegionId,
+    handleConfirmDelete,
+    handleCancelDelete,
   };
 }

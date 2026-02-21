@@ -8,6 +8,7 @@ import { toErrorMessage } from "../../errorUtils";
 import { updateSettings, logError, fetchCustomPatterns } from "../../api";
 import { Section, styles } from "./settingsStyles";
 import { CustomPatternsDialog, formatTemplate } from "./CustomPatternsSection";
+import { DELETE_SIMILAR_PREF_KEY } from "../../hooks/useRegionActions";
 import type { CustomPattern } from "../../types";
 
 const NER_MODELS = [
@@ -54,6 +55,11 @@ export default function DetectionSection() {
   const [deepTooltip, setDeepTooltip] = useState(false);
   const [customPatternsDialogOpen, setCustomPatternsDialogOpen] = useState(false);
   const [activePatterns, setActivePatterns] = useState<CustomPattern[]>([]);
+
+  // ── Review-behaviour prefs (localStorage) ──
+  const [deletePref, setDeletePref] = useState<string>(
+    () => localStorage.getItem(DELETE_SIMILAR_PREF_KEY) ?? "ask",
+  );
 
   useEffect(() => {
     if (detectionSettings.regex_enabled && detectionSettings.custom_patterns_enabled) {
@@ -637,6 +643,48 @@ export default function DetectionSection() {
         <span>{t("settingsDetection.permissiveGroup")}</span>
       </div>
     </Section>
+    {/* ── Review behaviour ── */}
+    <Section>
+      <p style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", margin: "0 0 6px" }}>
+        {t("settingsDetection.reviewBehaviorTitle")}
+      </p>
+      <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 14px", lineHeight: 1.5 }}>
+        {t("settingsDetection.deletePrefLabel")}{" "}
+        <strong style={{ color: "var(--text-secondary)" }}>
+          {deletePref === "all"
+            ? t("settingsDetection.deletePrefAll")
+            : deletePref === "one"
+            ? t("settingsDetection.deletePrefOne")
+            : t("settingsDetection.deletePrefAsk")}
+        </strong>
+      </p>
+      {deletePref !== "ask" && (
+        <button
+          onClick={() => {
+            localStorage.removeItem(DELETE_SIMILAR_PREF_KEY);
+            setDeletePref("ask");
+          }}
+          style={{
+            padding: "7px 14px",
+            fontSize: 12,
+            fontWeight: 600,
+            borderRadius: 6,
+            border: "1px solid var(--border-color)",
+            background: "transparent",
+            color: "var(--accent-primary)",
+            cursor: "pointer",
+          }}
+        >
+          {t("settingsDetection.restoreDeleteDialog")}
+        </button>
+      )}
+      {deletePref === "ask" && (
+        <p style={{ fontSize: 11, color: "var(--text-muted)", margin: 0, fontStyle: "italic" }}>
+          {t("settingsDetection.deleteDialogActive")}
+        </p>
+      )}
+    </Section>
+
     <CustomPatternsDialog
       open={customPatternsDialogOpen}
       onClose={() => {

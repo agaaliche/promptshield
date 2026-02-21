@@ -480,7 +480,14 @@
       "deGermevalBadge": "German",
       "ptLener": "Portuguese — LeNER-Br, legal & general NER",
       "ptLenerBadge": "Portuguese"
-    }
+    },
+    "reviewBehaviorTitle": "Review Behaviour",
+    "deletePrefLabel": "Single-region deletion:",
+    "deletePrefAll": "Always delete all occurrences",
+    "deletePrefOne": "Always delete this occurrence only",
+    "deletePrefAsk": "Ask each time (default)",
+    "restoreDeleteDialog": "Restore confirmation dialog",
+    "deleteDialogActive": "Confirmation dialog is active — you are prompted on each deletion."
   },
 
   "customPatterns": {
@@ -774,5 +781,14 @@
 
   "snackbar": {
     "dismiss": "Dismiss"
+  },
+
+  "deleteSimilar": {
+    "title": "Delete Region",
+    "foundCount": "This text appears {{count}} times across the document.",
+    "onlyOne": "This is the only occurrence of this text in the document.",
+    "rememberChoice": "Don't ask again — remember my choice",
+    "deleteAll": "Delete all {{count}} occurrences",
+    "deleteOne": "Delete this occurrence only"
   }
 }

@@ -32,6 +32,7 @@ import PIITypePicker from "./PIITypePicker";
 import RegionSidebar from "./RegionSidebar";
 import PageNavigator from "./PageNavigator";
 import AutodetectPanel from "./AutodetectPanel";
+import DeleteSimilarDialog from "./DeleteSimilarDialog";
 
 import CursorToolToolbar from "./CursorToolToolbar";
 import MultiSelectToolbar from "./MultiSelectToolbar";
@@ -103,6 +104,7 @@ export default function DocumentViewer() {
     handleHighlightAll, handleUpdateLabel, handleUpdateText,
     handlePasteRegions,
     handleAutodetect, handleResetAll, handleResetPage,
+    pendingDeleteRegionId, handleConfirmDelete, handleCancelDelete,
   } = useRegionActions({
     activeDocId: activeDocId ?? null,
     activePage,
@@ -561,6 +563,25 @@ export default function DocumentViewer() {
         open={showExportDialog}
         onClose={() => setShowExportDialog(false)}
       />
+
+      {/* Delete-similar confirmation dialog */}
+      {pendingDeleteRegionId && (() => {
+        const target = regions.find((r) => r.id === pendingDeleteRegionId);
+        if (!target) return null;
+        const normText = target.text.trim().toLowerCase();
+        const occurrenceCount = regions.filter(
+          (r) => r.text.trim().toLowerCase() === normText,
+        ).length;
+        return (
+          <DeleteSimilarDialog
+            regionText={target.text}
+            occurrenceCount={occurrenceCount}
+            onDeleteOne={(neverAsk) => handleConfirmDelete(false, neverAsk)}
+            onDeleteAll={(neverAsk) => handleConfirmDelete(true, neverAsk)}
+            onCancel={handleCancelDelete}
+          />
+        );
+      })()}
 
       {/* Canvas area */}
       <div ref={containerRef} style={{

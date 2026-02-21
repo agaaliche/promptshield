@@ -616,8 +616,9 @@ export default function RegionSidebar({
               if (tb) tb.style.opacity = '1';
             }}
             onMouseLeave={(e) => {
+              const isActioned = r.action === 'TOKENIZE' || r.action === 'REMOVE';
               const tb = e.currentTarget.querySelector('[data-region-toolbar]') as HTMLElement | null;
-              if (tb) tb.style.opacity = '0.6';
+              if (tb) tb.style.opacity = isActioned ? '1' : '0.6';
             }}
           >
             {/* Clear — top-right close button */}
@@ -649,7 +650,10 @@ export default function RegionSidebar({
             <p style={styles.regionText}>"{r.text}"</p>
             <div
               data-region-toolbar
-              style={styles.regionActions}
+              style={{
+                ...styles.regionActions,
+                opacity: (r.action === 'TOKENIZE' || r.action === 'REMOVE') ? 1 : 0.6,
+              }}
             >
               {/* Replace all */}
               <button

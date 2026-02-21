@@ -696,9 +696,8 @@ export default function RegionSidebar({
                 <Edit3 size={13} variant="light" />
               </button>
               </div>
-            </div>
-            {/* Bottom-right action group */}
-            <div style={{ position: "absolute", bottom: 4, right: 4, display: "flex", gap: 2 }}>
+              {/* Right group */}
+              <div style={{ display: "flex", gap: 2, marginLeft: "auto" }}>
 
               {/* Tokenize */}
               <button
@@ -762,6 +761,7 @@ export default function RegionSidebar({
                   whiteSpace: "nowrap",
                 }}>{t("regions.remove")}</span>
               </button>
+              </div>
             </div>
 
           </div>

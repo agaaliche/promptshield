@@ -652,7 +652,7 @@ export default function RegionSidebar({
             <p style={styles.regionText}>"{r.text}"</p>
             <div
               data-region-toolbar
-              style={{ ...styles.regionActions, opacity: 1 }}
+              style={{ ...styles.regionActions, opacity: 1, width: "100%" }}
             >
               {/* Left group */}
               <div style={{ display: "flex", gap: 2 }}>

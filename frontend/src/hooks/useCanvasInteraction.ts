@@ -600,10 +600,16 @@ export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
           setRegions([...baseRegions, fullRegion, ...siblings]);
         }
 
+        const addSnackbar = useAppStore.getState().addSnackbar;
         if (siblings.length > 0) {
           setSelectedRegionIds(resp.all_ids || [fullRegion.id]);
-          setStatusMessage(
-            `Added ${piiType} region — found ${1 + siblings.length} occurrences of "${(resp.text || "").slice(0, 30)}"`,
+          const total = 1 + siblings.length;
+          const preview = (resp.text || "").slice(0, 40);
+          const statusMsg = `Added ${piiType} region — found ${total} occurrences of "${preview}"`;
+          setStatusMessage(statusMsg);
+          addSnackbar(
+            `${total} identical regions created across the document (text: "${preview}")`,
+            "info",
           );
         } else {
           setStatusMessage(`Added manual ${piiType} region`);

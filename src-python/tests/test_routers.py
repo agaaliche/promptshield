@@ -142,15 +142,21 @@ class TestVault:
         assert "unlocked" in resp.json()
 
     @pytest.mark.asyncio
-    async def test_vault_stats_locked(self, client: AsyncClient):
-        """Stats should 403 when vault is locked."""
+    async def test_vault_stats_returns_ok(self, client: AsyncClient):
+        """Vault auto-initialises — stats are always accessible."""
         resp = await client.get("/api/vault/stats")
-        assert resp.status_code == 403
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "total_tokens" in data
 
     @pytest.mark.asyncio
-    async def test_vault_tokens_locked(self, client: AsyncClient):
+    async def test_vault_tokens_returns_ok(self, client: AsyncClient):
+        """Vault auto-initialises — token list is always accessible."""
         resp = await client.get("/api/vault/tokens")
-        assert resp.status_code == 403
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "tokens" in data
+        assert "total" in data
 
 
 # ───────────────────────── LLM ─────────────────────────

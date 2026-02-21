@@ -502,53 +502,59 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
     ),
 
     # German: "Hauptstraße 42", "Berliner Str. 15"
+    # [^\S\n] = whitespace-except-newline so pattern never crosses lines.
     (
         r"\b[A-ZÀ-Ü][a-zà-ü]+(?:stra[ßs]e|str\.?|weg|gasse|platz|ring|damm|allee|ufer)"
-        r"\s+\d{1,5}[a-z]?\b",
+        r"[^\S\n]+\d{1,5}[a-z]?\b",
         PIIType.ADDRESS, 0.80, _IC, _ALL,
     ),
 
     # Italian: "Via Roma 42", "Piazza Garibaldi, 1", "Corso Italia 15/A"
     # NOTE: Trailing name group limited to {0,2} (was {0,3}) to limit backtracking.
+    # [^\S\n] = whitespace-except-newline so pattern never crosses lines.
     (
         r"\b(?:Via|Viale|V\.le|Piazza|P\.zza|Piazzale|Corso|C\.so|"
         r"Largo|Vicolo|Lungomare|Vico|Contrada|Traversa|Salita|Galleria)"
-        r"\s+[A-ZÀ-Ü][a-zà-ü\-']+(?:\s+(?:di|del|della|dei|delle|dello|d[ae]l))?\s*"
-        r"(?:[A-ZÀ-Ü][a-zà-ü\-']+\s*){0,2}"
-        r"(?:[,]?\s*\d{1,5}[/a-zA-Z]?)?\b",
+        r"[^\S\n]+[A-ZÀ-Ü][a-zà-ü\-']+(?:[^\S\n]+(?:di|del|della|dei|delle|dello|d[ae]l))?[^\S\n]*"
+        r"(?:[A-ZÀ-Ü][a-zà-ü\-']+[^\S\n]*){0,2}"
+        r"(?:[,]?[^\S\n]*\d{1,5}[/a-zA-Z]?)?\b",
         PIIType.ADDRESS, 0.82, _IC, _ALL,
     ),
 
     # Spanish: "Calle Mayor 5", "Avenida de la Constitución 32", "Paseo del Prado 10"
+    # [^\S\n] = whitespace-except-newline so pattern never crosses lines.
     (
         r"\b(?:Calle|Avenida|Avda|Paseo|Plaza|Plza|Camino|Carrera|"
         r"Ronda|Travesía|Traves[ií]a|Glorieta|Alameda|Bulevar|Callejón|Callejon)"
-        r"(?:\s+(?:de\s+(?:la\s+|las?\s+|los?\s+)?|del\s+))?\s*"
-        r"[A-ZÀ-Ü][a-zà-ü\-']+(?:\s+[A-ZÀ-Ü][a-zà-ü\-']+){0,2}"
-        r"(?:[,]?\s*(?:n[°º]\.?\s*)?\d{1,5}[/a-zA-Z]?)?\b",
+        r"(?:[^\S\n]+(?:de[^\S\n]+(?:la[^\S\n]+|las?[^\S\n]+|los?[^\S\n]+)?|del[^\S\n]+))?[^\S\n]*"
+        r"[A-ZÀ-Ü][a-zà-ü\-']+(?:[^\S\n]+[A-ZÀ-Ü][a-zà-ü\-']+){0,2}"
+        r"(?:[,]?[^\S\n]*(?:n[°º]\.?[^\S\n]*)?\d{1,5}[/a-zA-Z]?)?\b",
         PIIType.ADDRESS, 0.82, _IC, _ALL,
     ),
 
     # Dutch: "Keizersgracht 123", "Grote Markt 15", "Nieuwe Binnenweg 10"
+    # [^\S\n] = whitespace-except-newline so pattern never crosses lines.
     (
         r"\b[A-ZÀ-Ü][a-zà-ü]+"
         r"(?:straat|laan|weg|gracht|plein|dijk|kade|singel|steeg|pad)"
-        r"\s+\d{1,5}[a-z]?\b",
+        r"[^\S\n]+\d{1,5}[a-z]?\b",
         PIIType.ADDRESS, 0.80, _IC, _ALL,
     ),
 
     # Portuguese: "Rua Augusta 123", "Avenida da Liberdade 45", "Praça do Comércio 10"
+    # [^\S\n] = whitespace-except-newline so pattern never crosses lines.
     (
         r"\b(?:Rua|Avenida|Av\.|Praça|Praca|Travessa|Largo|Alameda|Estrada|"
         r"Calçada|Calcada|Beco)"
-        r"(?:\s+(?:da\s+|do\s+|dos\s+|das\s+|de\s+))?\s*"
-        r"[A-ZÀ-Ü][a-zà-ü\-']+(?:\s+[A-ZÀ-Ü][a-zà-ü\-']+){0,2}"
-        r"(?:[,]?\s*(?:n[°º]\.?\s*)?\d{1,5}[/a-zA-Z]?)?\b",
+        r"(?:[^\S\n]+(?:da[^\S\n]+|do[^\S\n]+|dos[^\S\n]+|das[^\S\n]+|de[^\S\n]+))?[^\S\n]*"
+        r"[A-ZÀ-Ü][a-zà-ü\-']+(?:[^\S\n]+[A-ZÀ-Ü][a-zà-ü\-']+){0,2}"
+        r"(?:[,]?[^\S\n]*(?:n[°º]\.?[^\S\n]*)?\d{1,5}[/a-zA-Z]?)?\b",
         PIIType.ADDRESS, 0.82, _IC, _ALL,
     ),
 
     # PO Box / BP / Postfach / Casella Postale
-    (r"\b(?:P\.?O\.?\s*Box|BP|Bo[iî]te\s*postale|Postfach|Apartado|Casella\s+[Pp]ostale|C\.?P\.?)\s+\d+\b",
+    # [^\S\n] = whitespace-except-newline so pattern never crosses lines.
+    (r"\b(?:P\.?O\.?[^\S\n]*Box|BP|Bo[iî]te[^\S\n]*postale|Postfach|Apartado|Casella[^\S\n]+[Pp]ostale|C\.?P\.?)[^\S\n]+\d+\b",
      PIIType.ADDRESS, 0.75, _IC, _ALL),
 
     # ──────────────────────────────────────────────────────────────────
@@ -560,42 +566,43 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
      PIIType.ADDRESS, 0.70, _NOFLAGS, _ALL),
     # French: "75008 Paris", "F-75001 Paris"
     # NOTE: trailing name group limited to {0,3} (was {0,4}).
-    (r"\b(?:F-?\s*)?(?:0[1-9]|[1-9]\d)\d{3}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+    # [^\S\n] = whitespace-except-newline so pattern never crosses lines.
+    (r"\b(?:F-?[^\S\n]*)?(?:0[1-9]|[1-9]\d)\d{3}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:(?:[^\S\n]|-)[A-ZÀ-Üa-zà-ü]+){0,3}\b",
      PIIType.ADDRESS, 0.82, _NOFLAGS, _ALL),
     # French with CEDEX
-    (r"\b(?:0[1-9]|[1-9]\d)\d{3}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,2}\s+[Cc][Ee][Dd][Ee][Xx](?:\s+\d{1,2})?\b",
+    (r"\b(?:0[1-9]|[1-9]\d)\d{3}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:(?:[^\S\n]|-)[A-ZÀ-Üa-zà-ü]+){0,2}[^\S\n]+[Cc][Ee][Dd][Ee][Xx](?:[^\S\n]+\d{1,2})?\b",
      PIIType.ADDRESS, 0.85, _NOFLAGS, _ALL),
     # German postal code: 5 digits + city
-    (r"\b(?:D-?\s*)?\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+    (r"\b(?:D-?[^\S\n]*)?\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:(?:[^\S\n]|-)[A-ZÀ-Üa-zà-ü]+){0,3}\b",
      PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
     # UK postcode: "SW1A 1AA"
-    (r"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b",
+    (r"\b[A-Z]{1,2}\d[A-Z\d]?[^\S\n]*\d[A-Z]{2}\b",
      PIIType.ADDRESS, 0.80, _IC, _ALL),
     # US ZIP+4
     (r"\b\d{5}-\d{4}\b", PIIType.ADDRESS, 0.70, _NOFLAGS, _ALL),
     # Belgian postal code (4 digits) + city
-    (r"\bB-?\s*\d{4}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+    (r"\bB-?[^\S\n]*\d{4}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:(?:[^\S\n]|-)[A-ZÀ-Üa-zà-ü]+){0,3}\b",
      PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
     # Dutch postal code: "1234 AB" — must be uppercase (case-sensitive)
     # Restricted to NL-only to avoid FPs like "2026 ET" in French docs.
-    (r"\b\d{4}\s?[A-Z]{2}\b", PIIType.ADDRESS, 0.75, _NOFLAGS, _NL),
+    (r"\b\d{4}[^\S\n]?[A-Z]{2}\b", PIIType.ADDRESS, 0.75, _NOFLAGS, _NL),
     # Swiss postal code + city
-    (r"\bCH-?\s*\d{4}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+    (r"\bCH-?[^\S\n]*\d{4}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:(?:[^\S\n]|-)[A-ZÀ-Üa-zà-ü]+){0,3}\b",
      PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
     # Italian CAP + well-known city
-    (r"\b(?:I-?\s*)?\d{5}[ \t]+(?:Roma|Milano|Napoli|Torino|Firenze|Venezia|Bologna|Genova|Palermo|Catania|Bari|Verona|Padova|Trieste|Brescia|Parma|Modena|Reggio|Perugia|Livorno|Cagliari|Foggia|Salerno|Ferrara|Rimini|Siracusa|Sassari|Monza|Bergamo|Taranto|Vicenza|Treviso|Novara|Piacenza|Ancona|Andria|Udine|Arezzo|Lecce|Pesaro|Alessandria|Pisa)\b(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,2}",
+    (r"\b(?:I-?[^\S\n]*)?\d{5}[ \t]+(?:Roma|Milano|Napoli|Torino|Firenze|Venezia|Bologna|Genova|Palermo|Catania|Bari|Verona|Padova|Trieste|Brescia|Parma|Modena|Reggio|Perugia|Livorno|Cagliari|Foggia|Salerno|Ferrara|Rimini|Siracusa|Sassari|Monza|Bergamo|Taranto|Vicenza|Treviso|Novara|Piacenza|Ancona|Andria|Udine|Arezzo|Lecce|Pesaro|Alessandria|Pisa)\b(?:(?:[^\S\n]|-)[A-ZÀ-Üa-zà-ü]+){0,2}",
      PIIType.ADDRESS, 0.80, _NOFLAGS, _ALL),
     # Italian CAP with I- prefix
-    (r"\bI-?\s*\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+    (r"\bI-?[^\S\n]*\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:(?:[^\S\n]|-)[A-ZÀ-Üa-zà-ü]+){0,3}\b",
      PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
     # Spanish postal code + city
-    (r"\bE-?\s*\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+    (r"\bE-?[^\S\n]*\d{5}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:(?:[^\S\n]|-)[A-ZÀ-Üa-zà-ü]+){0,3}\b",
      PIIType.ADDRESS, 0.75, _NOFLAGS, _ALL),
     # Portuguese postal code: 1000-001 Lisboa
-    (r"\b\d{4}-\d{3}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:[\s\-][A-ZÀ-Üa-zà-ü]+){0,3}\b",
+    (r"\b\d{4}-\d{3}[ \t]+[A-ZÀ-Ü][a-zà-ü]+(?:(?:[^\S\n]|-)[A-ZÀ-Üa-zà-ü]+){0,3}\b",
      PIIType.ADDRESS, 0.80, _NOFLAGS, _ALL),
     # Canadian: "K1A 0B1", "G4X-1W7"
-    (r"\b[A-Z]\d[A-Z][\s\-]?\d[A-Z]\d\b", PIIType.ADDRESS, 0.80, _IC, _ALL),
+    (r"\b[A-Z]\d[A-Z](?:[^\S\n]|-)?\d[A-Z]\d\b", PIIType.ADDRESS, 0.80, _IC, _ALL),
 
     # ──────────────────────────────────────────────────────────────────
     # LOCATION — known city & country names

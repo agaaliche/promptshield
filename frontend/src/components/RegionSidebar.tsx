@@ -618,7 +618,7 @@ export default function RegionSidebar({
             }}
             onMouseLeave={(e) => {
               e.currentTarget.querySelectorAll('[data-dim-btn]').forEach(el => {
-                (el as HTMLElement).style.opacity = '0.6';
+                (el as HTMLElement).style.opacity = '0.35';
               });
             }}
           >
@@ -662,7 +662,7 @@ export default function RegionSidebar({
                   onHighlightAll(r.id);
                 }}
                 title={t("regions.replaceAllMatching")}
-                style={{ ...styles.sidebarBtn, opacity: 0.6 }}
+                style={{ ...styles.sidebarBtn, opacity: 0.35 }}
               >
                 <ReplaceAll size={13} variant="light" />
               </button>
@@ -675,7 +675,7 @@ export default function RegionSidebar({
                   onRefresh(r.id);
                 }}
                 title={t("regions.redetect")}
-                style={{ ...styles.sidebarBtn, opacity: 0.6 }}
+                style={{ ...styles.sidebarBtn, opacity: 0.35 }}
               >
                 <RefreshCw size={13} variant="light" />
               </button>
@@ -688,12 +688,12 @@ export default function RegionSidebar({
                   onSelect([r.id]);
                 }}
                 title={t("regions.editLabelContent")}
-                style={{ ...styles.sidebarBtn, opacity: 0.6 }}
+                style={{ ...styles.sidebarBtn, opacity: 0.35 }}
               >
                 <Edit3 size={13} variant="light" />
               </button>
               {/* Separator */}
-              <div data-dim-btn style={{ width: 1, height: 18, background: "rgba(255,255,255,0.15)", margin: "0 2px", opacity: 0.6 }} />
+              <div data-dim-btn style={{ width: 1, height: 18, background: "rgba(255,255,255,0.15)", margin: "0 2px", opacity: 0.35 }} />
 
               {/* Tokenize */}
               <button
@@ -706,7 +706,7 @@ export default function RegionSidebar({
                 title={r.action === "TOKENIZE" ? t("regions.undoTokenize") : t("regions.tokenize")}
                 style={{
                   ...styles.sidebarBtn,
-                  opacity: r.action === "TOKENIZE" ? 1 : 0.6,
+                  opacity: r.action === "TOKENIZE" ? 1 : 0.35,
                   border: r.action === "TOKENIZE" ? "1px solid #9c27b0" : "1px solid transparent",
                   background: r.action === "TOKENIZE" ? "rgba(156,39,176,0.15)" : "transparent",
                   color: "#9c27b0",
@@ -737,7 +737,7 @@ export default function RegionSidebar({
                 title={r.action === "REMOVE" ? t("regions.undoRemove") : t("regions.remove")}
                 style={{
                   ...styles.sidebarBtn,
-                  opacity: r.action === "REMOVE" ? 1 : 0.6,
+                  opacity: r.action === "REMOVE" ? 1 : 0.35,
                   border: r.action === "REMOVE" ? "1px solid #f44336" : "1px solid transparent",
                   background: r.action === "REMOVE" ? "rgba(244,67,54,0.15)" : "transparent",
                   color: "#f44336",
@@ -979,7 +979,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 2,
-    opacity: 0.6,
+    opacity: 0.35,
     transition: "opacity 0.15s ease",
   },
   sidebarBtn: {

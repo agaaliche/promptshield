@@ -30,6 +30,7 @@ from core.detection.noise_filters import (
     _is_loc_pipeline_noise,
     _is_org_pipeline_noise,
     _is_person_pipeline_noise,
+    _is_single_word_dict_noise,
     has_legal_suffix,
     _STRUCTURED_MIN_DIGITS,
 )
@@ -490,6 +491,12 @@ def propagate_partial_org_names(
     })
     _NORM_FUNCTION_WORDS = frozenset(_strip_accents(w) for w in _FUNCTION_WORDS)
 
+    # Known standalone legal-entity suffixes that should never be propagated alone.
+    _LEGAL_STANDALONE: frozenset[str] = frozenset({
+        "inc", "corp", "ltd", "llc", "lp", "gmbh", "ag", "sa", "nv",
+        "bv", "plc", "spa", "srl", "oy", "ab", "aps", "as",
+    })
+
     sub_to_template: dict[str, PIIRegion] = {}
     for org_text, template in org_texts.items():
         words = org_text.split()
@@ -501,6 +508,40 @@ def propagate_partial_org_names(
             existing = sub_to_template.get(sub)
             if existing is None or template.confidence > existing.confidence:
                 sub_to_template[sub] = template
+
+    # 2b. Single-word subsets: add individual distinctive words from any
+    #     confirmed ORG name that are not common dictionary words.
+    #     Example: "TELUS" from "TELUS Communications Inc"
+    #              "Desjardins" from "Groupe Desjardins Financier"
+    #
+    #     Qualifiers for a single word to be propagated:
+    #       - length >= 4 (avoids noise like "Inc", "AG", etc.)
+    #       - proper-noun shaped: initial-cap OR all-caps
+    #       - not a function word
+    #       - not a known standalone legal-entity suffix
+    #       - not found in the multilingual common-word dictionary
+    for _norm_org, template in org_texts.items():
+        # Use original casing from template.text for proper-noun shape test
+        original_text = _ws_collapse(
+            _strip_accents(_neutralise_quotes(template.text.strip()))
+        )
+        for word in original_text.split():
+            if len(word) < 4:
+                continue
+            if not (word[0].isupper() or word.isupper()):
+                continue
+            if word.isdigit():
+                continue
+            norm_word = _strip_accents(word.lower())
+            if norm_word in _NORM_FUNCTION_WORDS:
+                continue
+            if norm_word in _LEGAL_STANDALONE:
+                continue
+            if _is_single_word_dict_noise(word):
+                continue
+            existing = sub_to_template.get(norm_word)
+            if existing is None or template.confidence > existing.confidence:
+                sub_to_template[norm_word] = template
 
     # Remove sub-phrases that are already exact-match regions (any type)
     existing_texts: set[str] = {

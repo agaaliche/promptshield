@@ -282,3 +282,93 @@ class TestPartialOrgPropagation:
         for r in result:
             if r.text == "Acme International":
                 assert r.pii_type == PIIType.ORG
+
+
+class TestSingleWordOrgSubsetPropagation:
+    """Single-word subsets of confirmed ORG names are propagated when they are
+    distinctive (not in the common-word dictionary, proper-noun shaped)."""
+
+    def test_allcaps_brand_propagated(self):
+        """'TELUS' from 'TELUS Communications Inc' should be flagged wherever
+        it appears alone in the document."""
+        text = (
+            "TELUS Communications Inc (« TELUS ») a conclu un accord. "
+            "TELUS s'engage à respecter les termes."
+        )
+        page = _make_page(text)
+        idx = text.find("TELUS Communications Inc")
+        region = _make_region("TELUS Communications Inc", char_start=idx)
+
+        result = propagate_partial_org_names([region], [page])
+        texts = [r.text for r in result]
+
+        # Standalone "TELUS" occurrences must be tagged
+        standalone_telus = [r for r in result if r.text == "TELUS"]
+        assert len(standalone_telus) >= 1, (
+            "Expected at least one propagated 'TELUS' region; got: " + str(texts)
+        )
+        assert all(r.pii_type == PIIType.ORG for r in standalone_telus)
+
+    def test_distinctive_proper_noun_propagated(self):
+        """A non-dictionary proper noun inside an ORG name is propagated."""
+        text = (
+            "Cogeco Média Inc a signé le contrat. "
+            "Le représentant de Cogeco était présent."
+        )
+        page = _make_page(text)
+        idx = text.find("Cogeco Média Inc")
+        region = _make_region("Cogeco Média Inc", char_start=idx)
+
+        result = propagate_partial_org_names([region], [page])
+        texts = [r.text for r in result]
+
+        standalone = [r for r in result if r.text == "Cogeco"]
+        assert len(standalone) >= 1, (
+            "Expected propagated 'Cogeco'; got: " + str(texts)
+        )
+
+    def test_common_dictionary_word_not_propagated(self):
+        """'Communications' and 'Group' are common nouns — must NOT be
+        propagated as standalone ORG regions."""
+        text = (
+            "TELUS Communications Inc signed the deal. "
+            "Communications were strained. Group was large."
+        )
+        page = _make_page(text)
+        idx = text.find("TELUS Communications Inc")
+        region = _make_region("TELUS Communications Inc", char_start=idx)
+
+        result = propagate_partial_org_names([region], [page])
+        standalone_texts = {r.text for r in result}
+
+        assert "Communications" not in standalone_texts, (
+            "Common noun 'Communications' must not appear as a standalone ORG"
+        )
+        assert "Group" not in standalone_texts
+
+    def test_short_words_not_propagated(self):
+        """Words shorter than 4 characters (e.g. 'Inc', 'AG', 'de') must
+        not be propagated as standalone single-word ORG regions."""
+        text = "AG München Re AG is a large reinsurer. AG matters."
+        page = _make_page(text)
+        idx = text.find("AG München Re AG")
+        region = _make_region("AG München Re AG", char_start=idx)
+
+        result = propagate_partial_org_names([region], [page])
+        standalone_texts = {r.text for r in result}
+
+        assert "AG" not in standalone_texts
+        assert "Inc" not in standalone_texts
+
+    def test_legal_standalone_suffix_not_propagated(self):
+        """Legal suffixes like 'Corp', 'GmbH' must not be propagated alone."""
+        text = "Acme Corp signed. Corp is a word. GmbH appeared here."
+        page = _make_page(text)
+        idx = text.find("Acme Corp")
+        region = _make_region("Acme Corp", char_start=idx)
+
+        result = propagate_partial_org_names([region], [page])
+        standalone_texts = {r.text for r in result}
+
+        assert "Corp" not in standalone_texts
+        assert "GmbH" not in standalone_texts

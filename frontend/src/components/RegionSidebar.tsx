@@ -928,6 +928,7 @@ const styles: Record<string, React.CSSProperties> = {
   regionItem: {
     position: "relative" as const,
     padding: 10,
+    paddingRight: 6,
     marginBottom: 6,
     borderRadius: 6,
     borderLeft: "3px solid",

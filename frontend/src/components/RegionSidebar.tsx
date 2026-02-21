@@ -101,13 +101,15 @@ export default function RegionSidebar({
     const el = itemRefs.current.get(firstId);
     const list = regionListRef.current;
     if (el && list) {
-      // Only scroll if the item is outside the visible area of the list
       const elTop = el.offsetTop;
       const elBottom = elTop + el.offsetHeight;
       const listTop = list.scrollTop;
-      const listBottom = listTop + list.clientHeight;
-      if (elTop < listTop || elBottom > listBottom) {
-        el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      const listMid = listTop + list.clientHeight / 2;
+      // Scroll if the item is out of view OR is in the lower half of the list —
+      // target position: item sits ~25% from the top of the visible area.
+      if (elTop < listTop || elBottom > listMid) {
+        const targetScroll = Math.max(0, elTop - Math.round(list.clientHeight * 0.25));
+        list.scrollTo({ top: targetScroll, behavior: "smooth" });
       }
     }
   }, [selectedRegionIds]);

@@ -656,7 +656,7 @@ export default function RegionSidebar({
             >
               {/* Left group */}
               <div style={{ display: "flex", gap: 2 }}>
-              {/* Replace all */}}
+              {/* Replace all */}
               <button
                 data-dim-btn
                 className="btn-ghost btn-sm"

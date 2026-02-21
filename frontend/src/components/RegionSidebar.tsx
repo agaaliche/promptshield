@@ -88,9 +88,29 @@ export default function RegionSidebar({
   const [enabledTypes, setEnabledTypes] = React.useState<Set<string> | null>(null); // null = all
   const filterRef = React.useRef<HTMLDivElement>(null);
   const lastClickedIndexRef = React.useRef<number | null>(null);
+  const regionListRef = React.useRef<HTMLDivElement>(null);
+  const itemRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
   const [clearConfirmOpen, setClearConfirmOpen] = React.useState(false);
   const [clearNeverAsk, setClearNeverAsk] = React.useState(false);
   const clearConfirmRef = React.useRef<{ ids: string[] }>({ ids: [] });
+
+  // ── Scroll sidebar to first selected item when selection changes ──
+  React.useEffect(() => {
+    if (selectedRegionIds.length === 0) return;
+    const firstId = selectedRegionIds[0];
+    const el = itemRefs.current.get(firstId);
+    const list = regionListRef.current;
+    if (el && list) {
+      // Only scroll if the item is outside the visible area of the list
+      const elTop = el.offsetTop;
+      const elBottom = elTop + el.offsetHeight;
+      const listTop = list.scrollTop;
+      const listBottom = listTop + list.clientHeight;
+      if (elTop < listTop || elBottom > listBottom) {
+        el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }
+  }, [selectedRegionIds]);
 
   // ── Virtualization: cap rendered items to avoid DOM bloat ──
   const INITIAL_VISIBLE = 100;
@@ -559,10 +579,11 @@ export default function RegionSidebar({
             </div>
             );
           })()}
-          <div style={styles.regionList}>
+          <div ref={regionListRef} style={styles.regionList}>
         {displayedRegions.slice(0, maxVisible).map((r) => (
           <div
             key={r.id}
+            ref={el => { if (el) itemRefs.current.set(r.id, el); else itemRefs.current.delete(r.id); }}
             style={{
               ...styles.regionItem,
               borderLeftColor: PII_COLORS[r.pii_type] || "#888",

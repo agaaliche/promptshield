@@ -652,8 +652,10 @@ export default function RegionSidebar({
             <p style={styles.regionText}>"{r.text}"</p>
             <div
               data-region-toolbar
-              style={{ ...styles.regionActions, opacity: 1 }}
+              style={{ ...styles.regionActions, opacity: 1, justifyContent: "space-between", width: "100%" }}
             >
+              {/* Left group */}
+              <div style={{ display: "flex", gap: 2 }}>
               {/* Replace all */}
               <button
                 data-dim-btn
@@ -693,8 +695,9 @@ export default function RegionSidebar({
               >
                 <Edit3 size={13} variant="light" />
               </button>
-              {/* Separator */}
-              <div data-dim-btn style={{ width: 1, height: 18, background: "rgba(255,255,255,0.15)", margin: "0 2px", opacity: 0.35 }} />
+              </div>
+              {/* Right group */}
+              <div style={{ display: "flex", gap: 2 }}>
 
               {/* Tokenize */}
               <button
@@ -758,6 +761,7 @@ export default function RegionSidebar({
                   whiteSpace: "nowrap",
                 }}>{t("regions.remove")}</span>
               </button>
+              </div>
             </div>
 
           </div>

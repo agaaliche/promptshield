@@ -58,7 +58,7 @@ _MAX_WORDS_BY_TYPE: dict[str, int] = {
     "IBAN":           8,
     "PHONE":          8,
     "ORG":            8,
-    "ADDRESS":        7,
+    "ADDRESS":        12,
 }
 _MAX_WORDS_DEFAULT: int = 4
 
@@ -159,9 +159,31 @@ def _enforce_region_shapes(
             if len(triples) <= _wlimit:
                 result.append(region)
                 continue
+            # Sort by reading order: cluster into visual lines first,
+            # then sort left-to-right within each line.  Plain
+            # (y0, x0) sorting scrambles text when blocks on the same
+            # line have slightly different y0 values.
             sorted_triples = sorted(
                 triples, key=lambda t: (t[2].bbox.y0, t[2].bbox.x0),
             )
+            # Cluster into visual lines by y-centre proximity
+            _lines: list[list[tuple]] = [[sorted_triples[0]]]
+            for _st in sorted_triples[1:]:
+                _prev = _lines[-1]
+                _prev_yc = sum((t[2].bbox.y0 + t[2].bbox.y1) / 2 for t in _prev) / len(_prev)
+                _prev_h = max(t[2].bbox.y1 - t[2].bbox.y0 for t in _prev)
+                _cur_yc = (_st[2].bbox.y0 + _st[2].bbox.y1) / 2
+                _cur_h = _st[2].bbox.y1 - _st[2].bbox.y0
+                _tol = max(_prev_h, _cur_h) * 0.6
+                if abs(_cur_yc - _prev_yc) <= _tol:
+                    _prev.append(_st)
+                else:
+                    _lines.append([_st])
+            # Sort within each line by x0, then flatten
+            sorted_triples = []
+            for _line in _lines:
+                _line.sort(key=lambda t: t[2].bbox.x0)
+                sorted_triples.extend(_line)
             for ci in range(0, len(sorted_triples), _wlimit):
                 chunk = sorted_triples[ci:ci + _wlimit]
                 sub_bbox = _clamp_bbox(

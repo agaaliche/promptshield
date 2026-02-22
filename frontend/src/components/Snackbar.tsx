@@ -96,7 +96,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     padding: "3px 5px",
-    background: "rgba(255,255,255,0.18)",
+    background: "transparent",
     border: "none",
     color: "#fff",
     cursor: "pointer",

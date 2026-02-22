@@ -201,9 +201,7 @@ function App() {
 
         if (docs.length > 0) {
           setDocuments(docs);
-          if (state.activeDocId && !backendDocIds.has(state.activeDocId)) {
-            setActiveDocId(docs[0].doc_id);
-          } else if (!state.activeDocId) {
+          if (!state.activeDocId || !backendDocIds.has(state.activeDocId)) {
             setActiveDocId(docs[0].doc_id);
           }
           // Preserve the view the user was on before reload; default to viewer
@@ -228,7 +226,7 @@ function App() {
 
   // Load full document data + regions when the active document changes
   useEffect(() => {
-    if (!activeDocId) return;
+    if (!backendReady || !activeDocId) return;
 
     let cancelled = false;
 
@@ -275,7 +273,7 @@ function App() {
       });
 
     return () => { cancelled = true; };
-  }, [activeDocId, setRegions, updateDocument, setDocLoading, setDocLoadingMessage, setDocuments, setActiveDocId, setCurrentView]);
+  }, [backendReady, activeDocId, setRegions, updateDocument, setDocLoading, setDocLoadingMessage, setDocuments, setActiveDocId, setCurrentView]);
 
   // ── EULA gate: show TOS acceptance before anything else ──────
   if (!eulaAccepted) {

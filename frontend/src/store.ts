@@ -202,10 +202,15 @@ export const useAppStore = create<AppState>()(devtools((set, get) => ({
     })),
 
   // Active document
-  activeDocId: null,
+  activeDocId: localStorage.getItem('lastActiveDocId') || null,
   setActiveDocId: (id) => {
     const prev = get().activeDocId;
     if (prev && prev !== id) cancelAllRequests();
+    if (id) {
+      localStorage.setItem('lastActiveDocId', id);
+    } else {
+      localStorage.removeItem('lastActiveDocId');
+    }
     set({ activeDocId: id, activePage: 1 });
   },
 

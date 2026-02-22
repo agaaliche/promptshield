@@ -3,11 +3,11 @@
  * Supports move (drag the body) and resize (drag corner/edge handles).
  */
 
-import { useState, useRef, useEffect, memo } from "react";
+import React, { useState, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { PII_COLORS, getPIIColor, loadLabelConfig, type PIIRegion, type RegionAction, type PIIType } from "../types";
-import { X, Trash2, Key, Edit3, Tag, ChevronRight, ChevronLeft, ReplaceAll, RefreshCw } from "../icons";
+import { X, Trash2, Key, Edit3, Tag, ReplaceAll, RefreshCw, LayerGroup } from "../icons";
 
 export type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
@@ -27,19 +27,8 @@ const HANDLE_CURSORS: Record<ResizeHandle, string> = {
 };
 
 // ── Module-level caches for localStorage (avoids 300+ reads with many regions) ──
-let _cachedToolbarExpanded: boolean | null = null;
 let _cachedToolbarPos: { x: number; y: number } | null | undefined = undefined;
 let _cachedDialogPos: { x: number; y: number } | null = null;
-
-function getCachedToolbarExpanded(): boolean {
-  if (_cachedToolbarExpanded !== null) return _cachedToolbarExpanded;
-  try {
-    _cachedToolbarExpanded = localStorage.getItem('regionToolbarExpanded') === 'true';
-  } catch (_e) {
-    _cachedToolbarExpanded = false;
-  }
-  return _cachedToolbarExpanded;
-}
 
 function getCachedToolbarPos(): { x: number; y: number } | null {
   if (_cachedToolbarPos !== undefined) return _cachedToolbarPos;
@@ -85,6 +74,12 @@ interface Props {
   ) => void;
   onUpdateLabel?: (regionId: string, newType: PIIType) => void;
   onUpdateText?: (regionId: string, newText: string) => void;
+  /** IDs of all currently selected regions — used for bulk label change */
+  selectedRegionIds?: string[];
+  /** When true, auto-open the edit panel (triggered from sidebar edit button) */
+  autoOpenEdit?: boolean;
+  /** Called after auto-open has been consumed */
+  onEditOpened?: () => void;
   portalTarget?: HTMLElement | null;
   imageContainerEl?: HTMLElement | null;
   cursorToolbarExpanded?: boolean;
@@ -112,6 +107,9 @@ function RegionOverlay({
   onResizeStart,
   onUpdateLabel,
   onUpdateText,
+  selectedRegionIds = [],
+  autoOpenEdit,
+  onEditOpened,
   portalTarget,
   imageContainerEl,
   cursorToolbarExpanded,
@@ -120,7 +118,12 @@ function RegionOverlay({
 }: Props) {
   const { t } = useTranslation();
   const [showEditPanel, setShowEditPanel] = useState(false);
-  const [toolbarExpanded, setToolbarExpanded] = useState(getCachedToolbarExpanded);
+  const [showTypeDropdown, setShowTypeDropdown] = useState(false);
+  const typeDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Resolved PII label list (cached at module level)
+  const resolvedLabels = React.useMemo(() => loadLabelConfig().filter(l => !l.hidden), []);
+
   const [activeTab, setActiveTab] = useState<"label" | "content">("label");
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [isEditingText, setIsEditingText] = useState(false);
@@ -138,6 +141,27 @@ function RegionOverlay({
   const [isDraggingDialog, setIsDraggingDialog] = useState(false);
   const dialogDragStart = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
   const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Auto-open edit panel when triggered from sidebar
+  useEffect(() => {
+    if (autoOpenEdit && isSelected) {
+      setShowEditPanel(true);
+      setActiveTab("label");
+      onEditOpened?.();
+    }
+  }, [autoOpenEdit, isSelected, onEditOpened]);
+
+  // Close type dropdown on outside click
+  useEffect(() => {
+    if (!showTypeDropdown) return;
+    const handler = (e: MouseEvent) => {
+      if (typeDropdownRef.current && !typeDropdownRef.current.contains(e.target as Node)) {
+        setShowTypeDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showTypeDropdown]);
   
   // Convert page coordinates → CSS percentage coordinates on the displayed image.
   // Using percentages keeps regions in sync during CSS transitions (sidebar
@@ -183,6 +207,11 @@ function RegionOverlay({
   const showDetails = soloSelected || showEditPanel;
   const showTab = (hovered && !isMultiSelected) || showDetails;
   const showFrame = hovered || isSelected || isMultiSelected || showEditPanel;
+
+  // Close dropdown when toolbar hides
+  useEffect(() => {
+    if (!showDetails) setShowTypeDropdown(false);
+  }, [showDetails]);
 
   // Toolbar drag handlers (fixed/viewport coordinates, identical to useDraggableToolbar)
   useEffect(() => {
@@ -230,15 +259,7 @@ function RegionOverlay({
     }
   }, [toolbarPos]);
 
-  // Save toolbar expanded state to localStorage + module cache
-  useEffect(() => {
-    _cachedToolbarExpanded = toolbarExpanded;
-    try {
-      localStorage.setItem('regionToolbarExpanded', String(toolbarExpanded));
-    } catch (e) {
-      console.error('Failed to save toolbar expanded state:', e);
-    }
-  }, [toolbarExpanded]);
+
 
   // Dialog drag handlers — constrained to content area minus sidebar (identical to useDraggableToolbar.clamp)
   useEffect(() => {
@@ -429,7 +450,7 @@ function RegionOverlay({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showDetails, toolbarExpanded, toolbarPos, portalTarget, cursorToolbarExpanded, rightInset]);
+  }, [showDetails, toolbarPos, portalTarget, cursorToolbarExpanded, rightInset]);
 
   if (region.action === "CANCEL") {
     return null;
@@ -563,9 +584,9 @@ function RegionOverlay({
             boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
             display: "flex",
             flexDirection: "column",
-            overflow: "hidden",
             userSelect: "none",
             cursor: "pointer",
+            width: 50,
           }}
         >
           {/* Drag handle header */}
@@ -581,41 +602,22 @@ function RegionOverlay({
               };
             }}
             style={{
-              padding: "4px 6px",
+              padding: "8px 6px",
               background: "var(--bg-primary)",
               cursor: "pointer",
               display: "flex",
               alignItems: "center",
-              justifyContent: "space-between",
+              justifyContent: "center",
               borderBottom: "1px solid var(--border-color)",
             }}
           >
-            <div style={{ 
-              width: 24, 
-              height: 4, 
-              background: "var(--text-secondary)", 
+            <div style={{
+              width: 24,
+              height: 4,
+              background: "#4a9eff",
               borderRadius: 2,
               opacity: 0.5,
             }} />
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                setToolbarExpanded(!toolbarExpanded);
-              }}
-              style={{
-                background: "transparent",
-                border: "none",
-                padding: 2,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                color: "var(--text-secondary)",
-              }}
-              title={toolbarExpanded ? t("regions.collapse") : t("regions.expand")}
-            >
-              {toolbarExpanded ? <ChevronLeft size={14} variant="light" /> : <ChevronRight size={14} variant="light" />}
-            </button>
           </div>
 
           {/* Toolbar buttons */}
@@ -635,7 +637,7 @@ function RegionOverlay({
                 fontSize: 12,
                 display: "flex",
                 alignItems: "center",
-                justifyContent: toolbarExpanded ? "flex-start" : "center",
+                justifyContent: "center",
                 gap: 8,
                 background: "transparent",
                 border: "1px solid transparent",
@@ -643,12 +645,12 @@ function RegionOverlay({
                 cursor: "pointer",
                 color: "var(--text-primary)",
                 whiteSpace: "nowrap",
+                transition: "color 0.15s, background 0.15s, border-color 0.15s",
+                aspectRatio: "1",
               }}
               title={t("regions.replaceAllMatching")}
-              className="btn-ghost btn-sm"
             >
               <ReplaceAll size={16} variant="light" />
-              {toolbarExpanded && t("regions.replaceAll")}
             </button>
 
             {/* Detect */}
@@ -663,7 +665,7 @@ function RegionOverlay({
                 fontSize: 12,
                 display: "flex",
                 alignItems: "center",
-                justifyContent: toolbarExpanded ? "flex-start" : "center",
+                justifyContent: "center",
                 gap: 8,
                 background: "transparent",
                 border: "1px solid transparent",
@@ -671,42 +673,108 @@ function RegionOverlay({
                 cursor: "pointer",
                 color: "var(--text-primary)",
                 whiteSpace: "nowrap",
+                transition: "color 0.15s, background 0.15s, border-color 0.15s",
+                aspectRatio: "1",
               }}
               title={t("regions.redetect")}
-              className="btn-ghost btn-sm"
             >
               <RefreshCw size={16} variant="light" />
-              {toolbarExpanded && t("common.detect")}
             </button>
 
-            {/* Edit */}
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowEditPanel(!showEditPanel);
-              }}
-              style={{
-                padding: "8px",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: toolbarExpanded ? "flex-start" : "center",
-                gap: 8,
-                background: showEditPanel ? "var(--bg-primary)" : "transparent",
-                border: "1px solid transparent",
-                borderRadius: 4,
-                cursor: "pointer",
-                color: "var(--text-primary)",
-                fontWeight: showEditPanel ? 600 : 400,
-                whiteSpace: "nowrap",
-              }}
-              title={t("regions.editLabelContent")}
-              className="btn-ghost btn-sm"
-            >
-              <Edit3 size={16} variant="light" />
-              {toolbarExpanded && t("common.edit")}
-            </button>
+            {/* Change PII type */}
+            <div style={{ position: "relative" }}>
+              <button
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowTypeDropdown(!showTypeDropdown);
+                }}
+                style={{
+                  padding: "8px",
+                  fontSize: 12,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  background: showTypeDropdown ? "var(--bg-primary)" : "transparent",
+                  border: "1px solid transparent",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  color: "var(--text-primary)",
+                  fontWeight: showTypeDropdown ? 600 : 400,
+                  whiteSpace: "nowrap",
+                  transition: "color 0.15s, background 0.15s, border-color 0.15s",
+                  aspectRatio: "1",
+                }}
+                title={t("regions.changePiiType")}
+              >
+                <LayerGroup size={16} variant="light" />
+              </button>
+              {showTypeDropdown && (
+                <div
+                  ref={typeDropdownRef}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: "100%",
+                    marginLeft: 4,
+                    zIndex: 100,
+                    background: "var(--bg-secondary)",
+                    border: "1px solid var(--border-color)",
+                    borderRadius: 6,
+                    boxShadow: "0 4px 16px rgba(0,0,0,0.5)",
+                    maxHeight: 260,
+                    overflowY: "auto",
+                    minWidth: 140,
+                  }}
+                >
+                  {resolvedLabels.map((entry) => (
+                    <button
+                      key={entry.label}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // Apply to all selected regions (or just this one)
+                        const targetIds = selectedRegionIds.length > 1 && selectedRegionIds.includes(region.id)
+                          ? selectedRegionIds
+                          : [region.id];
+                        for (const id of targetIds) {
+                          if (entry.label !== region.pii_type) {
+                            onUpdateLabel?.(id, entry.label as PIIType);
+                          }
+                        }
+                        setShowTypeDropdown(false);
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        width: "100%",
+                        padding: "6px 10px",
+                        fontSize: 11,
+                        fontWeight: entry.label === region.pii_type ? 700 : 400,
+                        color: entry.label === region.pii_type ? "white" : "var(--text-primary)",
+                        background: entry.label === region.pii_type ? "var(--bg-tertiary)" : "transparent",
+                        border: "none",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        whiteSpace: "nowrap",
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = entry.label === region.pii_type ? "var(--bg-tertiary)" : "transparent"; }}
+                    >
+                      <span style={{
+                        width: 8, height: 8, borderRadius: "50%",
+                        background: entry.color || PII_COLORS[entry.label] || "#888",
+                        flexShrink: 0,
+                      }} />
+                      {entry.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Clear */}
             <button
@@ -720,7 +788,7 @@ function RegionOverlay({
                 fontSize: 12,
                 display: "flex",
                 alignItems: "center",
-                justifyContent: toolbarExpanded ? "flex-start" : "center",
+                justifyContent: "center",
                 gap: 8,
                 background: "transparent",
                 border: "1px solid transparent",
@@ -728,12 +796,12 @@ function RegionOverlay({
                 cursor: "pointer",
                 color: "var(--text-primary)",
                 whiteSpace: "nowrap",
+                transition: "color 0.15s, background 0.15s, border-color 0.15s",
+                aspectRatio: "1",
               }}
               title={t("regions.clearFromDocument")}
-              className="btn-ghost btn-sm"
             >
               <X size={16} variant="light" />
-              {toolbarExpanded && t("regions.clear")}
             </button>
 
             {/* Separator */}
@@ -751,7 +819,7 @@ function RegionOverlay({
                 fontSize: 12,
                 display: "flex",
                 alignItems: "center",
-                justifyContent: toolbarExpanded ? "flex-start" : "center",
+                justifyContent: "center",
                 gap: 8,
                 background: region.action === "TOKENIZE" ? "rgba(156,39,176,0.15)" : "transparent",
                 border: region.action === "TOKENIZE" ? "1px solid #9c27b0" : "1px solid transparent",
@@ -761,12 +829,11 @@ function RegionOverlay({
                 whiteSpace: "nowrap",
                 boxShadow: region.action === "TOKENIZE" ? "0 0 6px rgba(156,39,176,0.3)" : "none",
                 transition: "all 0.15s ease",
+                aspectRatio: "1",
               }}
               title={region.action === "TOKENIZE" ? t("regions.undoTokenize") : t("regions.tokenize")}
-              className="btn-tokenize btn-sm"
             >
               <Key size={16} variant="light" />
-              {toolbarExpanded && t("regions.tokenize")}
             </button>
 
             {/* Remove */}
@@ -781,7 +848,7 @@ function RegionOverlay({
                 fontSize: 12,
                 display: "flex",
                 alignItems: "center",
-                justifyContent: toolbarExpanded ? "flex-start" : "center",
+                justifyContent: "center",
                 gap: 8,
                 background: region.action === "REMOVE" ? "rgba(244,67,54,0.15)" : "transparent",
                 border: region.action === "REMOVE" ? "1px solid #f44336" : "1px solid transparent",
@@ -791,12 +858,11 @@ function RegionOverlay({
                 whiteSpace: "nowrap",
                 boxShadow: region.action === "REMOVE" ? "0 0 6px rgba(244,67,54,0.3)" : "none",
                 transition: "all 0.15s ease",
+                aspectRatio: "1",
               }}
               title={region.action === "REMOVE" ? t("regions.undoRemove") : t("regions.remove")}
-              className="btn-danger btn-sm"
             >
               <Trash2 size={16} variant="light" />
-              {toolbarExpanded && t("regions.remove")}
             </button>
           </div>
         </div>,

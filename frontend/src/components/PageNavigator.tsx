@@ -24,7 +24,7 @@ interface PageNavigatorProps {
 }
 
 const NAV_WIDTH = 148;
-const NAV_COLLAPSED_WIDTH = 28;
+const NAV_COLLAPSED_WIDTH = 20;
 
 export default function PageNavigator({
   docId,

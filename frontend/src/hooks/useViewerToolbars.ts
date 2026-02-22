@@ -52,14 +52,7 @@ export default function useViewerToolbars(opts: UseViewerToolbarsOpts) {
   const rightInset = sidebarWidth + pageNavWidth;
 
   // ── Cursor toolbar ──
-  const [cursorToolbarExpanded, setCursorToolbarExpanded] = useState(() => {
-    try {
-      const saved = localStorage.getItem("cursorToolbarExpanded");
-      return saved === null ? true : saved === "true";
-    } catch {
-      return true;
-    }
-  });
+  const cursorToolbarExpanded = false;
   const cursorToolbarRef = useRef<HTMLDivElement>(null);
   const {
     pos: cursorToolbarPos,
@@ -75,14 +68,6 @@ export default function useViewerToolbars(opts: UseViewerToolbarsOpts) {
   });
 
   // ── Multi-select toolbar ──
-  const [multiSelectToolbarExpanded, setMultiSelectToolbarExpanded] = useState(() => {
-    try {
-      const saved = localStorage.getItem("multiSelectToolbarExpanded");
-      return saved === "true";
-    } catch {
-      return false;
-    }
-  });
   const multiSelectToolbarRef = useRef<HTMLDivElement>(null);
   const {
     pos: multiSelectToolbarPos,
@@ -100,13 +85,6 @@ export default function useViewerToolbars(opts: UseViewerToolbarsOpts) {
   // ── Multi-select edit dialog ──
   const [showMultiSelectEdit, setShowMultiSelectEdit] = useState(false);
   const [multiSelectEditLabel, setMultiSelectEditLabel] = useState<string>("PERSON");
-
-  // ── Persist multi-select toolbar expanded state ──
-  useEffect(() => {
-    try {
-      localStorage.setItem("multiSelectToolbarExpanded", String(multiSelectToolbarExpanded));
-    } catch {}
-  }, [multiSelectToolbarExpanded]);
 
   // ── Re-constrain toolbars when any layout inset changes ──
   // rightInset: sidebar collapse/expand/resize, page nav toggle
@@ -126,14 +104,11 @@ export default function useViewerToolbars(opts: UseViewerToolbarsOpts) {
     isDraggingCursorToolbar,
     startCursorToolbarDrag,
     cursorToolbarExpanded,
-    setCursorToolbarExpanded,
     // Multi-select toolbar
     multiSelectToolbarRef,
     multiSelectToolbarPos,
     isDraggingMultiSelectToolbar,
     startMultiSelectToolbarDrag,
-    multiSelectToolbarExpanded,
-    setMultiSelectToolbarExpanded,
     showMultiSelectEdit,
     setShowMultiSelectEdit,
     multiSelectEditLabel,

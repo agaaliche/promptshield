@@ -21,6 +21,9 @@ import {
   getPageBitmapUrl,
   batchRegionAction,
   batchDeleteRegions,
+  updateRegionLabel,
+  updateRegionText,
+  logError,
 } from "../api";
 import { CURSOR_CROSSHAIR } from "../cursors";
 import type { PIIType } from "../types";
@@ -61,9 +64,8 @@ export default function DocumentViewer() {
   const {
     cursorTool, setCursorTool, prevCursorToolRef,
     cursorToolbarRef, cursorToolbarPos, isDraggingCursorToolbar, startCursorToolbarDrag,
-    cursorToolbarExpanded, setCursorToolbarExpanded,
+    cursorToolbarExpanded,
     multiSelectToolbarRef, multiSelectToolbarPos, isDraggingMultiSelectToolbar, startMultiSelectToolbarDrag,
-    multiSelectToolbarExpanded, setMultiSelectToolbarExpanded,
     showMultiSelectEdit, setShowMultiSelectEdit,
     multiSelectEditLabel, setMultiSelectEditLabel,
     sidebarRef, topToolbarRef, contentAreaRef,
@@ -94,6 +96,9 @@ export default function DocumentViewer() {
   const pendingCount = regions.filter((r) => r.action === "PENDING").length;
   const removeCount = regions.filter((r) => r.action === "REMOVE").length;
   const tokenizeCount = regions.filter((r) => r.action === "TOKENIZE").length;
+
+  // ── Editing region from sidebar ──
+  const [editingRegionId, setEditingRegionId] = useState<string | null>(null);
 
   // ── Region CRUD actions ──
   const {
@@ -138,6 +143,7 @@ export default function DocumentViewer() {
     isPanning,
     showTypePicker,
     handleCanvasMouseDown, handleCanvasMouseMove, handleCanvasMouseUp,
+    handleViewportMouseDown,
     handleMoveStart, handleResizeStart,
     onImageLoad,
     handleTypePickerSelect, cancelTypePicker,
@@ -199,6 +205,25 @@ export default function DocumentViewer() {
     setCopiedRegions, setStatusMessage, handlePasteRegions, batchDeleteRegions,
     handleClearRegion,
   });
+
+  // ── Ctrl + scroll wheel → zoom document (prevent browser zoom) ──
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      const next = Math.min(5, Math.max(0.1, Math.round((zoomRef.current + delta) * 10) / 10));
+      setZoom(next);
+    };
+
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [containerRef, setZoom]);
 
   // ── Reset base width when switching documents ──
   useEffect(() => {
@@ -360,6 +385,7 @@ export default function DocumentViewer() {
             display: "flex",
             alignItems: "center",
             gap: 6,
+            borderRadius: 20,
           }}
         >
           <Upload size={14} />
@@ -373,6 +399,7 @@ export default function DocumentViewer() {
             display: "flex",
             alignItems: "center",
             gap: 6,
+            borderRadius: 20,
             ...(showAutodetect
               ? { boxShadow: "0 0 0 2px var(--accent-primary)" }
               : {}),
@@ -414,6 +441,7 @@ export default function DocumentViewer() {
             pendingCount > 0 ||
             (removeCount === 0 && tokenizeCount === 0)
           }
+          style={{ borderRadius: 20 }}
         >
           <Shield size={14} />
           {t("common.export")}
@@ -512,11 +540,6 @@ export default function DocumentViewer() {
         cursorToolbarPos={cursorToolbarPos}
         isDragging={isDraggingCursorToolbar}
         startDrag={startCursorToolbarDrag}
-        expanded={cursorToolbarExpanded}
-        setExpanded={(v) => {
-          setCursorToolbarExpanded(v);
-          try { localStorage.setItem('cursorToolbarExpanded', String(v)); } catch {}
-        }}
         cursorTool={cursorTool}
         setCursorTool={setCursorTool}
         canUndo={canUndo}
@@ -532,11 +555,6 @@ export default function DocumentViewer() {
           pos={multiSelectToolbarPos}
           isDragging={isDraggingMultiSelectToolbar}
           startDrag={startMultiSelectToolbarDrag}
-          expanded={multiSelectToolbarExpanded}
-          setExpanded={(v) => {
-            setMultiSelectToolbarExpanded(v);
-            try { localStorage.setItem('multiSelectToolbarExpanded', String(v)); } catch {}
-          }}
           selectedRegionIds={selectedRegionIds}
           regions={regions}
           activeDocId={activeDocId}
@@ -584,12 +602,17 @@ export default function DocumentViewer() {
         );
       })()}
 
-      {/* Canvas area */}
-      <div ref={containerRef} style={{
-        ...styles.canvasArea,
-        paddingRight: rightInset,
-        transition: isSidebarDragging ? 'none' : 'padding-right 0.2s ease',
-      }}>
+      {/* Canvas area — viewport-level pan starts here */}
+      <div
+        ref={containerRef}
+        style={{
+          ...styles.canvasArea,
+          paddingRight: rightInset,
+          transition: isSidebarDragging ? 'none' : 'padding-right 0.2s ease',
+          cursor: isPanning ? 'grabbing' : undefined,
+        }}
+        onMouseDown={handleViewportMouseDown}
+      >
         {/* Scroll sizer — explicit zoomed dimensions for correct scroll range */}
         <div style={{
           ...(baseWidth > 0
@@ -610,7 +633,6 @@ export default function DocumentViewer() {
             onMouseDown={handleCanvasMouseDown}
             onMouseMove={handleCanvasMouseMove}
             onMouseUp={handleCanvasMouseUp}
-            onMouseLeave={() => { if (isPanning) { setIsPanning(false); panStartRef.current = null; } }}
           >
             <img
               ref={imageRef}
@@ -693,6 +715,9 @@ export default function DocumentViewer() {
                     onResizeStart={handleResizeStart}
                     onUpdateLabel={handleUpdateLabel}
                     onUpdateText={handleUpdateText}
+                    selectedRegionIds={selectedRegionIds}
+                    autoOpenEdit={editingRegionId === region.id}
+                    onEditOpened={() => setEditingRegionId(null)}
                     portalTarget={contentAreaRef.current}
                     imageContainerEl={imageContainerRef.current}
                     cursorToolbarExpanded={cursorToolbarExpanded}
@@ -818,6 +843,16 @@ export default function DocumentViewer() {
         onHighlightAll={handleHighlightAll}
         onToggleSelect={toggleSelectedRegionId}
         onSelect={setSelectedRegionIds}
+        onEdit={(regionId) => {
+          const region = regions.find(r => r.id === regionId);
+          if (!region) return;
+          setSelectedRegionIds([regionId]);
+          setEditingRegionId(regionId);
+          if (region.page_number !== activePage) {
+            skipAutoSelectRef.current = true;
+            setActivePage(region.page_number);
+          }
+        }}
         onNavigateToRegion={(region) => {
           if (region.page_number !== activePage) {
             skipAutoSelectRef.current = true;
@@ -841,6 +876,17 @@ export default function DocumentViewer() {
         batchDeleteRegions={batchDeleteRegions}
         onTypeFilterChange={setSidebarTypeFilter}
         hideResizeHandle={pageCount > 1 && !pageNavCollapsed}
+        visibleLabels={visibleLabels}
+        onUpdateLabel={(regionId, newLabel) => {
+          if (!activeDocId) return;
+          updateRegion(regionId, { pii_type: newLabel });
+          updateRegionLabel(activeDocId, regionId, newLabel).catch(logError("update-label"));
+        }}
+        onUpdateText={(regionId, newText) => {
+          if (!activeDocId) return;
+          updateRegion(regionId, { text: newText });
+          updateRegionText(activeDocId, regionId, newText).catch(logError("update-text"));
+        }}
       />
     </div>
   );

@@ -5,10 +5,8 @@ import {
   PenTool,
   Undo2,
   Redo2,
-  ChevronLeft,
-  ChevronRight,
 } from "../icons";
-import { useRef, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 interface CursorToolToolbarProps {
@@ -16,8 +14,6 @@ interface CursorToolToolbarProps {
   cursorToolbarPos: { x: number; y: number };
   isDragging: boolean;
   startDrag: (e: React.MouseEvent) => void;
-  expanded: boolean;
-  setExpanded: (v: boolean) => void;
   cursorTool: "pointer" | "lasso" | "draw";
   setCursorTool: (t: "pointer" | "lasso" | "draw") => void;
   canUndo: boolean;
@@ -31,8 +27,6 @@ export default function CursorToolToolbar({
   cursorToolbarPos,
   isDragging,
   startDrag,
-  expanded,
-  setExpanded,
   cursorTool,
   setCursorTool,
   canUndo,
@@ -41,6 +35,31 @@ export default function CursorToolToolbar({
   redo,
 }: CursorToolToolbarProps) {
   const { t } = useTranslation();
+  const [hoveredTool, setHoveredTool] = useState<string | null>(null);
+
+  const TOOL_COLORS: Record<string, string> = {
+    pointer: "#4a9eff",
+    lasso: "#f5a623",
+    draw: "#4caf50",
+  };
+
+  const getToolColor = (tool: string) => {
+    const isActive = cursorTool === tool;
+    const isHovered = hoveredTool === tool;
+    if (isActive || isHovered) return TOOL_COLORS[tool];
+    return "var(--text-primary)";
+  };
+
+  const getToolBorder = (tool: string) => {
+    if (cursorTool === tool) return `1px solid ${TOOL_COLORS[tool]}`;
+    return "1px solid transparent";
+  };
+
+  const getToolBg = (tool: string) => {
+    if (cursorTool === tool) return "var(--bg-primary)";
+    return "transparent";
+  };
+
   return (
     <div
       ref={cursorToolbarRef}
@@ -59,6 +78,7 @@ export default function CursorToolToolbar({
         overflow: "hidden",
         userSelect: "none",
         cursor: "pointer",
+        width: 50,
       }}
     >
       {/* Drag handle header */}
@@ -68,12 +88,12 @@ export default function CursorToolToolbar({
           startDrag(e);
         }}
         style={{
-          padding: "4px 6px",
+          padding: "8px 6px",
           background: "var(--bg-primary)",
           cursor: "pointer",
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
+          justifyContent: "center",
           borderBottom: "1px solid var(--border-color)",
         }}
       >
@@ -81,33 +101,11 @@ export default function CursorToolToolbar({
           style={{
             width: 24,
             height: 4,
-            background: "var(--text-secondary)",
+            background: TOOL_COLORS[cursorTool] || "var(--text-secondary)",
             borderRadius: 2,
             opacity: 0.5,
           }}
         />
-        <button
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded(!expanded);
-            try {
-              localStorage.setItem("cursorToolbarExpanded", String(!expanded));
-            } catch {}
-          }}
-          style={{
-            background: "transparent",
-            border: "none",
-            padding: 2,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            color: "var(--text-secondary)",
-          }}
-          title={expanded ? t("tools.collapse") : t("tools.expand")}
-        >
-          {expanded ? <ChevronLeft size={14} variant="light" /> : <ChevronRight size={14} variant="light" />}
-        </button>
       </div>
 
       {/* Toolbar buttons */}
@@ -122,32 +120,28 @@ export default function CursorToolToolbar({
             e.stopPropagation();
             setCursorTool("pointer");
           }}
+          onMouseEnter={() => setHoveredTool("pointer")}
+          onMouseLeave={() => setHoveredTool(null)}
           style={{
-            padding: "8px",
+            padding: 8,
             fontSize: 12,
             display: "flex",
             alignItems: "center",
-            justifyContent: expanded ? "flex-start" : "center",
+            justifyContent: "center",
             gap: 8,
-            background:
-              cursorTool === "pointer" ? "var(--bg-primary)" : "transparent",
-            border:
-              cursorTool === "pointer"
-                ? "1px solid var(--accent-primary)"
-                : "1px solid transparent",
+            background: getToolBg("pointer"),
+            border: getToolBorder("pointer"),
             borderRadius: 4,
             cursor: "pointer",
-            color:
-              cursorTool === "pointer"
-                ? "var(--accent-primary)"
-                : "var(--text-primary)",
+            color: getToolColor("pointer"),
             fontWeight: cursorTool === "pointer" ? 600 : 400,
             whiteSpace: "nowrap",
+            transition: "color 0.15s, background 0.15s, border-color 0.15s",
+            aspectRatio: "1",
           }}
           title={t("tools.pointerTooltip")}
         >
           <MousePointer size={16} variant="light" />
-          {expanded && t("tools.pointer")}
         </button>
 
         {/* Lasso */}
@@ -157,32 +151,28 @@ export default function CursorToolToolbar({
             e.stopPropagation();
             setCursorTool("lasso");
           }}
+          onMouseEnter={() => setHoveredTool("lasso")}
+          onMouseLeave={() => setHoveredTool(null)}
           style={{
-            padding: "8px",
+            padding: 8,
             fontSize: 12,
             display: "flex",
             alignItems: "center",
-            justifyContent: expanded ? "flex-start" : "center",
+            justifyContent: "center",
             gap: 8,
-            background:
-              cursorTool === "lasso" ? "var(--bg-primary)" : "transparent",
-            border:
-              cursorTool === "lasso"
-                ? "1px solid var(--accent-primary)"
-                : "1px solid transparent",
+            background: getToolBg("lasso"),
+            border: getToolBorder("lasso"),
             borderRadius: 4,
             cursor: "pointer",
-            color:
-              cursorTool === "lasso"
-                ? "var(--accent-primary)"
-                : "var(--text-primary)",
+            color: getToolColor("lasso"),
             fontWeight: cursorTool === "lasso" ? 600 : 400,
             whiteSpace: "nowrap",
+            transition: "color 0.15s, background 0.15s, border-color 0.15s",
+            aspectRatio: "1",
           }}
           title={t("tools.lassoTooltip")}
         >
           <BoxSelect size={16} variant="light" />
-          {expanded && t("tools.lasso")}
         </button>
 
         {/* Draw */}
@@ -192,32 +182,28 @@ export default function CursorToolToolbar({
             e.stopPropagation();
             setCursorTool("draw");
           }}
+          onMouseEnter={() => setHoveredTool("draw")}
+          onMouseLeave={() => setHoveredTool(null)}
           style={{
-            padding: "8px",
+            padding: 8,
             fontSize: 12,
             display: "flex",
             alignItems: "center",
-            justifyContent: expanded ? "flex-start" : "center",
+            justifyContent: "center",
             gap: 8,
-            background:
-              cursorTool === "draw" ? "var(--bg-primary)" : "transparent",
-            border:
-              cursorTool === "draw"
-                ? "1px solid var(--accent-primary)"
-                : "1px solid transparent",
+            background: getToolBg("draw"),
+            border: getToolBorder("draw"),
             borderRadius: 4,
             cursor: "pointer",
-            color:
-              cursorTool === "draw"
-                ? "var(--accent-primary)"
-                : "var(--text-primary)",
+            color: getToolColor("draw"),
             fontWeight: cursorTool === "draw" ? 600 : 400,
             whiteSpace: "nowrap",
+            transition: "color 0.15s, background 0.15s, border-color 0.15s",
+            aspectRatio: "1",
           }}
           title={t("tools.drawTooltip")}
         >
           <PenTool size={16} variant="light" />
-          {expanded && t("tools.draw")}
         </button>
 
         {/* Separator */}
@@ -238,11 +224,11 @@ export default function CursorToolToolbar({
           }}
           disabled={!canUndo}
           style={{
-            padding: "8px",
+            padding: 8,
             fontSize: 12,
             display: "flex",
             alignItems: "center",
-            justifyContent: expanded ? "flex-start" : "center",
+            justifyContent: "center",
             gap: 8,
             background: "transparent",
             border: "1px solid transparent",
@@ -251,11 +237,11 @@ export default function CursorToolToolbar({
             color: canUndo ? "var(--text-primary)" : "var(--text-secondary)",
             opacity: canUndo ? 1 : 0.4,
             whiteSpace: "nowrap",
+            aspectRatio: "1",
           }}
           title={t("tools.undoTooltip")}
         >
           <Undo2 size={16} variant="light" />
-          {expanded && t("tools.undo")}
         </button>
 
         {/* Redo */}
@@ -267,11 +253,11 @@ export default function CursorToolToolbar({
           }}
           disabled={!canRedo}
           style={{
-            padding: "8px",
+            padding: 8,
             fontSize: 12,
             display: "flex",
             alignItems: "center",
-            justifyContent: expanded ? "flex-start" : "center",
+            justifyContent: "center",
             gap: 8,
             background: "transparent",
             border: "1px solid transparent",
@@ -280,11 +266,11 @@ export default function CursorToolToolbar({
             color: canRedo ? "var(--text-primary)" : "var(--text-secondary)",
             opacity: canRedo ? 1 : 0.4,
             whiteSpace: "nowrap",
+            aspectRatio: "1",
           }}
           title={t("tools.redoTooltip")}
         >
           <Redo2 size={16} variant="light" />
-          {expanded && t("tools.redo")}
         </button>
       </div>
     </div>

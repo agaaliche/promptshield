@@ -280,6 +280,8 @@ export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
         setLassoStart(pos);
         setLassoEnd(pos);
       } else {
+        // Pan is now handled at the viewport (containerRef) level —
+        // still allow it here for clicks that originate on the image.
         e.preventDefault();
         clearSelection();
         const el = containerRef.current;
@@ -303,23 +305,15 @@ export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
         if (pos) setLassoEnd(pos);
         return;
       }
-      if (isPanning && panStartRef.current) {
-        const el = containerRef.current;
-        if (!el) return;
-        const dx = e.clientX - panStartRef.current.x;
-        const dy = e.clientY - panStartRef.current.y;
-        el.scrollLeft = panStartRef.current.scrollLeft - dx;
-        el.scrollTop = panStartRef.current.scrollTop - dy;
-      }
+      // Pan movement is handled by document-level listeners (see useEffect below)
     },
-    [isDrawing, cursorTool, isLassoing, isPanning, getPointerPosOnImage, containerRef],
+    [isDrawing, cursorTool, isLassoing, getPointerPosOnImage],
   );
 
   const handleCanvasMouseUp = useCallback(
     (e: React.MouseEvent) => {
       if (isPanning) {
-        setIsPanning(false);
-        panStartRef.current = null;
+        // Let document-level mouseup handle pan end
         return;
       }
 
@@ -622,6 +616,56 @@ export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
     [activeDocId, activePage, drawnBBox, regions, setRegions, setSelectedRegionIds, setStatusMessage, pushUndo, preventOverlap],
   );
 
+  // ── Viewport-level pan: mousedown on canvas background (outside image) ──
+  const handleViewportMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      // Only handle left button clicks directly on the scroll container background
+      if (e.button !== 0) return;
+      // If the click originated inside the imageContainer, the image-level handler
+      // already took care of it — skip here to avoid double-handling.
+      if (imageContainerRef.current?.contains(e.target as Node)) return;
+
+      e.preventDefault();
+      clearSelection();
+      const el = containerRef.current;
+      if (!el) return;
+      setIsPanning(true);
+      panStartRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        scrollLeft: el.scrollLeft,
+        scrollTop: el.scrollTop,
+      };
+    },
+    [clearSelection, containerRef, imageContainerRef],
+  );
+
+  // ── Document-level mousemove / mouseup for pan (works even when cursor leaves viewport) ──
+  useEffect(() => {
+    if (!isPanning) return;
+
+    const onMouseMove = (e: MouseEvent) => {
+      const el = containerRef.current;
+      if (!el || !panStartRef.current) return;
+      const dx = e.clientX - panStartRef.current.x;
+      const dy = e.clientY - panStartRef.current.y;
+      el.scrollLeft = panStartRef.current.scrollLeft - dx;
+      el.scrollTop = panStartRef.current.scrollTop - dy;
+    };
+
+    const onMouseUp = () => {
+      setIsPanning(false);
+      panStartRef.current = null;
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [isPanning, containerRef]);
+
   return {
     imgSize,
     imgLoaded,
@@ -638,6 +682,7 @@ export default function useCanvasInteraction(opts: UseCanvasInteractionOpts) {
     handleCanvasMouseDown,
     handleCanvasMouseMove,
     handleCanvasMouseUp,
+    handleViewportMouseDown,
     handleMoveStart,
     handleResizeStart,
     onImageLoad,

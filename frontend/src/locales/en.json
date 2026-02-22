@@ -175,6 +175,7 @@
     "clearFromDocument": "Clear — remove from document",
     "replaceAllMatching": "Replace all matching",
     "redetect": "Detect — re-analyze",
+    "changePiiType": "Change PII type",
     "editLabelContent": "Edit label/content",
     "pageN": "page {{n}}",
     "showMore": "Show {{count}} more ({{remaining}} remaining)",
@@ -671,18 +672,11 @@
   },
 
   "tools": {
-    "pointer": "Pointer",
-    "pointerTooltip": "Pointer — pan & select (Esc)",
-    "lasso": "Lasso",
-    "lassoTooltip": "Lasso — drag to select multiple regions",
-    "draw": "Draw",
-    "drawTooltip": "Draw — create new anonymization region",
-    "undo": "Undo",
+    "pointerTooltip": "Pointer — pan & select (V)",
+    "lassoTooltip": "Lasso — drag to select multiple (S)",
+    "drawTooltip": "Draw — create new region (D)",
     "undoTooltip": "Undo (Ctrl+Z)",
-    "redo": "Redo",
-    "redoTooltip": "Redo (Ctrl+Y)",
-    "collapse": "Collapse",
-    "expand": "Expand"
+    "redoTooltip": "Redo (Ctrl+Y)"
   },
 
   "multiSelect": {

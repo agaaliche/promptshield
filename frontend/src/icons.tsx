@@ -62,6 +62,7 @@ export const Envelope = faIcon("fa-light fa-envelope", "Envelope");
 export const House = faIcon("fa-light fa-house", "House");
 export const IdBadge = faIcon("fa-light fa-id-badge", "IdBadge");
 export const IdCard = faIcon("fa-light fa-id-card", "IdCard");
+export const LayerGroup = faIcon("fa-light fa-layer-group", "LayerGroup");
 export const LocationDot = faIcon("fa-light fa-location-dot", "LocationDot");
 export const NetworkWired = faIcon("fa-light fa-network-wired", "NetworkWired");
 export const Passport = faIcon("fa-light fa-passport", "Passport");

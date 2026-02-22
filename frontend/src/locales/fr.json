@@ -660,18 +660,11 @@
   },
 
   "tools": {
-    "pointer": "",
     "pointerTooltip": "",
-    "lasso": "",
     "lassoTooltip": "",
-    "draw": "",
     "drawTooltip": "",
-    "undo": "",
     "undoTooltip": "",
-    "redo": "",
-    "redoTooltip": "",
-    "collapse": "",
-    "expand": ""
+    "redoTooltip": ""
   },
 
   "multiSelect": {

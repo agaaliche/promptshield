@@ -16,7 +16,7 @@ import {
   MoreVertical,
   ChevronDown,
 } from "../icons";
-import { PII_COLORS, type PIIRegion, type RegionAction } from "../types";
+import { PII_COLORS, type PIIRegion, type RegionAction, type PIILabelEntry, loadLabelConfig } from "../types";
 import { logError } from "../api";
 import { useSidebarStore } from "../store";
 
@@ -41,6 +41,7 @@ interface RegionSidebarProps {
   onHighlightAll: (id: string) => void;
   onToggleSelect: (id: string, multi: boolean) => void;
   onSelect: (ids: string[]) => void;
+  onEdit: (regionId: string) => void;
   onNavigateToRegion: (region: PIIRegion) => void;
   pushUndo: () => void;
   removeRegion: (id: string) => void;
@@ -49,6 +50,9 @@ interface RegionSidebarProps {
   batchDeleteRegions: (docId: string, ids: string[]) => Promise<any>;
   onTypeFilterChange?: (enabledTypes: Set<string> | null) => void;
   hideResizeHandle?: boolean;
+  visibleLabels?: PIILabelEntry[];
+  onUpdateLabel?: (regionId: string, newLabel: string) => void;
+  onUpdateText?: (regionId: string, newText: string) => void;
 }
 
 const RIGHT_MIN_WIDTH = 200;
@@ -74,6 +78,7 @@ export default function RegionSidebar({
   onHighlightAll,
   onToggleSelect,
   onSelect,
+  onEdit,
   onNavigateToRegion,
   pushUndo,
   removeRegion,
@@ -81,6 +86,9 @@ export default function RegionSidebar({
   batchRegionAction,
   batchDeleteRegions,
   onTypeFilterChange,
+  visibleLabels: visibleLabelsProp,
+  onUpdateLabel,
+  onUpdateText,
 }: RegionSidebarProps) {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = React.useState<SidebarTab>("page");
@@ -93,9 +101,22 @@ export default function RegionSidebar({
   const [clearConfirmOpen, setClearConfirmOpen] = React.useState(false);
   const [clearNeverAsk, setClearNeverAsk] = React.useState(false);
   const clearConfirmRef = React.useRef<{ ids: string[] }>({ ids: [] });
+  // When true, skip the next sidebar auto-scroll (user clicked an item directly)
+  const skipSidebarScrollRef = React.useRef(false);
+
+  // ── Inline PII type dropdown & text editing state ──
+  const [typeDropdownRegionId, setTypeDropdownRegionId] = React.useState<string | null>(null);
+  const typeDropdownRef = React.useRef<HTMLDivElement>(null);
+  const [editingTextRegionId, setEditingTextRegionId] = React.useState<string | null>(null);
+  const [editingTextValue, setEditingTextValue] = React.useState("");
+  const editTextRef = React.useRef<HTMLTextAreaElement>(null);
 
   // ── Scroll sidebar to first selected item when selection changes ──
   React.useEffect(() => {
+    if (skipSidebarScrollRef.current) {
+      skipSidebarScrollRef.current = false;
+      return;
+    }
     if (selectedRegionIds.length === 0) return;
     const firstId = selectedRegionIds[0];
     const el = itemRefs.current.get(firstId);
@@ -133,7 +154,39 @@ export default function RegionSidebar({
     return () => document.removeEventListener('mousedown', handler);
   }, [typeFilterOpen]);
 
+  // Close type dropdown on outside click
+  React.useEffect(() => {
+    if (!typeDropdownRegionId) return;
+    const handler = (e: MouseEvent) => {
+      if (typeDropdownRef.current && !typeDropdownRef.current.contains(e.target as Node)) {
+        setTypeDropdownRegionId(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [typeDropdownRegionId]);
+
+  // Auto-focus textarea when editing text
+  React.useEffect(() => {
+    if (editingTextRegionId && editTextRef.current) {
+      editTextRef.current.focus();
+      editTextRef.current.select();
+    }
+  }, [editingTextRegionId]);
+
+  // Resolve labels list — use prop or fallback to loadLabelConfig
+  const resolvedLabels = React.useMemo(() => {
+    if (visibleLabelsProp && visibleLabelsProp.length > 0) return visibleLabelsProp;
+    return loadLabelConfig().filter(l => !l.hidden);
+  }, [visibleLabelsProp]);
+
   const tabRegions = activeTab === "page" ? pageRegions : allRegions;
+
+  // Compute footer stats scoped to the active tab (page vs document)
+  const scopedPendingCount = React.useMemo(() => tabRegions.filter(r => r.action === "PENDING").length, [tabRegions]);
+  const scopedRemoveCount = React.useMemo(() => tabRegions.filter(r => r.action === "REMOVE").length, [tabRegions]);
+  const scopedTokenizeCount = React.useMemo(() => tabRegions.filter(r => r.action === "TOKENIZE").length, [tabRegions]);
+
   // Collect all unique types present in current tab regions
   const availableTypes = React.useMemo(() => {
     const types = new Set<string>();
@@ -596,6 +649,7 @@ export default function RegionSidebar({
             }}
             onClick={(e) => {
               const idx = displayedRegions.indexOf(r);
+              skipSidebarScrollRef.current = true;
               if (e.shiftKey && lastClickedIndexRef.current !== null) {
                 // Shift-click: range select without page change or scroll
                 const start = Math.min(lastClickedIndexRef.current, idx);
@@ -635,24 +689,198 @@ export default function RegionSidebar({
               <X size={14} variant="light" />
             </button>
             <div style={styles.regionHeader}>
-              <span
-                style={{
-                  ...styles.typeBadge,
-                  background: PII_COLORS[r.pii_type] || "#888",
-                }}
-              >
-                {r.pii_type}
-              </span>
+              {/* PII type chip with dropdown */}
+              <div style={{ position: "relative" }}>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTypeDropdownRegionId(prev => prev === r.id ? null : r.id);
+                    setEditingTextRegionId(null);
+                  }}
+                  style={{
+                    ...styles.typeBadge,
+                    background: PII_COLORS[r.pii_type] || "#888",
+                    border: "none",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 3,
+                  }}
+                >
+                  {r.pii_type}
+                  <span style={{ fontSize: 8, marginLeft: 1, opacity: 0.8 }}>&#9660;</span>
+                </button>
+                {typeDropdownRegionId === r.id && (
+                  <div
+                    ref={typeDropdownRef}
+                    style={{
+                      position: "absolute",
+                      top: "100%",
+                      left: 0,
+                      marginTop: 4,
+                      zIndex: 100,
+                      background: "var(--bg-secondary)",
+                      border: "1px solid var(--border-color)",
+                      borderRadius: 6,
+                      boxShadow: "0 4px 16px rgba(0,0,0,0.5)",
+                      maxHeight: 200,
+                      overflowY: "auto",
+                      minWidth: 130,
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    {resolvedLabels.map((entry) => (
+                      <button
+                        key={entry.label}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (entry.label !== r.pii_type) {
+                            pushUndo();
+                            onUpdateLabel?.(r.id, entry.label);
+                          }
+                          setTypeDropdownRegionId(null);
+                        }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          width: "100%",
+                          padding: "6px 10px",
+                          fontSize: 11,
+                          fontWeight: entry.label === r.pii_type ? 700 : 400,
+                          color: entry.label === r.pii_type ? "white" : "var(--text-primary)",
+                          background: entry.label === r.pii_type ? "var(--bg-tertiary)" : "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          textAlign: "left",
+                        }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = entry.label === r.pii_type ? "var(--bg-tertiary)" : "transparent"; }}
+                      >
+                        <span style={{
+                          width: 8, height: 8, borderRadius: "50%",
+                          background: entry.color || PII_COLORS[entry.label] || "#888",
+                          flexShrink: 0,
+                        }} />
+                        {entry.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <span style={styles.confidence}>
                 {Math.round(r.confidence * 100)}%
               </span>
               <span style={styles.sourceTag}>{r.source}</span>
-              <span style={styles.sourceTag}>p.{r.page_number}</span>
+              {activeTab === "document" && (
+                <span style={styles.sourceTag}>p.{r.page_number}</span>
+              )}
+              {(r.action === "TOKENIZE" || r.action === "REMOVE") && (
+                <span style={{
+                  ...styles.typeBadge,
+                  background: r.action === "TOKENIZE" ? "#9c27b0" : "#f44336",
+                }}>
+                  {r.action === "TOKENIZE" ? t("regions.tokenize") : t("regions.remove")}
+                </span>
+              )}
             </div>
-            <p style={styles.regionText}>"{r.text}"</p>
+            {/* Region text — inline editable */}
+            {editingTextRegionId === r.id ? (
+              <div style={{ paddingTop: 6 }} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+                <textarea
+                  ref={editTextRef}
+                  value={editingTextValue}
+                  onChange={(e) => setEditingTextValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") { setEditingTextRegionId(null); }
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      if (editingTextValue.trim() !== r.text) {
+                        pushUndo();
+                        onUpdateText?.(r.id, editingTextValue.trim());
+                      }
+                      setEditingTextRegionId(null);
+                    }
+                  }}
+                  style={{
+                    width: "100%",
+                    fontSize: 12,
+                    color: "var(--text-primary)",
+                    background: "var(--bg-primary)",
+                    border: "1px solid var(--accent-primary)",
+                    borderRadius: 4,
+                    padding: "4px 6px",
+                    resize: "vertical",
+                    minHeight: 32,
+                    fontFamily: "inherit",
+                  }}
+                  rows={2}
+                />
+                <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                  <button
+                    className="btn-primary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (editingTextValue.trim() !== r.text) {
+                        pushUndo();
+                        onUpdateText?.(r.id, editingTextValue.trim());
+                      }
+                      setEditingTextRegionId(null);
+                    }}
+                    style={{ fontSize: 11, padding: "3px 10px" }}
+                  >
+                    {t("common.save")}
+                  </button>
+                  <button
+                    className="btn-ghost btn-sm"
+                    onClick={(e) => { e.stopPropagation(); setEditingTextRegionId(null); }}
+                    style={{ fontSize: 11, padding: "3px 8px" }}
+                  >
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ paddingTop: 6, paddingBottom: 12 }}>
+                <span style={{ fontSize: 12, color: "var(--text-secondary)", wordBreak: "break-word" }}>
+                  <span
+                    style={{ cursor: "pointer" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingTextRegionId(r.id);
+                      setEditingTextValue(r.text);
+                      setTypeDropdownRegionId(null);
+                    }}
+                  >"{r.text}"</span>
+                  <button
+                    data-dim-btn
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingTextRegionId(r.id);
+                      setEditingTextValue(r.text);
+                      setTypeDropdownRegionId(null);
+                    }}
+                    title={t("common.edit")}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      cursor: "pointer",
+                      padding: "0 0 0 4px",
+                      color: "var(--text-secondary)",
+                      opacity: 0.35,
+                      verticalAlign: "middle",
+                      display: "inline-flex",
+                    }}
+                  >
+                    <Edit3 size={11} variant="light" />
+                  </button>
+                </span>
+              </div>
+            )}
             <div
               data-region-toolbar
-              style={{ ...styles.regionActions, opacity: 1, width: "100%" }}
+              style={{ ...styles.regionActions, opacity: 1, width: "100%", paddingTop: 8, paddingRight: 10 }}
             >
               {/* Left group */}
               <div style={{ display: "flex", gap: 2 }}>
@@ -682,26 +910,12 @@ export default function RegionSidebar({
               >
                 <RefreshCw size={13} variant="light" />
               </button>
-              {/* Edit */}
-              <button
-                data-dim-btn
-                className="btn-ghost btn-sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelect([r.id]);
-                }}
-                title={t("regions.editLabelContent")}
-                style={{ ...styles.sidebarBtn, opacity: 0.35 }}
-              >
-                <Edit3 size={13} variant="light" />
-              </button>
               </div>
               {/* Right group */}
               <div style={{ display: "flex", gap: 2, marginLeft: "auto" }}>
-
               {/* Tokenize */}
               <button
-                {...(r.action !== "TOKENIZE" ? { 'data-dim-btn': true } : {})}
+                data-dim-btn
                 className="btn-tokenize btn-sm"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -710,29 +924,17 @@ export default function RegionSidebar({
                 title={r.action === "TOKENIZE" ? t("regions.undoTokenize") : t("regions.tokenize")}
                 style={{
                   ...styles.sidebarBtn,
-                  opacity: r.action === "TOKENIZE" ? 1 : 0.35,
-                  border: r.action === "TOKENIZE" ? "1px solid #9c27b0" : "1px solid transparent",
-                  background: r.action === "TOKENIZE" ? "rgba(156,39,176,0.15)" : "transparent",
+                  opacity: 0.35,
                   color: "#9c27b0",
-                  boxShadow: r.action === "TOKENIZE" ? "0 0 6px rgba(156,39,176,0.3)" : "none",
-                  gap: r.action === "TOKENIZE" ? 4 : 0,
-                  transition: "all 0.2s ease",
+                  gap: 3,
                 }}
               >
                 <Key size={13} variant="light" />
-                <span style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  maxWidth: r.action === "TOKENIZE" ? 60 : 0,
-                  overflow: "hidden",
-                  opacity: r.action === "TOKENIZE" ? 1 : 0,
-                  transition: "max-width 0.2s ease, opacity 0.15s ease",
-                  whiteSpace: "nowrap",
-                }}>{t("regions.tokenize")}</span>
+                <span style={{ fontSize: 11 }}>{t("regions.tokenize")}</span>
               </button>
               {/* Remove */}
               <button
-                {...(r.action !== "REMOVE" ? { 'data-dim-btn': true } : {})}
+                data-dim-btn
                 className="btn-danger btn-sm"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -741,25 +943,13 @@ export default function RegionSidebar({
                 title={r.action === "REMOVE" ? t("regions.undoRemove") : t("regions.remove")}
                 style={{
                   ...styles.sidebarBtn,
-                  opacity: r.action === "REMOVE" ? 1 : 0.35,
-                  border: r.action === "REMOVE" ? "1px solid #f44336" : "1px solid transparent",
-                  background: r.action === "REMOVE" ? "rgba(244,67,54,0.15)" : "transparent",
+                  opacity: 0.35,
                   color: "#f44336",
-                  boxShadow: r.action === "REMOVE" ? "0 0 6px rgba(244,67,54,0.3)" : "none",
-                  gap: r.action === "REMOVE" ? 4 : 0,
-                  transition: "all 0.2s ease",
+                  gap: 3,
                 }}
               >
                 <Trash2 size={13} variant="light" />
-                <span style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  maxWidth: r.action === "REMOVE" ? 52 : 0,
-                  overflow: "hidden",
-                  opacity: r.action === "REMOVE" ? 1 : 0,
-                  transition: "max-width 0.2s ease, opacity 0.15s ease",
-                  whiteSpace: "nowrap",
-                }}>{t("regions.remove")}</span>
+                <span style={{ fontSize: 11 }}>{t("regions.remove")}</span>
               </button>
               </div>
             </div>
@@ -796,13 +986,13 @@ export default function RegionSidebar({
             background: "rgba(0,0,0,0.15)",
           }}>
             <span style={{ ...styles.statBadge, fontSize: 11, background: "transparent" }}>
-              {t("regions.pendingCount", { count: pendingCount })}
+              {t("regions.pendingCount", { count: scopedPendingCount })}
             </span>
             <span style={{ ...styles.statBadge, fontSize: 11, color: "#f44336", background: "transparent" }}>
-              {t("regions.removeCount", { count: removeCount })}
+              {t("regions.removeCount", { count: scopedRemoveCount })}
             </span>
             <span style={{ ...styles.statBadge, fontSize: 11, color: "#9c27b0", background: "transparent" }}>
-              {t("regions.tokenizeCount", { count: tokenizeCount })}
+              {t("regions.tokenizeCount", { count: scopedTokenizeCount })}
             </span>
           </div>
         </>
@@ -950,15 +1140,22 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: "uppercase" as const,
   },
   confidence: {
-    fontSize: 11,
-    color: "var(--text-muted)",
+    fontSize: 10,
+    fontWeight: 600,
+    color: "white",
+    background: "rgba(0,0,0,0.15)",
+    padding: "2px 6px",
+    borderRadius: 3,
+    textTransform: "uppercase" as const,
   },
   sourceTag: {
     fontSize: 10,
-    color: "var(--text-muted)",
-    background: "var(--bg-primary)",
-    padding: "1px 4px",
-    borderRadius: 2,
+    fontWeight: 600,
+    color: "white",
+    background: "rgba(0,0,0,0.15)",
+    padding: "2px 6px",
+    borderRadius: 3,
+    textTransform: "uppercase" as const,
   },
   regionText: {
     fontSize: 12,

@@ -313,7 +313,10 @@ PATTERNS: list[tuple[str, PIIType, float, int, frozenset[str] | None]] = [
 
     # US/CA bare: 555-123-4567, 555.123.4567, 1-555-123-4567, 1.555.123.4567
     (r"\b1[-.\s]\d{3}[-.\s]\d{3}[-.\s]\d{4}\b", PIIType.PHONE, 0.90, _NOFLAGS, _ENFR_CA),
-    (r"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b", PIIType.PHONE, 0.55, _NOFLAGS, _ENFR_CA),
+    # Base 0.70: without a label → 0.70 − 0.15 penalty = 0.55 (at threshold);
+    # with a label → 0.70 + 0.25 boost = 0.95. Raised from 0.55 so unlabelled
+    # numbers like "418 368-0777" are no longer silently dropped.
+    (r"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b", PIIType.PHONE, 0.70, _NOFLAGS, _ENFR_CA),
 
     # International with +  :  +33 6 12 34 56 78, +1-555-987-6543, (+33) 6 12 34 56 78
     (r"\(?\+\d{1,3}\)?[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{2,4}[-.\s]?\d{2,4}(?:[-.\s]?\d{2,4})?",

@@ -62,7 +62,7 @@ export default function DetectionSection() {
   );
 
   useEffect(() => {
-    if (detectionSettings.regex_enabled && detectionSettings.custom_patterns_enabled) {
+    if (detectionSettings.regex_enabled) {
       fetchCustomPatterns()
         .then((all) => setActivePatterns(all.filter((p) => p.enabled)))
         .catch(() => setActivePatterns([]));
@@ -183,7 +183,7 @@ export default function DetectionSection() {
                 updateSettings({ custom_patterns_enabled: v }).catch(logError("update-settings"));
               }}
             />{" "}
-            {t("settingsDetection.customPatterns")}
+            {t("settingsDetection.customPatterns")}{activePatterns.length > 0 && ` (${activePatterns.length})`}
           </label>
           <CircleQuestion
             size={14}
@@ -222,18 +222,6 @@ export default function DetectionSection() {
         </div>
         {detectionSettings.regex_enabled && detectionSettings.custom_patterns_enabled && (
           <div style={{ marginLeft: 24, marginTop: 6 }}>
-            {activePatterns.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
-                {activePatterns.map((p) => (
-                  <div key={p.id} style={{ paddingLeft: 4 }}>
-                    <div style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500 }}>{p.name}</div>
-                    <div style={{ fontSize: 10, color: "var(--text-muted)", fontFamily: "monospace", marginTop: 1 }}>
-                      {p.template ? formatTemplate(p.template) : (p.pattern ?? p._generated_pattern ?? "")}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
             <button
               type="button"
               className="btn-primary btn-sm"

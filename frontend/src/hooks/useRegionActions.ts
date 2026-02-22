@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback } from "react";
-import { useAppStore } from "../store";
+import { useAppStore, useSnackbarStore } from "../store";
 import {
   setRegionAction,
   batchRegionAction,
@@ -50,6 +50,7 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
     updateRegion, setIsProcessing, setStatusMessage, setSelectedRegionIds,
   } = opts;
 
+  const { addSnackbar } = useSnackbarStore();
   const [copiedRegions, setCopiedRegions] = useState<PIIRegion[]>([]);
   const [showAutodetect, setShowAutodetect] = useState(false);
   const [redetecting, setRedetecting] = useState(false);
@@ -72,10 +73,10 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
   );
 
   const handleRefreshRegion = useCallback(
-    async (regionId: string, textOnly?: boolean) => {
+    async (regionId: string, textOnly?: boolean, skipUndo?: boolean) => {
       if (!activeDocId) return;
       try {
-        if (!textOnly) pushUndo();
+        if (!textOnly && !skipUndo) pushUndo();
         const result = await reanalyzeRegion(activeDocId, regionId);
         if (textOnly) {
           // Auto-refresh after move/resize/create: only update extracted text,
@@ -91,18 +92,19 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
             confidence: result.confidence,
             source: result.source as any,
           });
-          setStatusMessage(
+          addSnackbar(
             result.text
               ? `Refreshed: ${result.pii_type} — "${result.text.slice(0, 40)}"`
               : "No text found under this region",
+            result.text ? "success" : "info",
           );
         }
       } catch (e: unknown) {
         console.error("Failed to refresh region:", e);
-        if (!textOnly) setStatusMessage(`Refresh failed: ${toErrorMessage(e)}`);
+        if (!textOnly) addSnackbar(`Refresh failed: ${toErrorMessage(e)}`, "error");
       }
     },
-    [activeDocId, pushUndo, updateRegion, setStatusMessage],
+    [activeDocId, pushUndo, updateRegion, addSnackbar],
   );
 
   /** Delete exactly one region (no dialog). */
@@ -192,13 +194,13 @@ export default function useRegionActions(opts: UseRegionActionsOpts) {
   }, []);
 
   const handleHighlightAll = useCallback(
-    async (regionId: string) => {
+    async (regionId: string, skipUndo?: boolean) => {
       if (!activeDocId) return;
       const region = regions.find((r) => r.id === regionId);
       if (!region) return;
       const addSnackbar = useAppStore.getState().addSnackbar;
       try {
-        pushUndo();
+        if (!skipUndo) pushUndo();
         const resp = await highlightAllRegions(activeDocId, regionId);
         const cancelledIds = new Set(resp.cancelled_ids || []);
         const baseRegions = cancelledIds.size > 0
